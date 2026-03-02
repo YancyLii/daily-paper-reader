@@ -58,11 +58,30 @@ window.SubscriptionsSmartQuery = (function () {
     '5) intent_queries: output 3-8 actionable intent queries. Each item should include query and optional query_cn.',
     '6) Do not output extra fields like must_have / optional / exclude / rewrite_for_embedding.',
     '7) Return pure JSON only, no explanations.',
-    '8) Tag suggestion should be concise, preferably under 6 characters.',
-    '9) Tag suggestion must NOT include any year. Do not append or embed years (including digits like 2026/2025/2024 etc.) in tag.',
+    '8) intent_queries should be concise, timeless, and must not include years or year-like tokens.',
+    '9) Tag suggestion should be concise, preferably under 6 characters.',
+    '10) Tag suggestion must NOT include any year. Do not append or embed years (including digits like 2026/2025/2024 etc.) in tag.',
   ].join('\n');
 
   const normalizeText = (v) => String(v || '').trim();
+
+  const sanitizeNoYear = (value) => {
+    const base = normalizeText(value);
+    if (!base) return '';
+    let text = base
+      .replace(/\((?:19|20)\d{2}(?:年)?\)/g, '')
+      .replace(/（(?:19|20)\d{2}(?:年)?）/g, '')
+      .replace(/(?:19|20)\d{2}(?:年)?/g, '')
+      .replace(/[\s_-]{2,}/g, ' ')
+      .trim();
+    if (text) {
+      text = text
+        .replace(/\s+/g, ' ')
+        .replace(/[_-]+/g, ' ')
+        .trim();
+    }
+    return text;
+  };
 
   const sanitizeAutoTag = (value) => {
     const base = normalizeText(value);
@@ -142,7 +161,7 @@ window.SubscriptionsSmartQuery = (function () {
     return items
       .map((item, idx) => {
         if (typeof item === 'string') {
-          const query = normalizeText(item);
+          const query = sanitizeNoYear(item);
           if (!query) return null;
           return {
             query,
@@ -152,9 +171,9 @@ window.SubscriptionsSmartQuery = (function () {
           };
         }
         if (!item || typeof item !== 'object') return null;
-        const query = normalizeText(item.query || item.text || item.keyword || item.expr || '');
+        const query = sanitizeNoYear(item.query || item.text || item.keyword || item.expr || '');
         if (!query) return null;
-        const queryCn = normalizeText(item.query_cn || item.query_zh || item.zh || item.note || '');
+        const queryCn = sanitizeNoYear(item.query_cn || item.query_zh || item.zh || item.note || '');
         return {
           query,
           query_cn: queryCn,

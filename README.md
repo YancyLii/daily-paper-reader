@@ -68,12 +68,29 @@
 
 ```mermaid
 flowchart LR
-    A[订阅关键词 / 研究方向 / Intent Queries] --> B[GitHub Actions 定时运行]
-    B --> C[抓取 arXiv / OpenReview 新论文]
-    C --> D[召回 / 过滤 / 推荐排序]
-    D --> E[生成每日报告与论文列表]
-    E --> F[GitHub Pages 对外展示]
-    F --> G[AI 阅读问答 / 持续追踪]
+    subgraph Input[输入配置]
+        A[订阅关键词]
+        B[研究方向]
+        C[Intent Queries]
+    end
+
+    subgraph Pipeline[自动化处理]
+        D[GitHub Actions 定时运行]
+        E[抓取 arXiv / OpenReview 新论文]
+        F[召回与过滤]
+        G[推荐排序与 LLM 精炼]
+        H[生成日报 / 论文页 / Sidebar]
+    end
+
+    subgraph Delivery[发布与使用]
+        I[GitHub Pages 自动发布]
+        J[在线阅读 / AI 问答 / 持续追踪]
+    end
+
+    A --> D
+    B --> D
+    C --> D
+    D --> E --> F --> G --> H --> I --> J
 ```
 
 ## ⚡ 5 分钟内你能得到什么

@@ -25,11 +25,12 @@
 
 
 ## 🖼️ 界面预览
-
 <p align="center">
-  <img src="others/demo1.png" alt="Daily Paper Reader 界面预览 1" width="31%" />
-  <img src="others/demo2.png" alt="Daily Paper Reader 界面预览 2" width="31%" />
-  <img src="others/demo3.png" alt="Daily Paper Reader 界面预览 3" width="31%" />
+  <img src="others/demo1.png" alt="Daily Paper Reader 界面预览 1" width="80%" />
+</p>
+<p align="center">
+  <img src="others/demo2.png" alt="Daily Paper Reader 界面预览 2" width="40%" />
+  <img src="others/demo3.png" alt="Daily Paper Reader 界面预览 3" width="40%" />
 </p>
 
 ## 📰 News

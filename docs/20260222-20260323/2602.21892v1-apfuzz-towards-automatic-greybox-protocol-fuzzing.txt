@@ -1,0 +1,456 @@
+Title: APFuzz: Towards Automatic Greybox Protocol Fuzzing
+
+URL Source: https://arxiv.org/pdf/2602.21892v1
+
+Published Time: Thu, 26 Feb 2026 01:56:22 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# APFuzz: Towards Automatic Greybox Protocol Fuzzing 
+
+Yu Wang ∗, Yang Xiang ∗, Chandra Thapa †, Hajime Suzuki †∗Swinburne University of Technology , Australia 
+
+{hf98403@gmail.com, yxiang@swin.edu.au }
+
+> †
+
+CSIRO Data61 , Australia 
+
+{chandra.thapa@data61.csiro.au, Hajime.Suzuki@data61.csiro.au }
+
+Abstract —Greybox protocol fuzzing is a random testing ap-proach for stateful protocol implementations, where the input is protocol messages generated from mutations of seeds, and the search in the input space is driven by the feedback on coverage of both code and state. State model and message model are the core components of communication protocols, which also have significant impacts on protocol fuzzing. In this work, we propose APFuzz (Automatic greybox Protocol Fuzzer) with novel designs to increase the smartness of greybox protocol fuzzers from the perspectives of both the state model and the message model. On the one hand, APFuzz employs a two-stage process of static and dynamic analysis to automatically identify state variables, which are then used to infer an accurate state model during fuzzing. On the other hand, APFuzz introduces field-level mutation operations for binary protocols, leveraging message structure awareness enabled by Large Language Models. We conduct extensive experiments on a public protocol fuzzing benchmark, comparing APFuzz with the baseline fuzzer AFLNET as well as several state-of-the-art greybox protocol fuzzers. 
+
+Index Terms —Network protocol, Fuzzing, Large language model, State machine 
+
+I. I NTRODUCTION 
+
+The concept of fuzzing involves testing a program by providing a large amount of random data as input to uncover bugs and vulnerabilities [30]. Originally, the word fuzz was used to name the random character generator in the UNIX utility testing tools built by Miller et al. [18]. The technique has evolved since then, and it is behind the discovery of many serious security vulnerabilities in lots of popular software and critical systems, including communication protocols [5]. Most fuzzing tools are designed for testing stateless pro-grams. There are additional challenges when it comes to testing stateful programs [10]. On one hand, the same input can result in different reactions of a stateful program depending on its current state, which is determined by previous inputs. On the other hand, the stateful bugs in these programs can only be triggered in certain states hidden in the deep state space [2]. To expose such a stateful bug, the fuzzer needs to first send a specific series of inputs to reach the correct state and then send the fuzzing inputs to trigger the bug. A typical type of stateful program is protocol implemen-tation. In general, a communication protocol defines a set of rules that allow two or more entities to exchange various messages in a conversation. For example, syntax rules specify the progress of the conversation, which gives the context for evaluating each received message, while semantics rules spec-ify the meaning of data, which describes the format to interpret each received message. In other words, protocol syntax defines the state model, and protocol semantics defines the message model. Traditional protocol fuzzing tools (e.g., SNOOZE [4], Sulley, BooFuzz from academia, and Peach, beSTORM from industry) are based on the blackbox approach. That is, the fuzzers are provided with the state model and message model of the target protocol, and they traverse the state model to send input test cases generated based on the message model. The effectiveness of blackbox protocol fuzzing depends on the quality of the state model and message model, which are usually manually crafted based on protocol specifications and can be error-prone. Coverage-based greybox fuzzing [13] uses lightweight code instrumentation to obtain coverage information to guide the input space exploration. For example, American Fuzzy Loop (AFL) [11], [14], one of the most widely-used coverage-based greybox fuzzers, uses the information about block transitions and branch hit counts to guide input mutations. To enable greybox protocol fuzzing, AFLNET [23] extends AFL by in-troducing the concept of state coverage and proposing a state-oriented scheduling scheme. Since then, a series of variants of AFLNET have been proposed, which focus on different aspects of improvements. However, there are still some open problems in greybox protocol fuzzing. 
+
+State representation. The feedback of state coverage is the core of stateful greybox fuzzing. However, recognizing the protocol states during fuzzing is not straightforward. Exist-ing fuzzers adopt different state definitions and representa-tions. For example, AFLNET uses the status codes in server responses to represent protocol states, while other fuzzers adopt variable-based state representation (e.g., NSFuzz [25] and SGFuzz [3]) and long-lived memory data based fuzzy state representation [19]. Moreover, most state representation schemes implicitly require human intervention. For example, given a new target protocol to test, AFLNET requires users to write the code to interpret server responses and extract status codes; NSFuzz requires users to read the source code and use its annotation API to manually specify the correct state variables (as the heuristic-based identification brings lots of false positives and false negatives). Therefore, it is still challenging to learn the state representation effectively and 
+
+> arXiv:2602.21892v1 [cs.CR] 25 Feb 2026
+
+automatically. 
+
+Input structure awareness. AFLNET introduces message-level mutating operations on top of the byte-level mutations implemented in AFL. However, random mutation is likely to break the message format and get it rejected by the server. A recent study [17] proposes to use a Large Language Model (LLM) to extract grammar patterns for text-based protocols, which can be applied to the messages to match the keyword fields and mark the data fields as mutable regions. This realizes structure-aware field-based mutations. However, this approach does not support binary protocols. In this paper, we propose APFuzz, a coverage-based grey-box protocol fuzzing tool. APFuzz has two key features. On the one hand, it introduces state representation learning, enabling the automatic identification of state variables in source code and efficient state tracking during fuzzing. The learning process consists of two stages. The first stage involves using static analysis to identify potential state variables and the second stage focuses on filtering out the noises by using a lightweight dynamic analysis approach. On the other hand, it leverages LLM for input structure learning, enabling field-based mutation operators for binary protocols. Specifically, the LLM is used to interpret the message structure of the initial seeds and derive knowledge about the fields (e.g., field type, bit range, value range). Such message structure information is valuable for mutations to generate valid messages to reach deep-state space. We conduct extensive experiments based on ProFuzzBench [20], the benchmark for protocol fuzzing. We compare APFuzz with the baseline fuzzer AFLNET as well as a number of state-of-the-art greybox protocol fuzzers. In summary, we make the following contributions to grey-box protocol fuzzing: 
+
+• We propose a state representation learning method that automatically identifies the state variables in the source code of the target server. This enables accurate and efficient protocol state tracking and state model inference. 
+
+• We introduce field-based mutations through an input structure learning method that leverages LLM to acquire message structure knowledge. This helps generate valid test cases and explore the deep state space of protocols. 
+
+• We conduct and present a comprehensive evaluation of our framework against the baseline and the state-of-the-art greybox protocol fuzzers based on the widely used protocol fuzzing benchmark ProFuzzBench. II. B ACKGROUND AND MOTIVATIONS 
+
+Recently, the problem of protocol fuzzing has attracted a lot of research interest. Daniele et al. [10] present a com-prehensive survey of fuzzers for stateful systems, and Zhang et al. [29] present a survey on the development of fuzzers for network protocols. In this section, we start by briefly introducing the latest progress of coverage-based greybox protocol fuzzing. Then, we discuss the key open issues and our motivations. 
+
+A. Greybox Protocol Fuzzing 
+
+We take AFLNET as the baseline greybox protocol fuzzer to facilitate the discussion on the recent progress in this area. AFLNET, proposed by Pham et al. [23] in 2020, is the first greybox fuzzer for protocol implementations. It is imple-mented based on AFL [14], with several critical extensions to address the challenges of applying the stateless fuzzer to stateful servers. First, AFLNET defines the input as a sequence of messages that the client sends to the server in a conversation (i.e., the client requests). Second, AFLNET seeks to maximize not only the code coverage but also the state coverage. To do this, it observes the server state after sending each message in order to associate a state sequence with the input message sequence. Then, an input is considered as interesting (i.e., to be added to the seed corpus) if any new state or state transition is found in its associated state sequence, as well as if any new code branch is executed in the server. AFLNET also introduces a state-oriented scheduling scheme and uses some heuristics to prioritize the rarely executed states as well as the states that are successful in increasing code or state coverage when selected previously. Third, AFLNET supports message-level mutation operators in addition to the byte-level ones. Finally, AFLNET makes some technical designs to enable server fuzzing, such as enabling sockets for network I/O, adding delays between requests for fuzzer-server synchronization, and resetting the server after executing each input. The speed of protocol fuzzing can be measured by the throughput in terms of messages per second or executions per second. AFLNET is significantly slower than AFL because, for each input test case, AFLNET goes through the process of initializing the server, sending messages one after one, and waiting in between, cleaning up and terminating the server. Fu et al. [12] analyze the time consumption by dividing this process into four stages, including initialization, socket-based inter-process communication (IPC), synchronization, and other behaviors (e.g., termination). They find that socket-based IPC consumes the majority of time for most target servers in ProFuzzBench [20], while synchronization and initialization also take significant amounts of time for several servers. Thus, they extend AFLNET with shared-memory-based IPC and synchronization for message exchanges, and they also introduce the persistent mode to avoid server resets whenever possible. The resulting tool, HNPFuzzer, is able to achieve much higher fuzzing throughput than AFLNET. There are other approaches to speed up the process. For example, SNPSFuzzer [16] takes process snapshots by using the CRIU tool (Checkpoint/Restore in User Space) to skip the time of initializing the server and sending the prefix messages before the mutated ones. Similarly, Nyx-net [27] adopts hypervisor-based snapshots to allow fast server resets and emulates the APIs for networking I/O to speed up message exchanges. SnapFuzz [1] intercepts the communication between the target server and the fuzzing environment via binary rewriting in order to eliminate communication and synchronization delays as well as to improve the speed of file access, clean-ups, and state resets. The smartness of greybox protocol fuzzing is also important, which allows the fuzzer to cover more code with fewer tests. Recent studies in this direction mainly involve investigations of different state representations and input structure awareness. In the following sections, we discuss these two aspects. 
+
+B. Protocol State Awareness 
+
+Identifying server or protocol states during fuzzing is not straightforward. AFLNET infers state information by extract-ing the status code in server responses. However, the response codes are not available in all protocols, and by design, they are not directly linked to protocol states (e.g., HTTP and FTP use the code 200 to acknowledge the successful completion of different kinds of requests and commands). Besides, manual efforts and protocol knowledge are required to tell the fuzzer how to extract the response codes. To overcome these limita-tions, several different solutions are proposed in recent studies. Natella [19] proposes StateAFL that uses the data in long-lived memory areas to infer the server state. In essence, StateAFL learns the fuzzy representations of in-memory server states. This is done in a fully automated manner, though it does introduce computational overhead to some extent. Another solution is to identify the state variables in the source code, whose values can be considered as the ground truth of state identification because they are used internally by the servers to maintain the states of conversations. Ba et al. [3] propose SGFuzz, which monitors changes in the values of all variables of enumerated type and gradually constructs a state transition tree during fuzzing. There are some false positives as the enumerated type variables can be used not only for state representations but also for error codes, response codes, configuration settings, and so on. SGFuzz mitigates the effects of such noises by using tree truncating and energy scheduling schemes. Qin et al. [25] propose NSFuzz, which uses static analysis and a heuristics-based approach to locate the network event loop that handles client requests and identify state variables within the loop. NSFuzz also allows users to manually specify the state variables through its annotation APIs. 
+
+Motivation: State-coverage optimization is the core of stateful greybox fuzzing. However, the definitions of state in existing studies are inconsistent, and it leads to different de-signs on various state-related operations, such as state identifi-cation, state model inference, and state coverage optimization. In addition, most fuzzers require manual efforts to extract state information. For example, given a new target to test, the users need to know about the server response format and provide AFLNET with a script for extracting response codes or need to inspect the source code and identify the accurate state variables for NSFuzz. Driven by these limitations and challenges, this work aims to explore accurate and automated state representation learning. 
+
+C. Message Structure Awareness 
+
+Awareness of input structure can be beneficial to coverage-based greybox fuzzing [24]. In protocol fuzzing, the inputs are message sequences, where the order of messages is governed by protocol syntax, and the format of messages is defined by protocol semantics. AFLNET supports two types of mutations. The first type is the byte-level mutations inherited from AFL, such as random bit-flip, byte-insert, byte-delete, byte-clone, and so on [8]. These mutations are likely to challenge the semantics rules and exercise the message interpreters in protocol implementations. The other type is message-level mutations, including random message insert, delete, replace, and duplicate. These mutations are likely to challenge the syntax rules and exercise the state model of the servers. Fuzzing protocols by using random mutations and simple message-level mutations is lightweight, as they do not rely on complex computations or knowledge about the target [9], [21]. However, these mutations are inefficient for exploring deep-state space and uncovering deep-state bugs, as most of such arbitrary mutations are likely to be invalid and break the conversations in the early stage. Traditional protocol fuzzers address this limitation by applying grammar-based mutations using predefined rules provided by users [4], [15], [22]. While effective, these methods are both labor-intensive and time-consuming. The recent advances in Large Language Models (LLMs) allow fuzzers to incorporate protocol grammar for mutations without human input. For example, Meng et al. [17] propose to extract message grammar patterns from ChatGPT to enable fine-grained structure-aware mutations for text-based protocols in ChatAFL. Given a message to mutate, ChatAFL first applies the grammar patterns to identify the message type. It then matches the header fields in the message and marks the data fields as mutable regions. Besides, ChatAFL also uses the LLM to generate seeds for increasing the diversity of initial seeds and for surpassing the coverage plateau during fuzzing. Although the performance is promising, ChatAFL works only on text-based protocols by design. It is not applicable to binary protocols, which use well-defined field structures instead of text-based commands and keywords. 
+
+Motivation: Binary protocols are widely used in practice, especially for communication systems like 5G/6G. Motivated by the success of LLMs in deriving text-based protocol pat-terns, this work aims to extend the grammar-guided mutations to binary protocols. In particular, we are interested in the field-level grammar that specifies bit ranges within a single message and serves as field-level mutation guidance. Field-based mutations generate more valid test cases, thus have the potentials to deliver more efficient exploration in the input space as well as the deep-state space. III. M ETHODOLOGY 
+
+This section presents APFuzz, the proposed coverage-based greybox protocol fuzzing tool. First, we introduce the general framework and discuss the assumptions and the basic building blocks. Then, we describe the key features of APFuzz in detail, including proposed methods for state representation learning and input structure learning. A. Framework 
+
+Algorithm 1 APFuzz 
+
+Input: P0: protocol implementation 
+
+Input: p: protocol name 
+
+Input: C: initial seed corpus 
+
+Input: T : total fuzzing time 
+
+Output: C: final seed queue 
+
+Output: CX : crashing seeds  
+
+> 1:
+
+CandidateV ariables ← STATIC ANALYSIS 2: Ps ← INSTRUMENT STATE (P0) 
+
+> 3:
+
+SV ← DYNAMIC ANALYSIS (Ps, CandidateV ariables ) 
+
+> 4:
+
+Pf ← INSTRUMENT FUZZ (P0) 
+
+> 5:
+
+G ← CHAT LLM ( p, C) 
+
+> 6:
+
+S ← ∅  
+
+> 7:
+
+repeat  
+
+> 8:
+
+s ← CHOOSE STATE (S) 
+
+> 9:
+
+M essages M ← CHOOSE SEQUENCE (C, s) 
+
+> 10:
+
+⟨M1, M 2, M 3⟩ ← M 
+
+> 11:
+
+for i from 1 to A SSIGN ENERGY (M ) do  
+
+> 12:
+
+if RANDOM () < ϵ then  
+
+> 13:
+
+M ′ 
+
+> 2
+
+← GRAMMAR BASED MUTATE (M2, G) 
+
+> 14:
+
+M ′ ← ⟨ M1, M ′
+
+> 2
+
+, M 3⟩ 
+
+> 15:
+
+else  
+
+> 16:
+
+M ′ ← ⟨ M1, RAND MUTATE (M2), M 3⟩ 
+
+> 17:
+
+end if  
+
+> 18:
+
+s′ ← SEND TOSERVER (Pf , M ′, SV ) 
+
+> 19:
+
+S ← UPDATE STATE MACHINE (s′, S ) 
+
+> 20:
+
+if ISCRASHES (M ′, Pf ) then  
+
+> 21:
+
+CX ← CX ∪ { M ′} 
+
+> 22:
+
+else if ISINTERESTING (M ′, Pf , S) then  
+
+> 23:
+
+C ← C ∪ { (M ′, R ′)} 
+
+> 24:
+
+end if  
+
+> 25:
+
+end for  
+
+> 26:
+
+until timeout T reached or abort-signal The basic logic of greybox protocol fuzzing is the loop of automated state model inference and coverage-based fuzzing. On the one hand, the fuzzer generates new inputs to explore the unknown state space of the SUT (Server Under Test), with the goal of maximizing coverage in the state model. On the other hand, it takes feedback from the SUT to infer the states reached by each input and update the state model if any new state or state transition is found. APFuzz follows the same logic. It incrementally learns a state model of the SUT from scratch, which is used to guide the fuzzing campaign in traversing deep state space. The overall framework of APFuzz is illustrated in Fig. 1. 
+
+1) Assumptions: There are some prerequisites in coverage-based greybox protocol fuzzing. We first discuss the assump-tions and clarify the scope of our work. 
+
+Source Code. Like other greybox fuzzers, APFuzz requires access to the source code of the target server. It is needed for applying compile-time instrumentation to inject additional instructions into the server during compilation to collect Fuzzing Loop         
+
+> Input S tructure Learning
+> State Representation Learning
+> Source Code Static
+> Analyzer
+> Initial Seeds
+> State Guided
+> Seed Selection
+> Dynamic
+> Analyzer
+> State
+> Variables
+> Compile -time
+> Instrumentation
+> Test Case
+> SUT
+> Execution
+> Message
+> Structure
+> Seed Corpus
+> LLM
+> Interpretation
+> Mutation
+> Operators
+> Crash
+> Code
+> Coverage
+> Seed
+> Preservation
+> State
+> Sequence
+> State model
+> Input
+> Feedback
+> Fig. 1. System framework
+
+feedback about state information, code coverage, and loop synchronization in the runtime. 
+
+Protocol Specification. Greybox protocol fuzzing does not require knowledge about the target protocols. ChatAFL is an exception [17]. Although ChatAFL does not explicitly require access to protocol specifications, it does assume that ChatGPT knows about the target protocols (e.g., protocol specification documents might be included in ChatGPT’s training data). Specifically, it uses ChatGPT as an oracle to derive message patterns and generate new seeds with unseen message types or unknown state transition paths for text-based protocols. APFuzz follows the same assumption, and we show that LLMs can be used to interpret not only text-based protocols but also binary protocols. 
+
+Roles. Existing protocol fuzzing research mainly focuses on the client/server paradigm [10]. That is, the target is a server, and the fuzzer takes the role of a client. We follow the same paradigm and leave the protocols involving multiple roles (e.g., the multi-party protocols) out of scope. 
+
+2) Input: Input is the key to fuzzing. In stateful server fuzzing, the input is a message or a sequence of messages the client sends to the server during a session. Such messages are also referred to as requests, while the messages sent by the server are responses. 
+
+Initial Seeds. As a mutation-based approach, greybox pro-tocol fuzzers generate new test cases by mutating the seeds. Valid seeds can serve as a good starting point for fuzzing. APFuzz follows the common practice of using some valid samples of message sequences extracted from real traffic data of the target server to form the initial seed corpus. 
+
+Test Cases. APFuzz adopts the mutation-based approach, where a new input is generated by mutating a seed. In addition to the byte-level and message-level mutation operators used in existing fuzzers, we introduce fine-grained mutation at the level of fields for binary protocols. This is enabled by LLM-based message structure learning. More details are presented in Section III-C. 
+
+3) Feedback: Coverage-based greybox fuzzing is based on feedback. For protocol fuzzers, there are two kinds of feedback, i.e., code coverage and state information. APFuzz applies lightweight compile-time instrumentation to inject additional instructions for collecting feedback to the target servers. The feedback is used for both code coverage and state coverage. 
+
+Code Coverage. APFuzz adopts the instrumentation of AFL to collect code coverage information. Specifically, it contains information about block transitions and branch hit counts to guide input mutations. 
+
+State Sequence. APFuzz collects state feedback based on state variables, i.e., the variables that the developers use to represent protocol states in their source code. We propose a state representation learning method to identify such variables in source code in a fully automatic manner. In compile-time instrumentation, we also inject instructions for tracking these state variables to obtain the state sequence in the fuzzing loop. More details are presented in Section III-B. 
+
+4) Fuzzing Loop: The fuzzing process is iterative. In each iteration, the fuzzer selects a seed from the seed corpus based on the state model. We follow the same strategy used in AFLNET for this step. Next, the fuzzer applies mutation operators on the seed randomly to generate a new test case. The test case is then sent to the SUT for execution. This involves a sub-loop, i.e., a message-sending loop, as the test case is a sequence of messages. In this sub-loop, the fuzzer sends each message and waits for the synchronization signal, which tells that the SUT has finished processing the current message and is ready for the next. Meanwhile, the feedback of code coverage and state sequence is collected. Finally, the state model is updated based on the state sequence. If a new state, state transition, or increase in code coverage is found, the test case is considered interesting and preserved in the seed corpus. Otherwise, the test case is discarded. The overall procedure of APFuzz is given in Algorithm 1. 
+
+B. State Representation Learning 
+
+To infer the protocol state, APFuzz instruments the server in compile-time to add instructions to probe the values of state variables during fuzzing. In this work, we propose an automatic method to identify state variables in the source code, which first uses static analysis to identify the potential vari-ables and then uses dynamic analysis to track these variables and filter out the noises. In protocol implementations, it is common to keep track of protocol states using dedicated state variables [3]. Besides, since the states in a protocol are predefined and finite, they are typically encoded using intuitively named constants (e.g., INIT, READY) that are defined in the enumerated types or #define directives in C/C++. Moreover, state variables should be read and written within network event loops for checking and updating states [25]. Based on these assumptions, previ-ous studies propose heuristic-based methods to extract state variables by performing static analysis or regular expression matching. However, these methods are prone to false positives (i.e., identifying variables unrelated to protocol state) and false negatives (i.e., missing actual state variables). To address this challenge, APFuzz adopts a two-stage approach to identify state variables accurately and automatically. 
+
+1) Static Analysis. The static analysis is designed to identify a collection of potential state variables from the source code. The goal in this stage is to minimize false negatives, that is not to miss any actual state variables. Therefore, we follow the heuristic approach used in existing fuzzers. On the one hand, we include the state variables identified by NSFuzz [25], which are global integer variables or user-defined structure members that are both loaded and stored (with constant values) within the identified network event loops. On the other hand, we adopt the rule used in SGFuzz [3], which extracts the variables of the enumerated type that are assigned at least once. We extend this rule to include variables of other types, such as integers, that are assigned with enumerated type values or named constants. 
+
+2) Dynamic Analysis. To filter out the noises (i.e., false positives) in the results of static analysis, APFuzz utilizes a dynamic analysis technique by leveraging the LLVM compiler infrastructure to instrument the source code, allowing for runtime tracking of the variables derived in static analysis. This approach enables detailed monitoring of how these vari-ables are read and written during execution. APFuzz employs the following rules to filter the set of state variables more accurately through the dynamic analysis: a) The number of unique values of a state variable should be no less than min 
+
+and less than max . b) The hit count for each value of the state variable exceeds a certain threshold t. In this way, APFuzz can filter out a set of program variables that are closely related to the protocol state, which further ensures the reliability of the protocol state machine inference. 
+
+C. Input Structure Learning 
+
+Understanding the target protocol is beneficial for fuzzing. For instance, blackbox protocol fuzzing generates inputs based on the protocol state model and message model. The key challenge is to obtain accurate protocol knowledge while minimizing manual efforts. Recent advancements have demon-strated that Large Language Models (LLMs) can assist fuzzers by providing a better understanding of the target protocols in an automatic manner. For example, ChatAFL [17] uses ChatGPT to generate message patterns for text-based proto-cols, which specify keywords (e.g., protocol commands) and mutable ranges (e.g., data) in messages. In this section, we extend the use of LLMs to interpret the format of the messages in the seeds for binary protocols. 
+
+1) LLM-based Seed Interpretation: We focus on identifying the fields in the binary protocol messages and enabling field-based mutations during fuzzing. First, the messages are con-verted from raw format into binary text strings before feeding into the LLM conversation. Next, we design a prompt using in-context few-shot learning [7] to interact with the LLM and obtain the well-formatted structure of each part or layer of the given message. The underlying assumption is that LLMs are capable of providing useful knowledge about message structures for protocols with open RFC, which is shown in previous studies [17]. The learned field structure of message has three parts: field name, bit start, and bit length. The field name indicates the function or type of the field. The bit start specifies the starting position in the binary message string, and the bit length indicates the number of bits in the field. 
+
+2) Mutation Scheme: The fuzzer selects the message se-quence M2 for mutation as part of the algorithm design. Field-based mutations are guided by the bit range. The fuzzer ran-domly selects the start bit and corresponding length within a single message chosen from the M2 sequence. The range of the chosen field is denoted as [start bit, start bit + length ]. We then design several bit-level structure-aware mutation strate-gies. These strategies exhibit finer granularity compared to the message-level mutation strategy implemented in AFLNET and the byte-level structure-aware mutations in ChatAFL. Consequently, field-based mutations can impact not only text-based protocols but also binary-based protocols such as SSH and DNS. We introduce a random value ϵ, which is selected from a range of 0 to 1. When ϵ > 0.5, the fuzzer utilizes the field-based mutation strategy; otherwise, it uses the classical mutations implemented in AFLNET. The mutation scheme in APFuzz encompasses byte-level and message-level operators. The byte-level operators are derived from AFL, while the message-level operators are derived from AFLNET. Additionally, we propose field-based mutation operators in the stack stage. The mutation operators include: 1) Deterministic Operators, such as bit or byte flips, increment or decrement existing integer values in the input file by a step of one byte, increment or decrement existing integer values in the input file by a step of one byte, select one byte from a hardcoded set of integers and overwrite existing data in the input file; 2) Classical Stack Operators, such as bit or byte flips, set ”interesting” bytes and words, add or subtract small integers to bytes and words, block deletion, duplication, memset, and insertion, message replacement, insertion, and duplication; 3) Field-Based Stack Operators, such as bit flips on the field range, swap bits within the field range, overwrite the field with a random value from field dictionary. Deterministic mutations systematically alter all bits, bytes, words, and double words in the original input. For instance, the fuzzer sequentially iterates over all bits in the original input, generating distinct fuzz inputs by inverting each bit. Subsequently, the fuzzer applies the stack stage, where multi-ple mutation types are applied to the same fuzz input. If ϵ¿0.5, the fuzzer utilizes field-based stack operators; otherwise, it employs classical stack operators. IV. E VALUATION 
+
+In this study, we assess the capabilities of APFuzz by performing extensive experiments based on an evaluation benchmark for protocol fuzzing. The experimental plan aims to investigate the following research questions: 
+
+• RQ1: Can we correctly interpret the binary message format of the seeds by using LLM? We first look into the LLM-based input structure learning for binary protocols and evaluate the accuracy by comparing the                                                                       
+
+> TABLE I BENCHMARK TARGETS
+> Target Protocol Type Version Seeds Lines
+> Bftpd FTP Text v5.7 54 4.7k Exim SMTP Text 38903fb 9101.7k Forked-daapd DAAP Text 2ca10d9 65 115.9k LightFTP FTP Text 5980ea1 10 4.4k Live555 RTSP Text ceeb4f4 33 52.2k ProFTPD FTP Text 4017eff8 54 227.7k Pure-FTPd FTP Text c21b45f 54 30k Kamailio SIP Text 2648eb3 3766.7k Dcmtk DICOM Binary 7f8564c 4575.2k OpenSSH SSH Binary 7cfea58 22 97.3k OpenSSL TLS Binary 437435 8441.8k Dnsmasq DNS Binary v2.73rc6 927.6k TinyDTLS DTLS Binary 06995d4 510.8k
+
+fields derived by LLM with manually derived ground truth. 
+
+• RQ2: Can we identify state variables automatically? 
+
+We compare the state variables identified in existing fuzzers and APFuzz and demonstrate the statistics about assigned values for the state variables during dynamic analysis. 
+
+• RQ3: How does APFuzz compare to the baseline and state-of-the-art protocol fuzzers? We evaluate them with regard to both effectiveness and efficiency. Effec-tiveness is measured by code coverage and the unique crashes triggered on the targets. Efficiency is measured by the fuzzing throughput in terms of both executions and messages sent per second. 
+
+A. Experimental Setup 
+
+To ensure reproducible results, we follow the fuzzing evalu-ation guidelines suggested in [26] to conduct experiments and document the process. To allow comparisons of APFuzz and state-of-the-art pro-tocol fuzzers under standardized conditions, we use Pro-FuzzBench [6], [20], a widely adopted benchmark for protocol fuzzing. It supports a representative set of 13 network servers from popular open-source projects, covering C/C++ imple-mentations of 10 application-layer protocols running over TCP and/or UDP. Specifically, half of the included protocols are text-based, while the other half are binary. Besides, from the perspective of implementation, these servers are diverse as they use a variety of APIs and fundamentally different mechanisms to handle client sessions and requests. For exam-ple, different methods are used for maintaining concurrency, e.g., pthread create() and fork(), and different function calls are adopted for network I/O, e.g., send(), receive(), fwrite(), fread(), evttp send reply(), and evhttp request get uri. Asummary of the target servers and protocols in the benchmark is presented in Table I. ProFuzzBench provides a set of Dockerfiles for automati-cally building Docker images in which the target servers are set up and ready for fuzzing executions. The setup includes TABLE II AVERAGE ACCURACY OF LLM S EED INTERPRETATION 
+
+Seed Accuracy Precision #G L #L MG #ML G #mismatch #field 
+
+dns queries 92.59% 66.67% 54.0 0.0 21.0 6.0 81.0 ssh 24.08% 18.03% 25.6 1.4 7.2 107.8 142.0 tls 70.96% 52.21% 28.4 0.2 10.0 15.8 54.4 dicom echo 45.22% 19.66% 14.0 1.0 17.2 39.0 71.2 dicom find 38.01% 15.37% 18.2 0.8 26.0 73.4 118.4 dicom get 19.61% 6.18% 9.4 0.4 20.0 122.2 152.0 dicom store 22.93% 6.15% 12.6 0.4 34.0 158.0 205.0 
+
+Fig. 2. Changes in candidate state variables during 30 minutes of fuzzing. The vertical axis represents the number of variables, and the horizontal axis represents the number of unique values TABLE III STATIC ANALYSIS RESULTS IN DIFFERENT SUBJECT 
+
+Target Type NS SG SG* Manual 
+
+Bftpd text 6 0 7 4Exim text 57 15 419 8Forked-daapd text 0 35 299 4LightFTP text 1 0 0 1Live555 text 0 9 382 3ProFTPD text 81 18 819 5Pure-FTPd text 22 4 108 3Kamailio text 58 216 2723 5Dcmtk binary 0 388 2027 5OpenSSH binary 69 19 458 7OpenSSL binary 0 66 2263 3Dnsmasq binary 15 0 0 5TinyDTLS binary 4 5 14 2
+
+both best-practice server configurations for fuzzing and any necessary patches to the servers. For example, the patches remove randomization in the code to achieve consistent and reproducible server behavior (i.e., the same execution path upon the same input), which is the essential requirement of coverage-based fuzzing. ProFuzzBench also provides a set of initial seeds for the target servers, which are contributed by both researchers and practitioners involved in the benchmark 
+
+TABLE IV THE NUMBER OF IDENTIFIED STATE VARIABLES                                                        
+
+> Target Type After Filter Example Manual [25] Example
+> Bftpd text 1state 4state Exim text 2chunking state 8chunking state Forked-daapd text 0-4state Live555 text 0-3fIsActive ProFTPD text 16 mode 5logged in Pure-FTPd text 3state needs update 3loggedin OpenSSH binary 7session state 7istate OpenSSL binary 3ourpeer 3hand state Dnsmasq binary 0-5found TinyDTLS binary 1state 2state
+
+project. The seeds are transformed from real-world network traffic trace that captures some typical usage patterns of the target servers, including some frequently used protocol commands and some valid credentials to get through the authentication process. We adopt these setups and initial seeds in our experiments. We compare APFuzz to the baseline fuzzer AFLNET [23], as well as the state-of-the-art greybox protocol fuzzers, in-cluding StateAFL [19], NSFuzz [25], and ChatAFL [17]. We consider AFLNET as the baseline fuzzer, as all other fuzzers in consideration are developed on top of it. Nonetheless, these fuzzers represent different directions of improvement over AFLNET. First, StateAFL addresses the issue of automatic state inferring and thus becomes a fully automated protocol fuzzing tool. Second, ChatAFL introduces the usage of LLMs to make the fuzzer smarter in terms of protocol awareness. Third, NSFuzz performs static analysis to identify state vari-ables and client-handling loop entries, based on which it can achieve accurate state identification and fast synchronization. The hardware that we use to run the experiments has two Intel(R) Xeon(R) Platinum 8458P CPUs (each has 44 2.7GHz cores) and 3072 GB of memory with NVME SSD hard drives. Each fuzzing campaign is run in a standalone Docker container. All containers are allocated with precisely the same amount of computation resources, i.e., one CPU core with unlimited shared host memory and storage. We run 5 trials of 24-hour runtime for each fuzzer with each target server. It is also worth noting that most of the protocol fuzzers in con-sideration require some kind of pre-computations or manual preparations that take extra time. On the one hand, ChatAFL and APFuzz take additional time to communicate with Chat-GPT before fuzzing for the purpose of pattern generation and seed enrichment. On the other hand, AFLNET and HNPFuzzer require manual instructions for protocol-specific status code interpretations, while NSFuzz requires manual annotations to accurately identify loop entries and state variables. The only exception is StateAFL, which uses a fully automatic approach that requires no preparations before fuzzing. Following the experimental approaches used in existing studies, the extra time is excluded from the 24-hour runtime of actual fuzzing. However, we record and report the additional time taken by ChatAFL and APFuzz in their pre-computations to facilitate fair comparisons. 
+
+B. Input Structure Learning (RQ1) 
+
+We use LLM to interpret the initial seeds of five binary protocol implementations in ProFuzzBench. For the purpose of evaluation, we build the ground truth by manually inspecting the messages in the seeds based on Wireshark as well as protocol specifications. The established ground truth includes the start bit, bit length, and field name for each field in a message. ProFuzzBench provides one seed for DNS, SSH, TLS, DTLS and four seeds for DICOM. We note that the pcap file of the seed for DTLS is missing, thus we are unable to establish its ground truth. To measure the accuracy of seed interpretation, we match the fields identified by LLM to the fields in the ground truth. There are three types of field matching. #L G refers to the number of cases where an LLM-identified field precisely matches a ground-truth field. #L M G refers to the number of cases where an LLM-identified field matches multiple consecutive ground-truth fields. #M L G refers to the number of cases where multiple consecutive LLM-identified fields match a single ground-truth field. Based on different types of field matching, we calculate the accuracy rate of precise single-filed matching exact acc and the accuracy rate that includes both single-filed matching and multiple-field matching multi acc as follows. 
+
+exact acc = #G L 
+
+#G L + # M G L + # G M L + # mismatch 
+
+(1) 
+
+multi acc = #G + # M G L + # G M L L 
+
+#G L + # M G L + # G M L + # mismatch 
+
+(2) To minimize randomness, we use the average of five LLM parsing attempts to evaluate the accuracy, and the final results are shown in Table II. The parsing accuracy of the DNS protocol seeds is the highest, with the single-field matching accuracy reaching 66.67% and the overall accuracy reaching an impressive 92.59%. It can also be observed that due to the complexity of the SSH and DICOM protocol specifications, the accuracy of seed file parsing for these two protocols is generally low. However, the parsed results can provide valuable guidance for field-level mutations during the fuzzing process rather than entirely random mutations. We note that the parsing accuracy for some protocols may be limited, but incorrect information is quickly discarded during the early stages of the fuzzing process. In the worst case, the process reverts to traditional randomized fuzzing without significantly affecting the fuzzer’s performance. However, even partial accuracy in parsing results proves valuable. Correctly parsed portions of the message format provide guidance, enabling the fuzzer to generate test cases that adhere to network protocol communication rules and improve the overall fuzzing efficiency of APFuzz. 
+
+C. State Representation Learning (RQ2) 
+
+In this part, we discuss the identification of state variables and experimentally demonstrate the feasibility of the identifi-cation method we adopted. This method consists of two parts: static analysis and dynamic analysis, both of which will be explored in detail. We compare three static analysis strategies: NSFuzz (NS), SGFuzz (SG), and extended SGFuzz* (SG*) against manual annotation. Table III shows SG* identifies significantly more state variables than NS due to broader enum-type matching rules, but with insufficient accuracy. NS more precisely iden-tifies communication-related state variables but still detects excessive redundancy compared to manual labeling. To address this, we conducted dynamic analysis using AFLNET across ProFuzzBench targets for 30 minutes, an-alyzing unique values for each candidate variable. Figure 2 reveals that despite large numbers of statically identified variables, only small subsets actually change during fuzzing. NS-identified variables are generally more fuzzing-relevant, though SG* detected variables in Live555 and OpenSSL where NS failed. APFuzz combines both techniques for comprehen-sive identification. Based on dynamic analysis, we established filtering rules: select variables with 3-9 unique values, exclude those exceed-ing 10,000 unique values, and prioritize variables containing ”state” in their names. Variables with fewer than 3 values show TABLE V AVERAGE CODE COVERAGE IMPROVEMENTS OF DIFFERENT FUZZERS 
+
+Target Service Type Branch Coverage Line Coverage AFLNET StateAFL NSFuzz ChatAFL HNPFuzzer SGFuzz APFuzz AFLNET StateAFL NSFuzz ChatAFL HNPFuzzer APFuzz Bftpd Text 483.6 -5.25% -1.57% -0.12% -1.36% – -1.16% 1253.6 -2.97% -1.40% +0.14% -0.34% -0.37% 
+
+Exim Text 2904.2 +42.02% +44.23% +4.00% +4.66% – +46.03% 4772.6 +43.36% +45.52% +4.14% +4.26% +45.84% 
+
+Forked-daapd Text 2404.0 -5.61% +18.54% +11.64% +5.57% – +15.34% 7552.4 -5.90% +12.82% +6.72% +7.77 % +10.01% 
+
+LightFTP Text 339.6 -19.55% +8.83% +8.48% +0.82% – +7.60% 704.2 -15.39% +4.63% +5.71% +1.51% +5.31% 
+
+Live555 Text 2798.8 -0.56% -0.01% -0.54% -2.69% -38.86% +0.92% 5630.4 -0.35% +0.40% -0.40% -1.83% +0.18% 
+
+ProFTPD Text 5161.6 -1.19% +0.90% -6.66% -0.34% – +1.84% 11176.2 -0.59% +0.74% -5.61% -0.27% +1.28% 
+
+Pure-FTPd Text 1146.8 -8.02% +13.41% -9.64% +6.17% – +7.94% 2045.6 -5.75% +9.22% -6.55% +4.78% +5.82% 
+
+Kamailio Text 9220.4 -7.92% +5.31% -24.21% -16.72% – +2.93% 15391.8 -3.36% +3.30% -11.17% -8.49% +2.25% 
+
+Dcmtk Binary 3081.2 +0.45% -2.04% – +0.67% – -1.99% 4162.6 +0.34% -1.41% – +0.35% -1.19% 
+
+OpenSSH Binary 3359.6 -1.27% -0.17% – -2.34% – -2.08 7529.2 -1.11% -0.29% – -1.24% -1.64% 
+
+OpenSSL Binary 10081.6 -0.37% +1.19% – +1.06% -32.96% +1.20% 23123.0 -0.12% +0.83% – +0.70% +0.77% 
+
+Dnsmasq Binary 906.4 +5.27% +5.98% – +34.00% – +35.86% 1456.2 +4.24% +4.33% – +27.88% +29.49% 
+
+TinyDTLS Binary 561.6 -2.39% +16.74% – +11.15% – +15.92% 1353.0 -4.02% +11.71% – +5.99% +11.75% 
+
+Average - -0.34% +8.56% -2.13% +3.13% -35.91% +10.03% - +0.64% +6.98% -0.88% +3.16% +8.42% 
+
+TABLE VI AVERAGE THROUGHPUT ON DIFFERENT FUZZERS WITH 5 R UNS OF 24 H OURS 
+
+Target Service Type Executions per Second Messages Sent per Second AFLNET StateAFL NSFuzz ChatAFL HNPFuzzer APFuzz AFLNET StateAFL NSFuzz ChatAFL HNPFuzzer APFuzz Bftpd Text 3.49 0.77 × 10.40 × 1.18 × 2.91 × 10.49 × 74.3 1.37 × 6.51 × 1.35 × 2.46 × 6.92 ×
+
+Exim Text 2.72 0.83 × 2.78 × 0.88 × 2.76 × 2.96 × 22.69 0.66 × 1.59 × 1.39 × 4.15 × 3.08 ×
+
+Forked-daapd Text 0.73 0.99 × 4.10 × 1.05 × 3.47 × 2.84 × 6.13 0.75 × 1.35 × 1.92 × 1.63 × 1.54 ×
+
+LightFTP Text 2.56 0.72 × 12.33 × 1.30 × 7.68 × 7.22 × 75.87 0.61 × 4.42 × 1.42 × 11.66 × 3.49 ×
+
+Live555 Text 8.14 0.55 × 6.60 × 1.04 × 0.58 × 3.77 × 116.59 0.63 × 8.27 × 1.18 × 0.53 × 5.94 ×
+
+ProFTPD Text 2.47 0.74 × 4.06 × 0.70 × 1.68 × 6.51 × 77.94 0.88 × 6.13 × 0.83 × 0.97 × 8.04 ×
+
+Pure-FTPd Text 4.58 0.87 × 5.00 × 1.71 × 2.66 × 4.22 × 99.69 0.67 × 3.11 × 2.45 × 2.33 × 9.93 ×
+
+Kamailio Text 3.59 1.19 × 1.87 × 1.02 × 2.35 × 1.86 × 32.5 1.12 × 1.70 × 2.01 × 4.28 × 1.59 ×
+
+Dcmtk Binary 13.38 1.51 × 1.14 × – 1.12 × 0.95 × 43.62 1.27 × 2.00 × – 0.81 × 2.00 ×
+
+OpenSSH Binary 14.46 0.50 × 1.48 × – 1.11 × 1.39 × 50.96 0.60 × 6.16 × – 0.64 × 4.96 ×
+
+OpenSSL Binary 5.33 0.83 × 2.49 × – 2.58 × 2.12 × 38.97 1.03 × 0.85 × – 5.57 × 1.57 ×
+
+Dnsmasq Binary 4.62 1.20 × 9.60 × – 3.87 × 6.29 × 144.22 0.92 × 10.75 × – 5.06 × 8.10 ×
+
+TinyDTLS Binary 2.4 0.7 × 31.80 × – 30.68 × 16.86 × 35.81 1.01 × 42.72 × – 82.12 × 23.48 ×
+
+Average - 0.88 × 7.20 × 1.11 × 4.88 × 5.19 × - 0.89 × 7.29 × 1.57 × 9.40 × 6.20 ×
+
+TABLE VII AVERAGE NUMBER OF VERTEXES AND EDGES OF THE FUZZER -INFERRED STATE MODELS 
+
+Target Service Type AFLNET StateAFL NSFuzz ChatAFL HNPFuzzer APFuzz Vertexes Edges Vertexes Edges Vertexes Edges Vertexes Edges Vertexes Edges Vertexes Edges Bftpd Text 24.0 175.4 4.6 8.2 14.2 41.6 24.0 259.4 23.0 224.6 5.0 11.0 
+
+Exim Text 11.0 50.6 44.6 104 5.6 15.0 13.6 83.8 11.2 68.0 4.2 8.6 
+
+Forked-daapd Text 8.2 22.2 3.4 3.8 1.0 1.0 8.0 23.8 8.0 28.4 1.0 1.0 
+
+LightFTP Text 23.8 184.0 8.4 17.4 4.0 8.0 24.2 259.8 22.6 252.8 4.0 8.0 
+
+Live555 Text 10.0 72.6 17.2 42.2 15.0 52.2 11.6 109.2 10.0 80.8 14.6 53.2 
+
+ProFTPD Text 28.0 255.0 5.4 12.8 29.6 137.2 27.4 325.0 29.6 319.8 32.4 160.4 
+
+Pure-FTPd Text 28.8 273.0 6.2 13.4 6.0 18.2 28.8 310.2 28.6 383.8 74.4 944.0 
+
+Kamailio Text 13.4 96.0 5.6 10.4 4.6 12.6 14.2 125.2 10.2 83.6 4.8 13.2 
+
+Dcmtk Binary 4.0 3.0 21.8 41.6 6.8 13.6 – – 6.0 6.0 7.2 15.0 
+
+OpenSSH Binary 48.6 90.4 82.2 228.6 20.0 47.0 – – 24.0 71.2 14.0 22.6 
+
+OpenSSL Binary 68.8 73.6 2.2 2.4 17.2 30.4 – – 8.0 15.4 9.2 13.4 
+
+Dnsmasq Binary 106.0 334.0 154.0 756.8 2.0 2.0 – – 283.4 1266.4 1.0 1.0 
+
+TinyDTLS Binary 8.8 25.6 7.8 16.4 7.0 26.6 – – 9.4 52.6 1.0 1.0 Fig. 3. The inferred state model of LightFTP by APFuzz  
+
+> Fig. 4. The inferred state model of OpenSSH by APFuzz
+
+minimal fuzzing impact, while those exceeding 3 values can create oversensitive state models. Table IV shows our combined method identifies state vari-ables similar to manual annotation with high confidence across various ProFuzzBench targets. For targets where automatic identification failed (likely due to insufficient dynamic analysis time), we used NSFuzz’s manual annotation approach.                                   
+
+> TABLE VIII NUMBER OF UNIQUE CRASHES FOUND BY DIFFERENT FUZZERS
+> Subject AFLNET NSFuzz APFuzz StateAFL HNPFuzzer ChatAFL
+> Dnsmasq 13333-Tinydtls 34542-Live555 555535Total 812 13 12 85
+
+D. Fuzzing Performance (RQ3) 
+
+We evaluate APFuzz’s feasibility using code coverage as the standard metric for fuzzer effectiveness. Table V shows average branch and line coverage across five experimental runs for 13 target services. APFuzz achieved the best results com-pared to state-of-the-art fuzzers, with an average increase of 10.03Table VI presents throughput statistics including message processing speed and execution speed. NSFuzz achieved the fastest message processing speed while HNPFuzzer had the fastest execution speed. APFuzz ranks among the faster fuzzers overall, providing sufficient throughput for comprehensive state exploration. State model inference varies across fuzzers due to different representation methods: AFLNET uses server response codes, StateAFL utilizes fuzzy hashes of memory data, and NSFuzz adopts variable-based representations. Table VII shows the average vertices and edges in state models inferred during 24-hour experiments. Despite targeting the same services, different fuzzers generate distinct state models. Figures 3 and 4 illustrate APFuzz’s state models for LightFTP and OpenSSH respectively. 
+
+E. Potential Bug Finding Effectiveness (RQ3) 
+
+To evaluate vulnerability discovery capabilities, we replayed crashing test cases from five independent 24-hour fuzzing runs and analyzed outputs. AddressSanitizer [28] was used to deduplicate crashes by program addresses, ensuring fair comparison across fuzzers. Table VIII shows unique crashes identified by each fuzzer. APFuzz achieved the best performance with 13 unique crashes, followed by NSFuzz and StateAFL (12 each), while AFLNET and HNPFuzzer found 8 each. ChatAFL discovered 5 crashes in Live555. APFuzz consistently outperformed others across different targets, finding 5 unique crashes in TinyDTLS com-pared to 4 or fewer by other fuzzers. Table IX compares vulnerability detection times. AP-Fuzz demonstrated superior efficiency, detecting heap-buffer-overflow vulnerabilities in Dnsmasq within 4,246 and 5,484 seconds, while other fuzzers took significantly longer or failed within the 24-hour period. In TinyDTLS, APFuzz quickly identified three global-buffer-overflow vulnerabilities (148, 702, and 559 seconds), and in Live555, it discovered heap-use-after-free vulnerabilities in 1,196 and 978 seconds. APFuzz’s ability to identify diverse memory safety bugs—including heap-buffer-overflow, global-buffer-overflow, heap-use-after-free, and stack-related issues—demonstrates its effectiveness in detecting critical vulnerabilities in network protocol implementations V. DISCUSSION 
+
+This paper contributes to the field of automatic protocol fuzzing systems through the proposal of APFuzz, a novel framework designed to enhance protocol fuzzing capabilities by leveraging large language models and a combination of static and dynamic analysis techniques. APFuzz captures mes-sage format information via large language models (LLMs), introducing an advanced method for understanding protocol structures and providing better insights into message formats without relying solely on manual analysis or heuristics. By combining static and dynamic methods, APFuzz identifies suitable state variables that reflect protocol status, enhancing effectiveness for fuzzing campaigns. However, the current im-plementation has limitations. It primarily focuses on message format extraction and does not fully address the dependency problem inherent in binary protocols, which impacts its abil-ity to model and test protocols with complex dependencies. Additionally, the use of simple counting methods for filtering state variables may include irrelevant variables, as the filtering results are still partly influenced by the quality of static analysis, leading to potential noise. Despite these challenges, APFuzz set the stage toward automated and efficient protocol TABLE IX COMPARISON OF BUG DETECTION TIME ACROSS DIFFERENT FUZZERS (IN SECONDS )
+
+Target Type Position AFLNET NSFuzz StateAFL HNPFuzzer ChatAFL APFuzz 
+
+Dnsmasq heap-buffer-overflow rfc1035.c:109 >24h >24h 39409 >24h - 4246 
+
+Dnsmasq heap-buffer-overflow rfc1035.c:120 >24h >24h >24h >24h - 5484 
+
+Dnsmasq heap-buffer-overflow rfc1035.c:152 22518 2477 8106 4595 - 4200 Dnsmasq heap-buffer-overflow rfc1035.c:181 >24h >24h 4863 8393 - >24h Dnsmasq heap-buffer-overflow rfc1035.c:122 >24h >24h >24h 5856 - >24h Tinydtls global-buffer-overflow dtls-numeric.h:93 15589 17490 41251 >24h - 148 
+
+Tinydtls global-buffer-overflow dtls-numeric.h:94 737 >24h 1445 971 - 702 
+
+Tinydtls global-buffer-overflow dtls.c:361 >24h 1303 >24h >24h - 559 
+
+Tinydtls global-buffer-overflow sha2.c:494 24 57 77 5 - 180 Live555 heap-use-after-free MPEG1or2Demux.cpp:129 4770 9441 2867 10884 2157 1196 
+
+Live555 heap-use-after-free Media.h:59 1079 1705 1630 4299 1092 978 
+
+Live555 stack-buffer-overflow RTSPServer.cpp:397 >24h >24h >24h >24h 65606 >24h Live555 stack-use-after-return RTSPServer.cpp:607 >24h 14195 >24h >24h >24h 27883 
+
+fuzzing. Future work could focus on addressing protocol field dependencies in binary protocols, improving state variable filtering with advanced network protocol reverse engineering methods, and expanding support for diverse protocols and testing scenarios. VI. C ONCLUSION 
+
+In this paper, we proposed to enhance the smartness of greybox protocol fuzzers from the perspectives of both the state model and the message model of communication proto-cols. The proposed approaches are implemented in APFuzz. It supports automatic state representation learning and state model inference. It also adopts LLM-based binary message interpretations to enhance the structure awareness in message mutations. In the evaluations, we compare APFuzz with the baseline fuzzer AFLNET as well as the state-of-the-art fuzzers. The results show that APFuzz outperforms existing fuzzers, achieving 10.03% and 8.42% improvements over the baseline fuzzer on branch coverage and line coverage, respectively, with 5.19 × and 6.20 × execution and message-sending throughput in a fully automatic manner. ACKNOWLEDGMENT 
+
+This research was conducted under the 6G Security Re-search and Development Project led by the Commonwealth Scientific and Industrial Research Organisation (CSIRO), with funding appropriated by the Australian Government Depart-ment of Home Affairs. The views expressed in this paper are those of the authors and do not necessarily reflect any Aus-tralian Government policy position. More information about the Project is available at https://research.csiro.au/6gsecurity/. REFERENCES [1] Anastasios Andronidis and Cristian Cadar. Snapfuzz: high-throughput fuzzing of network applications. In Proceedings of the 31st ACM SIGSOFT International Symposium on Software Testing and Analysis ,ISSTA 2022, page 340–351, New York, NY, USA, 2022. Association for Computing Machinery. [2] Cornelius Aschermann, Sergej Schumilo, Ali Abbasi, and Thorsten Holz. Ijon: Exploring deep state spaces via fuzzing. In 2020 IEEE Symposium on Security and Privacy (SP) , pages 1597–1612, 2020. [3] Jinsheng Ba, Marcel B¨ ohme, Zahra Mirzamomen, and Abhik Roychoud-hury. Stateful greybox fuzzing. In 31st USENIX Security Symposium (USENIX Security 22) , pages 3255–3272, Boston, MA, August 2022. USENIX Association. [4] Greg Banks, Marco Cova, Viktoria Felmetsger, Kevin Almeroth, Richard Kemmerer, and Giovanni Vigna. Snooze: Toward a stateful network protocol fuzzer. In Sokratis K. Katsikas, Javier L´ opez, Michael Backes, Stefanos Gritzalis, and Bart Preneel, editors, Information Security , pages 343–358, Berlin, Heidelberg, 2006. Springer Berlin Heidelberg. [5] Marcel B¨ ohme, Cristian Cadar, and Abhik Roychoudhury. Fuzzing: Challenges and reflections. IEEE Software , 38(3):79–86, 2021. [6] Marcel B¨ ohme, L´ aszl´ o Szekeres, and Jonathan Metzman. On the reliability of coverage-based fuzzer benchmarking. In Proceedings of the 44th International Conference on Software Engineering , ICSE ’22, page 1621–1633, New York, NY, USA, 2022. Association for Computing Machinery. [7] Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al. Language models are few-shot learners. 
+
+Advances in neural information processing systems , 33:1877–1901, 2020. [8] Chen Chen, Baojiang Cui, Jinxin Ma, Runpu Wu, Jianchao Guo, and Wenqian Liu. A systematic review of fuzzing techniques. Computers & Security , 75:118–137, 2018. [9] Vitaly Chipounov, Volodymyr Kuznetsov, and George Candea. S2e: A platform for in-vivo multi-path analysis of software systems. Acm Sigplan Notices , 46(3):265–278, 2011. [10] Cristian Daniele, Seyed Behnam Andarzian, and Erik Poll. Fuzzers for stateful systems: Survey and research directions. ACM Comput. Surv. ,56(9), apr 2024. [11] Andrea Fioraldi, Dominik Maier, Heiko Eißfeldt, and Marc Heuse. AFL++ : Combining incremental steps of fuzzing research. In 14th USENIX Workshop on Offensive Technologies (WOOT 20) . USENIX Association, August 2020. [12] Junsong Fu, Shuai Xiong, Na Wang, Ruiping Ren, Ang Zhou, and Bharat K. Bhargava. A framework of high-speed network protocol fuzzing based on shared memory. IEEE Transactions on Dependable and Secure Computing , pages 1–18, 2023. [13] Wentao Gao, Van-Thuan Pham, Dongge Liu, Oliver Chang, Toby Murray, and Benjamin I.P. Rubinstein. Beyond the coverage plateau: A comprehensive study of fuzz blockers (registered report). In Pro-ceedings of the 2nd International Fuzzing Workshop , FUZZING 2023, page 47–55, New York, NY, USA, 2023. Association for Computing Machinery. [14] Google. Afl - american fuzzy lop. https://github.com/google/AFL, 2024. Accessed: 2024-07-15. [15] Rauli Kaksonen, Marko Laakso, and Ari Takanen. Software security assessment through specification mutations and fault injection. In 
+
+Communications and Multimedia Security Issues of the New Century: IFIP TC6/TC11 Fifth Joint Working Conference on Communications and Multimedia Security (CMS’01) May 21–22, 2001, Darmstadt, Germany ,pages 173–183. Springer, 2001. [16] Junqiang Li, Senyi Li, Gang Sun, Ting Chen, and Hongfang Yu. Snpsfuzzer: A fast greybox fuzzer for stateful network protocols using snapshots. IEEE Transactions on Information Forensics and Security ,17:2673–2687, 2022. [17] Ruijie Meng, Martin Mirchev, Marcel B¨ ohme, and Abhik Roychoudhury. Large language model guided protocol fuzzing. In Network and Distributed System Security (NDSS) Symposium 2024 , February 2024. [18] Barton P. Miller, Lars Fredriksen, and Bryan So. An empirical study of the reliability of unix utilities. Commun. ACM , 33(12):32–44, dec 1990. [19] Roberto Natella. Stateafl: Greybox fuzzing for stateful network servers. 
+
+Empirical Softw. Engg. , 27(7), dec 2022. [20] Roberto Natella and Van-Thuan Pham. Profuzzbench: a benchmark for stateful protocol fuzzing. In Proceedings of the 30th ACM SIGSOFT International Symposium on Software Testing and Analysis , ISSTA 2021, page 662–665, New York, NY, USA, 2021. Association for Computing Machinery. [21] Nicholas Nethercote and Julian Seward. Valgrind: a framework for heavyweight dynamic binary instrumentation. ACM Sigplan notices ,42(6):89–100, 2007. [22] Joshua Pereyda. boofuzz documentation. https://github.com/jtpereyda/ boofuzz, 2019. [23] Van-Thuan Pham, Marcel B¨ ohme, and Abhik Roychoudhury. Aflnet: A greybox fuzzer for network protocols. In 2020 IEEE 13th International Conference on Software Testing, Validation and Verification (ICST) ,pages 460–465, 2020. [24] Van-Thuan Pham, Marcel B¨ ohme, Andrew E. Santosa, Alexan-dru R˘ azvan C˘ aciulescu, and Abhik Roychoudhury. Smart greybox fuzzing. IEEE Transactions on Software Engineering , 47(9):1980–1997, 2021. [25] Shisong Qin, Fan Hu, Zheyu Ma, Bodong Zhao, Tingting Yin, and Chao Zhang. Nsfuzz: Towards efficient and state-aware network service fuzzing. ACM Trans. Softw. Eng. Methodol. , 32(6), sep 2023. [26] M. Schloegel, N. Bars, N. Schiller, L. Bernhard, T. Scharnowski, A. Crump, A. Ale-Ebrahim, N. Bissantz, M. Muench, and T. Holz. Sok: Prudent evaluation practices for fuzzing. In 2024 IEEE Symposium on Security and Privacy (SP) , pages 140–140, Los Alamitos, CA, USA, may 2024. IEEE Computer Society. [27] Sergej Schumilo, Cornelius Aschermann, Andrea Jemmett, Ali Abbasi, and Thorsten Holz. Nyx-net: network fuzzing with incremental snap-shots. In Proceedings of the Seventeenth European Conference on Computer Systems , EuroSys ’22, page 166–180, New York, NY, USA, 2022. Association for Computing Machinery. [28] Konstantin Serebryany, Derek Bruening, Alexander Potapenko, and Dmitriy Vyukov. {AddressSanitizer }: A fast address sanity checker. In 2012 USENIX annual technical conference (USENIX ATC 12) , pages 309–318, 2012. [29] Zhaowei Zhang, Hongzheng Zhang, Jinjing Zhao, and Yanfei Yin. Asurvey on the development of network protocol fuzzing techniques. 
+
+Electronics , 12(13), 2023. [30] Xiaogang Zhu, Sheng Wen, Seyit Camtepe, and Yang Xiang. Fuzzing: A survey for roadmap. ACM Comput. Surv. , 54(11s), sep 2022.

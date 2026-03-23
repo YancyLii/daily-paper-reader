@@ -1,0 +1,638 @@
+Title: Weaver: Fuzzing JavaScript Engines at the JavaScript-WebAssembly Boundary
+
+URL Source: https://arxiv.org/pdf/2603.18789v1
+
+Published Time: Fri, 20 Mar 2026 01:02:07 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# WEAVER : Fuzzing JavaScript Engines at the JavaScript-WebAssembly Boundary 
+
+Lingming Zhang ∗† , Binbin Zhao ∗, Puzhuo Liu †, Qinge Xie ‡, Peng Di †, Jianhai Chen ∗, Shouling Ji ∗∗Zhejiang University, China 
+
+{lingming.zhang, binbinz, chenjh919, sji }@zju.edu.cn 
+
+> †
+
+Ant Group, China 
+
+{liupuzhuo.lpz, dipeng.dp }@antgroup.com 
+
+> ‡
+
+Georgia Institute of Technology, USA qxie47@gatech.edu 
+
+Abstract —The security of modern JavaScript (JS) engines is critical since they provide the primary defense mechanism for executing untrusted code on the web. The recent integration of WebAssembly (Wasm) has transformed these engines into complex polyglot environments, creating a novel attack surface at the JS-Wasm interaction boundary due to the distinct type systems and memory models of two languages. This boundary remains largely underexplored, as previous works mainly focus on testing JS and Wasm as two isolated entities rather than investigating the security implications of their cross-language interactions. This paper proposes W EAVER , an effective greybox fuzzing framework specifically tailored to uncover vulnerabilities at the JS-Wasm boundary. To comply with the language constraints, WEAVER uses a type-aware generation strategy, meticulously maintaining the dual-type representation for every generated variables. This allows fuzzer to validly utilize variables across the language boundary. Besides, W EAVER leverages the UCB-1 algorithm to intelligently schedule mutators and generators to maximize the discovery of new code paths. We have implemented and evaluated W EAVER on three JS engines. The results indicate that W EAVER achieves superior code coverage compared to state-of-the-art fuzzers. Moreover, WEAVER has uncovered two new bugs in the latest versions of these engines, one of which is considered high severity and set to highest priority, demonstrating the practicality of W EAVER .
+
+## 1. Introduction 
+
+JavaScript (JS) is a cornerstone of the modern Internet, enabling dynamic and interactive user experiences for over 98.8% of all the websites [1]. To execute JS code, all major web browsers and server-side runtimes (e.g., Node.js) rely on high-performance JS engines, such as SpiderMonkey [2], V8 [3], and JavaScriptCore [4]. One core responsibility of these engines is to provide a secure and robust environment for executing untrusted code from arbitrary sources. Thus, the security of the JS engine itself is of vital importance. Any vulnerability occurred at the engine level can break the last line of defense and result in severe consequences, such as remote code execution [5], [6], posing a critical threat to user security. In the past few years, the introduction of WebAssembly (Wasm) [7] has fundamentally altered the internal execution environment of JS engines. Wasm is a safe, portable binary instruction set and serves as the compilation target for high-level programming languages like C++. The integration of Wasm into JS engines enables traditional high-performance applications to be run on the web yet simultaneously turns JS engine into a complex polyglot environment , where JS code and Wasm module coexist and could perform efficient inter-operations. This sheds light on a novel attack surface, namely, the boundary between two languages with distinct type systems and memory models. To date, little attention has been paid to the vulnerability discovery at the language boundary. Previous research works on JS engines usually treat JS and Wasm as isolated entities. They either focus on detecting memory bugs or logical flaws in the JS interpreter and Just-in-Time (JIT) compiler [8], [9], [10], [11], or devote to detecting issues in Wasm subsystem’s parsing, compilation, and execution phases [12], [13]. The security issues raised during the cross-language interaction remains an underexplored area. In this paper, we attempt to leverage fuzzing to uncover vulnerabilities at the JS-Wasm interaction boundary. Fuzzing is considered one of the most effective techniques for finding bugs, which generates a large amount of test cases and feeds them to the target to detect any abnormal behaviors. Unlike static analysis techniques, fuzzing scales smoothly to larger programs, especially under the context of JS engine, and is mostly free from false positives. However, building a fuzzer that can effectively detect bugs in JS-Wasm interactions still faces the following challenges: 
+
+Challenge I: Compliance with dual-language validation rules. The semantic correctness of test cases has constantly been a major concern in the field of domain-specific fuzzing and is extremely important within JS engine research, given that the prevalence of vulnerabilities is shifting from parser and interpreter to optimizing compiler [14]. The difficulty lies in the fact that JS and Wasm are two distinct languages with different validation rules, which means the interaction 
+
+> arXiv:2603.18789v1 [cs.CR] 19 Mar 2026
+
+across two languages must respect each language’s semantic requirements. This demands the fuzzer to possess a deep and comprehensive understanding of both languages’ semantics and the specific rules governing the interaction interface to produce meaningful test cases. 
+
+Challenge II: Effective navigation of combinatorial input space. The generation of inputs involves the JS and Wasm part, both of which encompass rich feature sets. For instance, JS itself contains over 50 standard built-in objects featuring varied purposes. The combinatorial explosion of the poten-tial interaction space necessitates that a fuzzer possess the capacity for efficiently exploring complex and rare JS-Wasm interactions. In regard to these challenges, we propose W EAVER , an effective greybox fuzzing framework specifically tailored for JS-Wasm interaction. To address Challenge I , we adopt the type-aware test case generation, which has proven useful in previous studies [15]. To satisfy the semantic constraints of both interacting parties, W EAVER meticulously maintains a dual-type representation for every generated object, signify-ing its JS and Wasm types. Building on this foundation, the generation process proceeds in a unified manner: it directly retrieves objects matching the requisite JS/Wasm types from the surrounding context, without tracking whether the object comes from the JS or Wasm domain, thereby allowing Wasm objects to be correctly used in the JS context and vice versa. To tackle Challenge II , we model the fuzzing campaign as a multi-armed bandit problem [16] and leverage the UCB-1 algorithm to select generators and mutators that maximize the possibility of discovering new code paths. We implement W EAVER and comprehensively evaluate it on a set of representative JS engines from major vendors, including JavaScriptCore from Apple, V8 from Google, and SpiderMonkey from Mozilla. Compared to state-of-the-art fuzzers such like Fuzzilli [15], W EAVER achieves superior performance on both line and branch coverage. Moreover, WEAVER has found two previously unknown bugs in the lat-est versions of JavaScriptCore and SpiderMonkey. Notably, the bug found in SpiderMonkey is deemed high-severity by developers as it could enable arbitrary code execution. This highlights the severity of bugs identified by W EAVER .
+
+Contributions. In summary, our main contributions include:  
+
+> •
+
+We propose W EAVER , a novel approach for fuzzing the JS-Wasm interaction boundary, which has remained a largely underexplored area. W EAVER utilizes the dual-type representation and UCB-1 algorithm to generate test cases that satisfy language constraints while simul-taneously exploring diverse interactions.  
+
+> •
+
+We conduct thorough experiments which show that WEAVER outperforms state-of-the-art baselines such as Fuzzilli in terms of code coverage. Besides, W EAVER ’s long-term fuzzing campaign has led to the discovery of two new bugs, one of which is set to high severity and top priority, demonstrating the efficacy of W EAVER on finding real-world bugs. In total, we have been awarded $1K in bug bounties for our findings. 
+
+## 2. Background 
+
+In this section, we first introduce the fundamental char-acteristics of JS and Wasm and their interaction mechanisms, followed by a motivating example to articulate the premise of this work. 
+
+2.1. JS-Wasm Interaction 
+
+Modern JS engines such as SpiderMonkey can be viewed as an extremely complex trusted computing base whose core responsibility is to execute two types of code formats which share intrinsically distinct design paradigms: 1) JS is a high-level programming language with dynamic typing, which indicates a variable’s type is determined at runtime and could be changed at any point during execution. For instance, dynamicVar in Figure 1a is declared as a number type at start and later reassigned as the string type without raising any runtime error. Besides, JS adopts garbage collection to automatically trace and reclaim memory objects that are no longer referenced. 2) Wasm is a low-level binary instruction set designed as a compilation target for languages like C++ and Rust. In contrast to JS, Wasm is statically typed and its code must pass the validation phase to ensure type safety. For example, the global in Figure 1b is declared as an i32 type, which remains the same across execution. Moreover, Wasm allows explicit linear memories to be declared to support the manual memory management practice. While JS and Wasm are essentially different, JS engines still provide mechanisms for them to interact bidirectionally, thereby allowing both to function more effectively. Within the JS context, there are mainly seven distinct Wasm object types available for use: 1⃝ Memory represents a randomly accessible linear array that holds raw bytes; 2 ⃝ Table is used to store references which could either come from Wasm or JS; 3 ⃝ Global stands for global variable that can be declared as mutable or immutable and further provided initialization value; 4 ⃝ Tag defines the shape of an exception that can be thrown in Wasm code; 5 ⃝ Function denotes a callable Wasm function which comprises function signature, types of local variables, and function body; 6 ⃝ Module is a stateless Wasm program that collects definitions of the aforementioned five Wasm objects and might also declares those objects as either imported from or exported to the JS context; 7 ⃝ Instance is a stateful, executable instance of a Wasm module, providing the JS environment with access to all its exported objects. According to the Wasm-JS Interface specification [17], the first four Wasm object types can be instantiated directly via the JS APIs or exported through a Wasm instance. Functions are exclusively exported by Wasm instances, while the final two objects are solely constructed via the JS APIs. Figure 1c presents an illustrating example where jsmem is constructed through the WebAssembly.Memory API and wasmmem 
+
+is exported to the JS environment from the Wasm instance 1 let dynamicVar = 100;                   
+
+> 2// dynamically typed.
+> 3dynamicVar ="Hello";
+> 4dynamicVar ={key: "value"};
+> 5// garbage collection.
+> 6let data =new Array(100000);
+> 7data.fill("Test");
+
+(a) JS code sample.           
+
+> 1(module
+> 2;; explicit memory.
+> 3(memory 1 10)
+> 4;; statically typed.
+> 5(global i32 )
+> 6(func (result i64 ))
+> 7)
+
+(b) Wasm code sample.                                                                    
+
+> 1function greet() {
+> 2console.log("Hello World!");
+> 3}
+> 4let jsmem =new WebAssembly .Memory({initial:1});
+> 5// (module
+> 6// (import "js" "greet" (func))
+> 7// (memory (;0;) 1 5)
+> 8// (export "fun" (func 1))
+> 9// (export "mem" (memory 0))
+> 10 // (func (param i32) (result i32)
+> 11 // call 0
+> 12 // local.get 0
+> 13 // )
+> 14 // )
+> 15 let mod =new WebAssembly .Module( new Uint8Array(...));
+> 16 let inst =
+> 17 new WebAssembly .Instance(mod, {js:{greet:greet}});
+> 18 let wasmmem =inst.exports[’mem’];
+> 19 let wasmfun =inst.exports[’fun’];
+> 20 // apossible data-flow interaction.
+> 21 let view =new DataView(wasmmem.buffer);
+> 22 // apossible control-flow interaction.
+> 23 wasmfun(0);
+
+(c) JS-Wasm interaction code sample. 
+
+Figure 1. The code examples illustrating key characteristics of JS and Wasm along with their interaction. 
+
+inst . Ideally, all Wasm objects can be viewed as object 
+
+types under JS with different properties and methods, which enables interactions with different JS built-ins. For instance, memory object contains a buffer property which points to the underlying memory buffer. Since buffer property is of type ArrayBuffer , it can be further utilized to create a DataView as shown in Figure 1c. From the other side, Wasm accepts JS objects through the import declaration as long as the object matches the predefined Wasm type. For example, the JS function greet in Figure 1c can be treated as a Wasm function that takes no parameters and yields no return values, allowing it to be imported and invoked under Wasm context. As can be seen from previous discussion, the interaction between JS and Wasm introduces a new layer of complexity to JS engines, where the interleaving of cross-language data and control flows becomes commonplace. Failure to handle the cross-language interaction correctly could introduce new security vulnerabilities into the engine and we will discuss one such example in Section 2.2. 
+
+2.2. Motivating Example 
+
+Here, we center around a previously identified vulner-ability to present the motivation of this work, discuss why prior research is inadequate for discovering such flaws, and demonstrate the challenges in detecting this class of bugs.                                  
+
+> 1function c() {
+> 2var dbg =
+> 3newGlobal({newCompartment: true }). Debugger (this );
+> 4dbg.getNewestFrame().older.offset;
+> 5}
+> 6function b() {
+> 7var bin = wasmTextToBinary (‘
+> 8(module
+> 9(import "m" "f" (func $f))
+> 10 (func (export "test") call $f))
+> 11 ‘);
+> 12 var mod = new WebAssembly .Module(bin);
+> 13 var inst = new WebAssembly .Instance(mod, {m: {f: c}}) ;
+> 14 inst.exports.test();
+> 15 inst.exports.test();
+> 16 }
+> 17 for (var i = 0; i < 5; i++) {
+> 18 b();
+> 19 }
+
+Figure 2. Proof-of-Concept of the SpiderMonkey Bug-1900740. 
+
+Figure 2 illustrates a real-world vulnerability discovered in SpiderMonkey which involves three steps to trigger. First, Line 17-19 employ a for-loop to repeatedly execute function 
+
+b, which activates JS engine’s JIT compilation to compile function b into more efficient machine code. This lays the foundation for following steps. Next, the function b defines, compiles, and instantiates a Wasm module. The crux of this step lies in the Wasm module importing and invoking a JS function c. When we call the exported Wasm function test 
+
+at Line 14, this effectively creates a JS →Wasm →JS cross-language control flows, which sets up the scene for the final bug triggering. At last, the function c utilizes the Debugger interface to inspect call frames of previously executed code. However, the Wasm frame debugger in SpiderMonkey fails to correctly handle or skip non-Wasm frames when iterating through stack frames, which results in a corrupted state and eventually triggers an assertion failure. From the analysis above, it is apparent that this security flaw is not purely a JS or Wasm bug, it emerges only from the interaction of two distinct languages. Therefore, this bug effectively eludes existing state-of-the-art fuzzers which aim to find bugs introduced by single language. Specifically, the JS-centric fuzzers such as DIE [14] and OptFuzz [9] utilize sophisticated test case generation and mutation strategies or customized feedback to find bugs in JS interpreter and JIT compiler. It is possible for them to craft the Debugger API calls and the JIT triggers such as the ones illustrated in the yellow shaded region of Figure 2. However, they are mostly agnostic to the generation of Wasm-related components and, consequently, incapable of synthesizing the requisite cross-language interactions. Wasm-centric fuzzers [12], [13], on the other hand, excel at generating complex and valid Wasm modules to test the Wasm parser, validator, and runtime, but they generally rely on a simple, static test harness template to execute the generated Wasm modules under JS engines. For instance, Waltzz [13] is configured to produce modules that require no imports and export one function called main .The sole purpose of the test harness applied in Waltzz is to instantiate the passed-in Wasm module and call the exported WEAVER          
+
+> GENERATIVE ENGINE
+> MUTATION ENGINE MUTATOR SCHEDULER
+> GENERATOR SCHEDULER
+> JS GENERATORS
+> RegExpGenerator
+> YieldGenerator
+> WASM GENERATORS
+> ObjectLiteralGenerator
+> TryCatchGenerator ...
+> CodeGenMutator
+> WasmMemoryGenerator
+> WasmGlobalGenerator
+> WasmTableGenerator
+> WasmTagGenerator
+> WasmInstanceAndExportGenerator ...
+> CombineMutator
+> ConcatMutator
+> ExplorationMutator
+> ProbingMutator
+> OperationMutator
+> InputMutator
+> FixupMutator
+> SpliceMutator
+> BuiltinGenerator
+> DUAL -T YPE
+> ANALYZER
+> STATIC TYPE
+> ENVIRONMENT
+> { ; }
+> JS
+> TEST CASES
+> JS E NGINES
+> BUGS
+> SEEDS
+> ❶
+> ❶
+> ❷
+> ❸
+> ❸
+
+Figure 3. High-level overview of W EAVER .
+
+Wasm function main , similar to the gray shaded region of Figure 2. Given the dearth of JS interaction within their test harnesses, these Wasm-centric fuzzers are similarly unable to detect this vulnerability. As a result, there still lacks a dedicated fuzzer for testing the JS-Wasm interaction boundary, which mainly motivates this work. To effectively craft such interactions, we identify two primary challenges: 1 ⃝ Test cases must comply with not only the semantic constraints enforced by each language, but also the specific rules imposed by the interaction interface. Failure to follow relevant rules can cause the JS engine to raise a runtime error and terminate prematurely, wasting the fuzzing time. For instance, the instantiation of module mod 
+
+in Figure 2 requires the JS environment to provide a function taking no arguments and yielding no result as import. If we replace function c with a randomly selected function such as Atomics.add , the JS engine would immediately report an uncaught TypeError , blocking the fuzzer from deeper vulnerability discovery. 2 ⃝ The generation of test cases have to respect the diverse language features of both worlds. The bug shown in Figure 2 requires specific Debugger interface to trigger. Given that the JS portion alone has encompassed over 50 built-ins such like Proxy and Promise , effective exploration of different features becomes a practical concern for fuzzers to find bugs akin to the illustrated example. With the aforementioned challenges in mind, we demonstrate the detailed design of W EAVER in Section 3. 
+
+## 3. W EAVER Design 
+
+As illustrated in Figure 3, W EAVER is a coverage-guided fuzzer dedicated to finding bugs at the JS-Wasm interaction boundary. W EAVER itself builds upon the state-of-the-art JS fuzzer Fuzzilli [15] and comprises two primary engines. The generative engine is responsible for the corpus generation at fuzzing’s initial stage, which uses the predefined generators to construct inputs. The mutation engine ignites when there are enough interesting test cases in the seed pool and applies consecutive mutations on top of randomly selected seeds to produce new test cases. In compliance with common fuzzing practices, W EAVER instruments the target engine to collect coverage information, which is utilized to guide the test case preservation. Besides, any test cases crashing the engine are also retained during fuzzing for further analysis. To enable efficient and effective interaction exploration, WEAVER extends the existing Fuzzilli architecture with the following key components. First, the dual-type analyzer and static type environment deal with the type annotation of each variable created during the test case construction. To support a unified generation process, we label each variable with its corresponding JS and Wasm type, regardless of whether this variable originates from the JS part or the Wasm part. In this way, W EAVER can efficiently query the context for variables matching the required JS or Wasm type, integrate them into the type-aware generation process, and consequently satisfy the semantic constraints imposed by Challenge I . Second, the Wasm generators aim to provide usable Wasm objects to the JS context and, conversely, to adopt available JS/Wasm objects within the Wasm context, which allow the fuzzer to assemble meaningful cross-language interactions. Third, to enhance fuzzer’s ability to explore difficult-to-reach or rare features, W EAVER proposes performance-based schedulers for both the generators and the mutators which handle the exploration–exploitation problem during fuzzing. The Wasm generators and schedulers jointly support W EAVER to tackle 
+
+Challenge II .In the next, we first present a running example demon-strating the generation procedure of W EAVER in Section 3.1 and then discuss the detailed design of dual-type analysis, Wasm generators, and performance-based schedulers in Sec-tion 3.2, Section 3.3, and Section 3.4, respectively. 
+
+3.1. A Running Example 
+
+In this section, we leverage a running example to clearly illustrate how W EAVER generates a semantically correct test case with diverse JS-Wasm interactions involved. The input generation process generally starts by populating a number of preamble variables that require no other variable as input and further serve as inputs for other generators. For instance, WEAVER may choose the generator BuiltinGenerator 
+
+to introduce a JS built-in Reflect :
+
+1 const v1 = Reflect ;
+
+The dual-type analyzer is then initiated to determine the JS and Wasm types of v1 . Since v1 stands for a JS built-in, the analyzer queries the static type environment to retrieve its preassigned JS type, namely, an object(..) type. The analyzer then infers its possible Wasm types based upon the obtained JS type which produces {(ref extern),(ref any),externref,anyref }. The first one represents a non-nullable reference to external values which are outside the control of Wasm while the second one denotes common supertype of Wasm-specific aggregate types, and the latter two are the corresponding type variants which allow nullable references. Currently, the type records look like:        
+
+> 1v1.JSTy =object(methods:["apply",..],..)
+> 2v1.WasmTy.valTy ={externref,(ref any),..}
+
+Next, W EAVER may decide to introduce a Wasm object and choose the generator WasmTableGenerator , which constructs a WebAssembly.Table under JS context. This generator randomly specifies the relevant fields such as the initial table size and the type of elements as per the standard. Suppose the generator takes externref as element type, it then searches current generation context for variables with or matching the Wasm type externref to be used as table’s initialization value and finds out that JS variable v1 meets the requirement. In this way, W EAVER enables JS variables to be adopted under Wasm context:            
+
+> 1const v1 =Reflect ;
+> 2const v2 =new WebAssembly .Table(
+> 3{element:"externref", initial:4}, v1);
+
+Again, the dual-type analyzer will investigate the JS and Wasm types of the new variable v2 . The JS type of v2 can be obtained directly from the static type environment, which is an object(..) type with customized methods such as 
+
+grow . The Wasm types of v2 are twofold. On the one hand, it is of Wasm table type with associated fields. On the other hand, it can be treated as Wasm value types the same way as v1 does. Therefore, the type records for v2 look like:           
+
+> 1v2.JSTy =object(properties:["length"],..)
+> 2v2.WasmTy.tblTy =table(initial:4,elem:..)
+> 3v2.WasmTy.valTy ={externref,(ref any),..}
+
+Finally, the generator scheduler might observe that the 
+
+PrototypeOverwriteGenerator has been executed less frequently, and consequently increase its probability of being selected. This process ultimately leads to its selection by W EAVER . PrototypeOverwriteGenerator needs two variables preferably of object type as inputs. As per the current type records, it picks v1 and v2 , resulting in JS object v1 ’s __proto__ field being set to a Wasm object 
+
+v2 .              
+
+> 1const v1 =Reflect ;
+> 2const v2 =new WebAssembly .Table(
+> 3{element:"externref", initial:4}, v1);
+> 4v1.__proto__ =v2;
+
+The preceding example conceptually demonstrates how WEAVER operates and crafts JS-Wasm interactions. In the following subsections, we discuss each involved component in more detail. 
+
+3.2. Dual-Type Analysis 
+
+The sole purpose of dual-type analysis is to answer the following two questions: How can a specific Wasm type be regarded as JS types and conversely how can a specific JS type be regarded as Wasm types. To answer these two questions, we first demand a fuzzer that understands both JS and Wasm. However, the initial version of Fuzzilli only implements JS type inference and lacks support for Wasm. Thus, dual-type analysis first aims to incorporate Wasm type representation into the fuzzer and allow fuzzer to trace variable’s Wasm types. Specifically, we begin by modeling every Wasm type involved in the cross-language interaction: 1) Value type directly maps to its counterpart in the Wasm standard [18], which serves as the basis for other Wasm types. We support all spec-defined value types, namely, 
+
+i32 , i64 , f32 , f64 , v128 , and reference types. 2) Memory type contains four fields that jointly describe its characteristics. The initial and maximum fields are used to specify the size range of storage. The addrtype 
+
+field classifies whether it is 32-bit or 64-bit addressable. Lastly, the shared field determines if the storage can be shared across modules. 3) Table type is similar to the memory type except that it additionally includes an elementType field that specifies the reference type of contained elements. 4) Global type consists of the contentType and mutability 
+
+fields. The former refers to the value type of this global while the latter indicates if it could be modified. 5) Function type encompasses the parameters and results 
+
+fields which together define the function signature and each field is composed of the list of value types. 6) Tag type is nearly identical to the function type but the 
+
+results field is kept empty as per the standard [18]. 7) Module type represents a whole Wasm module but only contains information necessary for the cross-language interaction, such as import and export object types, and omits irrelevant details like data segments. 8) Instance type is informationally identical to the module type and is utilized solely to determine if a module has been instantiated during the generation process. To support Wasm type tracking on top of this, we build and maintain a type record during test case generation. This record maintains a separate list for each Wasm type category based upon above classification and catalogs all encountered Wasm types. Each variable is then augmented with a Wasm type, represented as a collection of indices, in addition to its original JS type. Each index serves as a subscript to look up a specific type definition from the corresponding type list within this record. Figure 4 illustrates an example where the Wasm memory type of v1 is added to the record’s Memory 
+
+list at subscript 6. Consequently, we add the index 6 to the 
+
+Memory part of v1 ’s Wasm type to denote the actual Wasm memory type of v1 . Besides, it is worth mentioning that all Wasm types must be canonicalized into unified form before being added into the type record to facilitate cross-module type matching. With the support of both JS and Wasm type tracking, the dual-type analysis addresses the two questions presented at the beginning of this section by establishing type conversion rules between the two. Before digging into the details of type conversion rules, it should be noted that this type conversion process presupposes that one type should be known to infer the other. For variables originating from the JS generators, TABLE 1. W ASM -TO -JS T YPE CONVERSION RULES .                      
+
+> Wasm Type Corresponding JS Type
+> Memory object (properties: ["buffer"], methods: ["grow", "toResizableBuffer", "toFixedLengthBuffer"])
+> Table object (properties: ["length"], methods: ["get", "grow", "set"])
+> Global object (properties: ["value"], methods: ["valueOf"])
+> Tag object (properties: [], methods: [])
+> Module object (properties: [], methods: [])
+> Instance object (properties: ["exports"], methods: [])
+> Function(params, []) function (signature: params.map(toJSType) => undefined)
+> Function(params, [result]) function (signature: params.map(toJSType) => toJSType(result))
+> Function(params, [results..]) function (signature: params.map(toJSType) => JSArray) const v1 =new WebAssembly .Memory({initial:1});
+> WASM TYPE OFV1
+> Memory: [6]Global: [...] ...
+> WASM TYPE RECORD
+> Memory:
+> Global:
+> ...
+
+Figure 4. An illustration of Wasm type tracking in W EAVER .
+
+Algorithm 1 WASM VALUE TYPE CONVERSION ALGORITHM 
+
+Input: valT y : original Wasm value type 
+
+Output: jsT y : corresponding JS type converted from valT y 
+
+1: function T O JST Y P E (valT y )
+
+2: jsT y ← nothing 
+
+3: switch valT y 
+
+4: case i32,f32,f64 : jsT y ← jsT y ∪ number 
+
+5: case i64 : jsT y ← jsT y ∪ bigint 
+
+6: case v128 : U N S U P P O R T E D ER R O R () 
+
+7: case (ref ref T y ):
+
+8: if ref T y is exnref or ref T y is nullexnref then 
+
+9: U N S U P P O R T E D ER R O R () 
+
+10: end if 
+
+11: switch C O N V E R T TOAB S T R A C T TY P E (ref T y.heapT y )
+
+12: case struct,array : jsT y ← jsT y ∪ object() 
+
+13: case func : jsT y ← jsT y ∪ function() 
+
+14: case i31 : jsT y ← jsT y ∪ number 
+
+15: default: jsT y ← jsT y ∪ anything 
+
+16: end switch 
+
+17: if ref T y.nullable then 
+
+18: jsT y ← jsT y ∪ nullish 
+
+19: end if 
+
+20: end switch 
+
+21: return jsT y 
+
+22: end function 
+
+the JS type is first deduced by Fuzzilli’s native type analyzer and the Wasm types are then obtained by rules. For variables originating from Wasm generators, the Wasm type comes in the first place, which is acquired by the type inference rules elaborated in Section 3.3, and the JS type is later attained by conversion rules. We then illustrate the type conversion rules for the first question in Table 1 and Algorithm 1, which are summarized from the standard [17]. As can be seen in Table 1, most of the Wasm types except Function utilize a single JS type template which is shared across all their different instances. Consequently, we incorporate these JS type templates into the static type environment which allows fast JS type lookup for these Wasm types. Besides, while omitted from Table 1, we also provide type annotations for properties and methods. For instance, the buffer property within the JS type for 
+
+Memory is tagged as jsArrayBuffer . Function types present a more complex case. Their signatures vary and are defined by Wasm value types. Thus, deriving corresponding JS function signature demands converting these Wasm types into their respective JS types. Algorithm 1 details the case-by-case conversion process for each input Wasm value type 
+
+valT y . Most type conversions presented in Algorithm 1 are intuitive, with the exception of reference types, which need further explanation. Specifically, the JS type of a reference type ref T y depends on the contained heap type. There are two kinds of heap types in the current Wasm standard [18]. Concrete heap types refer to specific struct , array , and 
+
+func type definitions declared in the module while abstract heap types serve as general supertypes representing classes of related types. To enable a unified conversion process, the 
+
+convertToAbstractType function first maps concrete types to their corresponding abstract supertypes. Algorithm 1 subsequently operates exclusively on these abstract types to determine the final JS type. For example, a reference type that refers to a concrete struct type definition is handled in the same way as the type that points to abstract struct 
+
+type, and thereby converted to an exotic JS object type with no properties and methods. Besides, for nullable reference type, we augment its corresponding JS type with nullish 
+
+to account for potential null values. On the other hand, the type conversion from JS to Wasm follows a similar procedure. The primary caveat, however, is that JS types are mostly restricted to mapping only to the Wasm value types. Algorithm 2 lists the simplified JS type conversion process for addressing the second question and is largely self-explanatory. For instance, Algorithm 2 allows a JS integer type to be interpreted as a Wasm reference type pointing to i31 heap type, which denotes an unboxed scalar. Moreover, it is important to note that a Wasm object type can be further converted to a Wasm value type here via its previously inferred JS type, thereby broadening the set of available Wasm types. Algorithm 2 JS T YPE CONVERSION ALGORITHM                                                                                  
+
+> Input: jsT y :original JS type
+> Output: valT y :set of Wasm value types representing jsT y
+> 1: function T O WA S M VA L U E TY P E S (jsT y )
+> 2: valT y ← {}
+> 3: if jsT y is nullish then
+> 4: for absHeapT y ∈absHeapT ypes do
+> 5: valT y ←valT y ∪(ref null absHeapT y )
+> 6: end for
+> 7: . . .
+> 8: end if
+> 9: if jsT y is integer then
+> 10: valT y ←valT y ∪ { i32,f32,f64,(ref i31) }
+> 11: valT y ←valT y ∪(ref null i31)
+> 12: end if
+> 13: if jsT y may not be nullish then
+> 14: valT y ←valT y ∪ { (ref any),(ref extern) }
+> 15: valT y ←valT y ∪(ref null any)
+> 16: valT y ←valT y ∪(ref null extern)
+> 17: end if
+> 18: . . .
+> 19: valT y ←valT y \ { v128,exnref,nullexnref }
+> 20: return valT y
+> 21: end function
+
+At last, it is worth mentioning that v128 , exnref , and 
+
+nullexnref types are purposefully excluded from type conversion process, since they are explicitly unsupported by the interaction specification [17]. Accordingly, we also avoid these types when generating Wasm elements, which will be further detailed in Section 3.3. 
+
+3.3. Wasm-Specific Generation 
+
+In this section, we provide details about the generation of Wasm-specific elements and the inference of their Wasm types which are left unspecified in Section 3.2. Specifically, as mentioned in Section 2.1, certain Wasm elements can be directly constructed via the JS APIs. To accommodate this, we first design the following generators, which operates by directly invoking APIs such as WebAssembly.Memory 
+
+to craft corresponding Wasm objects:  
+
+> •
+
+WasmMemoryGenerator generates a random Wasm memory object. It first determines whether the memory is shared and 64-bit addressable and then chooses an initial size between zero and a maximum allowed limit. Lastly, it may optionally assign a maximum size for this memory whose value is bounded by the initial size and the maximum allowed limit.  
+
+> •
+
+WasmTableGenerator functions in a similar way to the WasmMemoryGenerator , except that Wasm table object additionally requires an element type and an initialization value. Since the relevant API currently limits the element type to funcref and externref ,the generator randomly selects one of the two and then searches the generation context for a variable matching the required type. If a suitable variable exists, it is used as the initialization value. Otherwise, the type’s default value is used.  
+
+> •
+
+WasmGlobalGenerator generates a random Wasm global object. The value type of this global is selected arbitrarily from the list of allowed value types, namely, 
+
+i32 , i64 , f32 , f64 , funcref , and externref 
+
+and the mutability of this global is randomly assigned. Additionally, this generator adopts an approach similar to WasmTableGenerator to provide Wasm global with an initial value.  
+
+> •
+
+WasmTagGenerator assembles a random Wasm tag object by providing a list of Wasm value types as tag’s parameter type. Similarly, each value type is also drawn randomly from the aforesaid list of allowed value types. Besides, given that Wasm instances serve as a primary medium for JS-Wasm interaction and that Wasm functions must be exported through these instances, we thereby design the WasmInstanceAndExportGenerator which aims to build Wasm instances and export contained Wasm objects. Specifically, the generator operates in three main stages: 1 ⃝
+
+It produces an instantiable Wasm module that specifies the object types to be imported and exported. Since W EAVER ’s goal is to generate interactions rather than fully functional Wasm module, we use a delegation-based design where the generator constructs only the module shape, which contains essential information like import and export specifications, while delegating the task of generating a concrete and shape-conforming Wasm module to third-party tools. For instance, we may only declare the function signature of an exported Wasm function but leaves function body implementation to the external tool. This design enables W EAVER to leverage different Wasm module generation backends. Building upon this foundation, W EAVER only needs to tackle the module shape generation problem which involves four steps. First, concrete type definitions are randomly generated, which can serve as concrete heap types for subsequent reference type generation. Second, import object types are generated. The generator randomly selects one of the five importable Wasm object kinds and yields a corresponding object type. Notably, to strengthen Wasm module’s connection to the surrounding environment, the generator queries the generation context for available Wasm object types held by existing variables and randomly selects one as the import object type. Moreover, it is worth mentioning that the interaction specification [17] allows any variable with the Wasm value type X to be treated as an immutable global of the same value type X and any JS function to be cast to a Wasm function with arbitrarily assigned signature. This mechanism offers greater flexibility for the generator when generating import types for global and function. Third, the generator randomly produces Wasm object types to act as candidates for subsequent export. This generation process mirrors the methodology employed by the previous generators such as WasmGlobalGenerator ,with the primary distinction being the unrestricted selection of Wasm value types. Fourth, the generator selects a subset of the currently available Wasm object types to be exported. During this selection, any Wasm object types involving the 
+
+v128 , exnref , or nullexnref value types are excluded from consideration, as previously mentioned in Section 3.2. 2⃝ The generator then instantiates the newly produced Wasm module. To satisfy each required import, it randomly picks a type-compatible variable from the generation context. 3⃝
+
+As the final step, the generator exports the Wasm instance’s complete set of exports to surrounding environment, making them available to subsequent code generators. This concludes the description of W EAVER ’s primary Wasm generators. As evident from the foregoing discussion, the Wasm type inference for the generated variables should be trivial to implement, since all requisite Wasm type infor-mation has been inherently captured during the generation process itself. For instance, the Wasm value type generated in the WasmGlobalGenerator directly corresponds to the contentType field of Global type. With the support of Wasm generators and dual-type analysis, W EAVER can now seamlessly generate cross-language interactions. The current challenge lies in ensuring interaction diversity, which will be addressed in Section 3.4. 
+
+3.4. Performance-Based Scheduler 
+
+The original version of Fuzzilli allocates fixed and static selection weights to all involved generators. This approach, while probably suitable for pure JS code generation, proves ill-suited for the JS-Wasm interaction context. The core issue originates from the significant disparity in the number of JS versus Wasm generators. If Wasm generators are assigned weights comparable to their numerous JS counterparts, their selection probability becomes exceedingly low. Conversely, assigning them disproportionately high weights introduces excessive runtime overhead and frequent timeouts, which is observed in Section 5.4. Moreover, static allocation scheme hinders the exploration of infrequently-selected generators during the fuzzing campaign. Therefore, a dynamic weight adjustment strategy is demanded. To solve this, we adopt an established approach from prior work [16], [19], framing the fuzzing process as a multi-armed bandit problem where each arm denotes a generator. During the fuzzing loop, we adjust the selection weights to prioritize generators that have returned higher performance rewards previously and those that remain insufficiently ex-plored. To implement this, we first define what constitutes the generator performance. An initial, immature metric may be the proportion of path-discovering test cases. However, our preliminary experiment results indicate that the fuzzer at most of the time generates test cases that fail to trigger new code paths. This renders such a metric ineffective, as it lacks sufficient discriminative power. Therefore, we employ a relatively lenient metric: the proportion of valid test cases contributed by a generator, which is defined as: 
+
+perf [i] = N um valid [i]
+
+N um total [i] (1) The N um valid [i] denotes the number of valid test cases generated by the i-th generator, which also contains path-discovering test cases. The N um total [i] represents the total number of test cases generated by the i-th generator, which additionally includes failed, timeout, and crash test cases. This metric serves a dual purpose: it incentivizes the gener-ation of valid test cases which are more likely to trigger deep code logic, which simultaneously penalizing generators that produce excessive timeouts. We then use the UCB-1 algorithm to dynamically adjust the selection weights of the generators based on this defined performance metric and the historical selection frequency: 
+
+N um total =
+
+> n−1
+
+X
+
+> i=0
+
+N um total [i] (2) 
+
+weight [i] = ( perf [i] + 
+
+s
+
+2.0 ∗ ln (N um total )
+
+N um total [i] ) ∗ 100 (3) Specifically, the N um total denotes the total number of test cases generated by all n generators and the output of the UCB-1 algorithm is multiplied by 100 before serving as the final result to align with the order of magnitude of the original weights used in Fuzzilli. Moreover, the computed weights for the Wasm generators are amplified by a constant factor to guarantee a sufficient supply of Wasm objects for interaction generation within a single test case. Finally, we also incorporate the above process into the mutators, which enables W EAVER to intelligently schedule generators and mutators based on the progress of fuzzing campaign. 
+
+## 4. Implementation 
+
+We have developed the prototype of W EAVER on top of Fuzzilli [15] (commit 0e20cd55 ) with more than 8K lines of Swift code added. To support the straight generation of Wasm-related elements, we extend FuzzIL, the intermediate representation used by Fuzzilli, with new opcodes targeting the Wasm components and implement the serialization, type tracking, and lifting support for these opcodes. This allows WEAVER to handle these newly introduced Wasm variables in the same way as native JS variables. A series of generators are then designed to produce opcode-corresponding FuzzIL instructions. Figure 5 shows an example where the genera-tor WasmMemoryGenerator introduces a Wasm memory object into the test case that is currently under construction, which is represented as a FuzzIL instruction with the opcode 
+
+CreateWasmMemory . When the generation process ends, the FuzzIL instruction is lifted to its corresponding JS code snippet for execution. Besides, we leverage wasm-smith [20] (commit 62cdf1ce ) to help W EAVER generate valid Wasm modules with the specified imports and exports. Specifically, the module_shape option of wasm-smith accepts a Wasm binary module and enforces the generated Wasm module to have the same imports and exports as those in the passed-in module but allows different implementation for other parts. Since wasm-smith is written in Rust, we use its C bindings and incorporate it into W EAVER as a shared library. In order to communicate with wasm-smith and interpret the returned Wasm module, W EAVER reuses the parser and encoder from WasmKit [21] to parse Wasm binary module into the internal representation and vice versa. However, WasmKit currently lacks support for more recent Wasm standards such as multi-memory or garbage collection. Therefore, we implement the support for these standards manually in W EAVER .In addition to the above discussion about Wasm element generation, the dual-type analyzer is implemented on top of Fuzzilli’s JS typer and static type environment is extended from Fuzzilli’s JS static environment, which combinatorially allow W EAVER to track the JS and Wasm types of each new variable in a flow-sensitive manner. Moreover, the scheduler is registered as periodical task at fuzzer’s initialization stage which triggers every 60 minutes and recalculates the weights for mutators and generators. Lastly, there are a few additional remarks regarding the implementation of W EAVER . Firstly, W EAVER enables all Wasm 3.0 features by default except JS String Builtins [22], which demands further handling. It is worth noting that not all Wasm features are well supported across all JS engines or hardware architectures. For instance, JavaScriptCore does not support memory64 standard currently. More discussion on feature support is elucidated in the evaluation. Secondly, the implementation actually includes specific modifications to existing mutators, though these are not explicitly claimed as a contribution. For example, the splice mutator is used to incorporate a program slice from other program into the current program. To reinforce data flow correlation between the two, splice mutator remaps a subset of slice’s variables to variables of matching types in current program. However, the original implementation only considers the JS types of variables when performing type matching, thereby raising a lot of runtime errors. W EAVER adjusts the implementation to take both the JS types and Wasm types into account when remapping variables. Generate a FuzzIL instruction with CreateWasmMemory opcode                          
+
+> ValueGenerator ("WasmMemoryGenerator" ){b, nin
+> let type =WasmMemoryType. random (builderContext: b)
+> b. createWasmMemory (of: type) }
+> Lift FuzzIL instruction to its corresponding JS code
+> v1 <-CreateWasmMemory [initial=64,maximum=none,addr64=i32,shared=non-shared]
+> let v1 =new WebAssembly.Memory ({initial:64, address:"i32", shared:false});
+> Figure 5. The general workflow of Wasm element generation in W EAVER .
+
+## 5. Evaluation 
+
+To validate the effectiveness of our design, we evaluate WEAVER and answer the following four questions: 
+
+RQ1: How does W EAVER perform in terms of code cover-age and bug findings when compared to the state-of-the-art fuzzers? (see Section 5.2) 
+
+RQ2: Can W EAVER generate correct interaction code, both syntactically and semantically? (see Section 5.3) 
+
+RQ3: What is the contribution of each individual component to the performance of W EAVER ? (see Section 5.4) 
+
+RQ4: Can W EAVER find new bugs in latest JS engines? (see Section 5.5) 
+
+5.1. Experimental Setup 
+
+We conduct all the experiments on one machine running Ubuntu 20.04 x86-64 with Intel Xeon Platinum 8380 CPUs (2.3GHz, 160 cores) and 256GB main memory. To facilitate the isolation of execution environments and the management of hardware resources, all experiments are further executed in Docker containers. 
+
+Baselines. Given the scarcity of fuzzing works targeting the JS-Wasm interactions, we choose only two fuzzing methods as baselines to evaluate the efficacy of W EAVER : 1 ⃝ Fuzzilli [15] (commit 0e20cd55 ) represents the state-of-the-art JS fuzzer which also serves as the basis for W EAVER . Besides, we have noticed that when developing W EAVER , Fuzzilli’s maintainers are simultaneously integrating Wasm support to Fuzzilli. Therefore, we include one newer version of Fuzzilli (commit 675eccd6 ) into comparison, which can construct cross-language interactions similar to W EAVER . 2 ⃝ Dharma [23] is a generative fuzzer developed by Mozilla which uses context-free grammars to generate test inputs. FuzzingLabs has previously contributed a grammar file [24] that enables Dharma to explore basic Wasm-JS APIs [17]. Consequently, we select Dharma, along with this specific grammar file, as the baseline for comparison. 
+
+Benchmarks. We choose three mainstream JS engines that come with Wasm support: Firefox SpiderMonkey [2] (com-mit 55279d59 ), Chrome V8 [3] (commit 118ebe01 ), and Safari JavaScriptCore [4] (commit 736f1346 ). It is worth noting that all these engines have been heavily tested by the security researchers and continuous fuzzing projects such as OSS-Fuzz [25] and we use the latest commit available at the time of our evaluation for each engine. 
+
+Configurations. Given that all involved fuzzers support test case generation without seeds, we do not provide initial seed corpus for each fuzzer. This enables a fair comparison since Dharma is a pure generation-based approach. Moreover, we build all JS engines with default configurations provided by Fuzzilli. Similarly, we leverage the command-line arguments Fuzzilli supplies to each JS engine, which alter settings such as JIT trigger threshold. Lastly, we set the timeout of a single execution to 600 ms to address potential infinite loops and repeat each experiment 5 times to mitigate the randomness. More details on configurations will be discussed in relevant subsections. 
+
+5.2. Comparison to State-of-the-Art Fuzzers 
+
+To address RQ1, we have run W EAVER and other state-of-the-art fuzzers on three JS engines as specified in Section 5.1 over a period of 72 hours. This aligns with test durations of previous works [9], [10]. Given that JavaScriptCore lacks support for memory64, multiple-memory, and relaxed-SIMD standards currently, relevant Wasm instructions and settings are excluded when testing JavaScriptCore. Moreover, unlike WEAVER and Fuzzilli which are armed with native coverage collection support from three JS engines and advanced crash detection, Dharma is merely a test case generator that yields the specified number of test cases. Considering the limited disk space, it is impractical to let Dharma run continuously for three days and save all generated test cases for coverage calculation and bug detection. Therefore, we have written a custom script in Python which performs the following steps: 1⃝ The script instructs Dharma to generate a number of test cases under the specified directory; 2 ⃝ When the generation process finishes, the script runs each test case sequentially on the instrumented JS engine to collect raw coverage data. Besides, the script monitors the exit code of each execution and saves any test cases raising non-zero exit codes for later analysis; 3 ⃝ The raw coverage data is merged with previous coverage profile to produce the new profile which contains accumulated coverage. 4 ⃝ Once the merge process is done, the script deletes all generated test cases and enters the next round until the time budget is reached. To enable the accumulative coverage calculation, we use the llvm-cov toolchain [26]. Specifically, we instrument the JS engine with source-based code coverage. This enables JS engine to emit a profraw file which encodes raw coverage information during execution. The profraw files can then be merged by llvm-profdata into one profdata file which contains accumulated coverage. To ensure the comparability of coverage results, we apply the same coverage calculation methodology to W EAVER and Fuzzilli, namely, we sort the finally generated seed corpus chronologically and calculate the accumulative coverage. Table 2 demonstrates the average percentage of region, function, line, and branch coverage achieved across three JS engines by relevant fuzzers and Figure 6 shows the branch coverage evolution over time. For all JS engines, W EAVER 
+
+consistently outperforms other competing fuzzers in all four coverage metrics. When compared to the earlier version of Fuzzilli on which W EAVER is built, W EAVER finds at most 9.2% more regions, 8.8% more functions, 8.6% more lines, and 9.4% more branches, a result primarily attributed to the introduction of JS-Wasm interaction in W EAVER . While the newer version of Fuzzilli has incorporated the generation of Wasm elements and devised several new generators such as 
+
+UnboundFunctionCallGenerator , its achieved code coverage remains slightly inferior to that of W EAVER . And it is worth mentioning that different from the methods adopted by Fuzzilli which directly generates Wasm instructions at the intermediate representation level, W EAVER uses a decoupled design where the generation of Wasm modules is delegated to third-party tools. This brings two advantages: First, this grants W EAVER the extra flexibility to utilize Wasm module generators other than wasm-smith, benefiting W EAVER from different generation algorithms. Second, this design obviates the needs for W EAVER to continually update its opcodes to align with the latest proposals given the evolving nature of Wasm. In particular, these frequent updates have caused the newer version of Fuzzilli to crash during our evaluation. At last, Dharma’s coverage performance across all JS engines is suboptimal, and it fails to exhibit an increasing trend over time. This is expected since Dharma’s effectiveness heavily depends on the provided grammar and the current grammar designates only one fixed Wasm module and wraps all Wasm element constructions into try-catch statements, which might alter the semantics of code snippets and suppress JIT optimizations according to CodeAlchemist [8]. Unfortunately, none of the evaluated fuzzers are able to discover new bugs in the JS engines within the 3-day period. We deem this as acceptable because all involved JS engines have been continuously fuzzed by their internal fuzzers and it is unlikely to find new crashes in the currently set fuzzing period. This hypothesis is further validated by the results of prior works [9], [13]. For instance, a two-week bug finding comparison experiment conducted in OptFuzz [9] is unable to uncover any bugs. Consequently, we resort to a long-term bug finding campaign to prove the efficacy of W EAVER . The details are discussed in Section 5.5. 
+
+5.3. Validity of Generated Inputs 
+
+The validity of test cases has long been a core concern for JS fuzzers, as it directly impacts the triggering of deeper code paths such as those related to JIT optimization. In this section, We consider a test case as valid if its execution on JS engine does not throw any runtime errors. To answer RQ2, we record the number of valid test cases along with the number of non-timeout test cases and define the validity rate as the division of the two. Table 3 lists the validity rates of related fuzzers averaged across five 72-hour runs. First, we observe that even Fuzzilli, the state-of-the-art JS fuzzer, cannot guarantee the validity of generated inputs. This is mainly attributed to dynamic and complex nature of JS language and the static type analysis employed in Fuzzilli may fail to correctly infer the variable types. The integration of Wasm further worsens this situation since it adds an extra layer of validity checks. This is confirmed by the results in Table 3 where the validity rates of W EAVER are lower than that of Fuzzilli. Nevertheless, the average decrease is under 6% owning to the dual-type analysis design, which we deem acceptable. We enumerate several typical causes of runtime errors as follows: 1⃝ The limitation of wasm-smith. Wasm-smith ensures the generated modules to pass static validation, but provides no guarantee regarding their runtime behaviors. Therefore, we occasionally witness RuntimeError raised when running exported Wasm functions or instantiating Wasm modules. As an example, the following module built by wasm-smith will report an out-of-bound table index error during instantiation. Wasm allows for the active initialization of specified ranges of a table using element segments at instantiation time. The problem here is that wasm-smith uses the value of a global variable, which is set to a negative number, as the offset for table initialization, thereby causing a runtime error. Besides, it is worth mentioning that it is infeasible for Wasm module generators to statically determine if a module will throw an error. Thus, we consider this kind of error as unavoidable. TABLE 2. T HE COVERAGE RESULTS AVERAGED ACROSS FIVE RUNS , AS MEASURED BY LLVM -COV . E ACH FIELD CONSISTS OF FOUR PARTS ,
+
+> REPRESENTING REGION
+
+, FUNCTION , LINE , AND BRANCH COVERAGE . T HE BEST RESULT IS MARKED IN BOLD .
+
+Fuzzer JavaScriptCore V8 SpiderMonkey 
+
+WEAVER 35.05% / 46.73% / 34.67% / 37.92% 30.34% / 42.40% / 35.10% / 32.20% 34.58% / 55.91% / 44.94% / 36.46% 
+
+Fuzzilli-0e20cd55 32.76% / 45.55% / 33.03% / 35.94% 29.26% / 40.73% / 33.89% / 30.87% 31.67% / 51.39% / 41.40% / 33.33% Fuzzilli-675eccd6 34.47% / 45.66% / 34.46% / 37.72% 30.14% / 42.04% / 35.07% / 31.95% 34.30% / 55.35% / 44.60% / 36.25% Dharma 09.92% / 17.61% / 08.76% / 06.63% 11.73% / 18.64% / 12.34% / 10.38% 11.83% / 20.61% / 13.54% / 10.04% WEAVER -no-scheduler 34.01% / 46.08% / 33.42% / 36.39% 30.32% / 42.51% / 34.97% / 32.18% 33.03% / 53.69% / 42.59% / 34.49% 0 10 20 30 40 50 60 70 
+
+> Time (hours)
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> 30
+> 35
+> Branch Coverage (%)
+
+JavaScriptCore        
+
+> Dharma
+> fuzzilli-0e20cd55
+> fuzzilli-675eccd6
+> Weaver-no-scheduler
+> Weaver
+> 010 20 30 40 50 60 70
+> Time (hours)
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> 30
+> Branch Coverage (%)
+
+V8        
+
+> Dharma
+> fuzzilli-0e20cd55
+> fuzzilli-675eccd6
+> Weaver-no-scheduler
+> Weaver
+> 010 20 30 40 50 60 70
+> Time (hours)
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> 30
+> 35
+> Branch Coverage (%)
+
+SpiderMonkey 
+
+> Dharma
+> fuzzilli-0e20cd55
+> fuzzilli-675eccd6
+> Weaver-no-scheduler
+> Weaver
+
+Figure 6. The branch coverage for all the evaluated techniques over time. TABLE 3. T HE AVERAGE VALIDITY AND TIMEOUT RATES OF RELEVANT FUZZERS . T HE BEST RESULT IS MARKED IN BOLD .
+
+JS Engine WEAVER Fuzzilli-0e20cd55 WEAVER -no-scheduler 
+
+JavaScriptCore Validity 63.52% 71.17% 58.54% 
+
+Timeout 09.55% 03.86% 16.27% V8 Validity 67.51% 71.92% 66.71% 
+
+Timeout 12.65% 04.71% 25.25% SpiderMonkey Validity 65.91% 70.45% 67.19% 
+
+Timeout 06.08% 04.08% 11.02% 
+
+1 // The truncated Wasm module: 
+
+2 // (module 
+
+3 // (table (;0;) 1937 externref) 
+
+4 // (global (;2;) i32 i32.const -1051341) 
+
+5 // (elem (table 0) (global.get 2) ..) 
+
+6 // )
+
+7 const v1 = new WebAssembly .Module(..); 
+
+8 // RuntimeError: 
+
+9 // table index is out of bounds. 
+
+10 const v2 = new WebAssembly .Instance(v1); 
+
+2⃝ The drawback of static type environment. Currently, WEAVER encodes the JS types of most Wasm elements into the static type environment to enable fast type lookup, which aligns with Fuzzilli’s treatments for built-ins. However, the types of some object properties may vary depending on the arguments provided during object construction. To cover all possible type cases, we generally assign a more general type to these properties statically, which results in type mismatch at runtime. For example, we can access the underlying value of WebAssembly.Global object using value property and the type of this property can be number , BigInt , or 
+
+object depending on the constructor arguments. To cover these possibilities, we designate the anything type to this property which represents any possible types. As some code generators may select a potentially compatible variable from the context when a variable of required type is unavailable, this could lead to TypeError if the generator chooses this property. 
+
+1 const v1 = 
+
+2 new WebAssembly .Global({value:"i64"}); 
+
+3 // TypeError: 
+
+4 // Cannot convert a BigInt to a number. 
+
+5 Date .UTC(v1.value); 
+
+3⃝ Lack of value tracking. As discussed in Section 3.2, a JS variable of integer type can be viewed as an unboxed scalar under Wasm, namely, in the form of (ref i31) or 
+
+i31ref . However, the allowable value range for these two Wasm types is limited to 31 bits. Any values exceeding this range could raise a LinkError or TypeError . Ensuring the selected variable’s value is within the permissible range would require value tracking, which W EAVER currently does not support due to performance considerations. This makes WEAVER susceptible to above exceptions. Still, we consider this limitation acceptable as such cases are rare. 4⃝ Imprecision in the type system. In current design, any imprecision in the JS type directly propagates to the inferred Wasm types. One notable example has been observed which lies in Fuzzilli’s handling of undefined and null values. Fuzzilli treats these two values as the same nullish type which brings up confusion in W EAVER . Specifically, null 
+
+value can be typed as any nullable reference types in Wasm while undefined value can not. However, since they are annotated with the same type, current type-aware generation is not able to distinguish one from the other, leading to the misuse of undefined and triggering of TypeError .5⃝ Side effects from other generators or mutators. Some generators might change the semantics of built-ins, compro-mising the correctness of subsequently generated code. For instance, BuiltinOverwriteGenerator can reassign the Wasm built-in WebAssembly to a float value, causing the next Wasm element generation to raise a TypeError .Similarly, mutators like operation mutator may replace the original built-in with a randomly selected one, invalidating subsequent code that depends on the original built-in.                 
+
+> 1// Executing BuiltinOverwriteGenerator.
+> 2WebAssembly =926.7333937898886;
+> 3// TypeError:
+> 4// WebAssembly.Memory is not aconstructor.
+> 5new WebAssembly .Memory({initial:63});
+
+5.4. Ablation Study 
+
+To tackle RQ3, we partition our overall design into two main components based on the challenges identified in this paper. The first fragment consists of dual-type analysis and the JS-Wasm interaction generation informed by it and the second fragment contains the performance-based scheduler. For the ablation study, we create W EAVER -no-scheduler, an ablated version of W EAVER that removes the scheduler. By sequentially comparing Fuzzilli-0e20cd55 , W EAVER -no-scheduler, and the W EAVER , we can assess the contribution of each component. We evaluate W EAVER -no-scheduler with the same setup as in Section 5.2. Table 2 and Figure 6 present its coverage results, which indicate that both components contribute to the coverage growth. Interestingly, our initial expectation is that the JS-Wasm interaction should have a greater impact on code coverage than the scheduler, given that it introduces new execution logic. However, this assumption does not hold under certain cases according to Table 2. For instance, the scheduler produces a 1.53% increase in branch coverage on JavaScriptCore, compared to the mere 0.45% increase from JS-Wasm interaction. To seek a potential explanation for this phenomenon, we further investigate the implications of the scheduler on test case validity and timeout rates. The results are summarized in Table 3. Surprisingly, a significant increase in the timeout rate is observed when the scheduler is removed, with about one-quarter of samples timing out in the worse case. Upon a closer inspection, we find out that most timeout samples involve constructing multiple WebAssembly.Memory or 
+
+WebAssembly.Table objects with large initial sizes. In particular, creating large WebAssembly.Table objects in              
+
+> TABLE 4. O VERVIEW OF TARGET JS ENGINES ,ARCHITECTURES ,AND
+> WASM STANDARD SUPPORT IN LONG -TERM BUG DISCOVERY .
+> JS Engine Architecture Unsupported Wasm Standard
+> JavaScriptCore x86-64 Multiple-Memory, Memory64, Relaxed-SIMD V8 x86-64, riscv64, arm64 None SpiderMonkey x86-64 None riscv64, loong64 SIMD, Relaxed-SIMD
+
+test cases incurs substantial overhead for JS engines, which can easily result in timeout. When the scheduler is disabled, the fuzzer selects generators based on the statically assigned weights. Considering the significant disparity between the number of JS and Wasm generators, we assign higher static weights for Wasm generators to balance the selection proba-bilities of two languages. This results in the prolific creation of objects like WebAssembly.Table , ultimately causing frequent timeouts. The introduction of scheduler effectively mitigates the timeout issue. This is because as the generator produces more timeout samples, its correctness rate declines, leading to a lower weight being assigned by scheduler. In addition to helping mitigate timeout rate, the scheduler also benefits the validity rate. Apart from a modest decrease on SpiderMonkey, we observe a general enhancement in the validity rate when scheduler is enabled. This result aligns with the primary objective of the scheduler. In summary, we believe that the scheduler is instrumental in the above two aspects, enabling W EAVER to explore more code paths on the basis of JS-Wasm interaction generation. 
+
+5.5. Real-World Bugs Found 
+
+To answer RQ4, we conduct long-term bug discovery on three JS engines. More specifically, we leverage Fuzzilli’s built-in support for distributed fuzzing and run 10 W EAVER 
+
+instances simultaneously in the localhost network where one fuzzer instance serves as the root node which shares seed corpus with children nodes and the other nine instances act as leaf nodes which connect to the root node. This enables a more efficient fuzzing practice. Moreover, we notice that V8 and SpiderMonkey have implemented simulators for some architectures. Therefore, we additionally build and test these two engines across different architectures. However, support for certain Wasm standards is architecture-dependent and we thereby adapt W EAVER for different architectures. Table 4 lists the involved architectures and their unsupported Wasm standards. Over approximately one month of testing, W EAVER has found two previously unknown bugs and several crashes that have been patched in recent revisions. Table 5 presents the relevant bug information. Notably, the second bug is initially discovered in the riscv64 version of SpiderMonkey but the subsequent analysis reveals that it also influences the arm64 architecture and allows random code execution. Thus, this bug is deemed a critical security vulnerability and assigned the highest priority for remediation. This demonstrates the practicality of W EAVER in finding real-world bugs. TABLE 5. R EAL -WORLD BUGS FOUND BY WEAVER . * MEANS THIS BUG IS SECURITY -SENSITIVE .                     
+
+> JS Engine ID Issue Architecture Status Priority Severity Bug Description
+> JavaScriptCore 1301466 x86-64 Fixed P2 Major OOB Memory Read at function JSC::Wasm::arrayNewElem. SpiderMonkey 2*1996840 riscv64 Fixed P1 S2 Assertion failure: is intn(imm, kJumpOffsetBits), at js/src/jit/riscv64/extension/base-riscv-i.h.
+
+## 6. Related Works 
+
+Fuzzing . Fuzzing is a technique for detecting bugs and vulnerabilities in software. Its core idea is to utilize mutation and generation algorithms to produce a large volume of test cases and feed them to the target program, with the goal of identifying unexpected behaviors. Since the advent of AFL [27], coverage-guided fuzzing has become the mainstream in both academia and industry and a large body of work has aimed to improve its efficiency. CollAFL [28] addresses the hash collision problem of coverage bitmap to obtain precise feedback. AFLFast [29], EcoFuzz [16], MobFuzz [30], and other works [31], [32] optimize which seed is selected first for mutation and how many test cases should be generated for each seed according to predefined metrics. MOpt [33] and DARWIN [34] leverage novel optimization algorithms for scheduling the mutation process, which is similar to the approach adopted in W EAVER . GreyOne [35], VUzzer [36], and other works [37], [38] aim to collect more information from the target program by tracking the data flows between input bytes and the operands in comparison instructions and utilize the inferred knowledge to guide mutations and help fuzzers conquer path constraints. In recent years, the large language models (LLMs) and their derivatives have shown remarkable potential in the field of security. Consequently, researchers have also been actively exploring the integration of LLMs with traditional fuzzing practices [39], [40], [41]. For instance, ChatAFL [40] makes use of LLMs to construct grammars for message types to detect bugs in the protocol implementations and MetaMut [41] uses LLMs to generate semantic-aware mutators for testing compilers. 
+
+JS Fuzzing. JS is a complex and highly structured kind of input where dedicated fuzzers have been designed. Earlier works [42], [43] generally utilize the context-free grammar to generate new inputs. For example, LangFuzz [42] parses test cases into abstract syntax trees and replaces tree nodes with other nodes of the same type to produce new samples. Subsequent works further focus on passing semantic checks while maintaining grammatical validity. CodeAlchemist [8] fragments seed inputs into code bricks and annotates each brick with a set of constraints such as the type of a variable, and these bricks are later combined with all the constraints satisfied. Similarly, Montage [44] operates at code fragment level and trains a neural network model to predict the next fragment given some sequence of fragments, which is later utilized to guide mutations. DIE [14] proposes a mutation strategy that preserves interesting structure and type aspects of original regression tests across mutations. Recently, the focus of JS fuzzing has shifted to the JIT compiler. Fuzzilli [15] develops a specific intermediate representation FuzzIL and devises a number of generation templates and mutation strategies to trigger JIT. OptFuzz [9] uses an optimization trunk path metric to measure JIT optimization path coverage and guide seed preservation and scheduling. JIT-Picker [10] aims to find logic bugs in JIT compilers by comparing the execution hash of interpretation and JIT compilation in the process of fuzzing. FuzzJIT [45] is also a work that detects JIT compiler logic bugs, which designs a fixed template for triggering JIT compilation by embedding JS code into a for loop. 
+
+Wasm Fuzzing. Similar to JS fuzzing, several dedicated fuzzers have been developed for Wasm runtimes. WADIFF [46] is a differential fuzzer that applies symbolic execution to generate inputs for each instruction. RGFuzz [12] extracts compiler rules from existing Wasm runtimes, which define how to optimize Wasm code, and utilizes them to guide test case generation and find miscompilation bugs. Wasm-smith [20] is a Wasm module generator which guarantees the static validity of generated modules and can be further combined with other fuzzing frameworks to discover bugs. Waltzz [13] proposes the core concept of stack invariant transformation and, based on it, designs several mutators and generator to help fuzzer generate diversified yet valid inputs. WASMaker [47] is a black-box fuzzer which generates Wasm modules by disassembling and assembling existing Wasm samples, a process similar to that adopted by CodeAlchemist [8]. Although, as demonstrated above, a collection of fuzzing research has been taken separately for JS and Wasm, little attention has been paid to the interaction between these two languages. The W EAVER presented in this paper precisely fills this research gap by providing a unified fuzzing frame-work that systematically explores cross-language behaviors and vulnerabilities emerging from such interactions. 
+
+## 7. Conclusion 
+
+In this paper, we present W EAVER , an effective greybox fuzzing framework specifically tailored to discover bugs at the JS-Wasm boundary. To ensure the semantic correctness of the cross-language interactions, W EAVER devises a dual-type analysis which effectively infers the JS and Wasm types of each generated variable, which allows our fuzzer to craft valid JS-Wasm interactions in a unified manner. Moreover, WEAVER adopts a UCB-1 algorithm to schedule generators and mutators judiciously in the hope of maximizing the code coverage. We have implemented W EAVER and evaluated it on three popular JS engines. The evaluation indicates that WEAVER has achieved superior code coverage compared to state-of-the-art fuzzers. Currently, W EAVER has found two new bugs, one of which is considered security-sensitive and assigned top priority, proving the usefulness of W EAVER .LLM Usage Considerations 
+
+LLMs are used for editorial purposes in this paper, and all outputs are inspected by the authors to ensure accuracy and originality. 
+
+## Ethics Considerations 
+
+We have responsibly disclosed all discovered bugs to the relevant vendors, who have confirmed them and undertaken appropriate mitigations. 
+
+## References 
+
+[1] W3Techs, “The usage statistics of JavaScript as client-side program-ming language on websites,” https://w3techs.com/technologies/detai ls/cp-javascript, Accessed Oct. 2025. [2] Mozilla, “SpiderMonkey, Mozilla’s JavaScript and WebAssembly en-gine,” https://spidermonkey.dev/, Accessed Oct. 2025. [3] Google, “V8, Google’s open source high-performance JavaScript and WebAssembly engine,” https://v8.dev/, Accessed Oct. 2025. [4] Apple, “JavaScriptCore, Apple’s built-in JavaScript engine for We-bKit,” https://docs.webkit.org/Deep%20Dive/JSC/JavaScriptCore.htm l, Accessed Oct. 2025. [5] Man Yue Mo, “Getting RCE in Chrome with incorrect side effect in the JIT compiler,” https://github.blog/security/vulnerability-research/ getting-rce-in-chrome-with-incorrect-side-effect-in-the-jit-compile r/, Accessed Oct. 2025. [6] Dimitri Fourny, “Dissecting CVE-2024-12695: Exploiting Ob-ject.assign() in V8,” https://bugscale.ch/blog/dissecting- cve- 202 4-12695-exploiting-object-assign-in-v8/, Accessed Oct. 2025. [7] A. Haas, A. Rossberg, D. L. Schuff, B. L. Titzer, M. Holman, D. Gohman, L. Wagner, A. Zakai, and J. F. Bastien, “Bringing the web up to speed with webassembly,” in Proceedings of the 38th ACM SIGPLAN Conference on Programming Language Design and Implementation , 2017. [8] H. Han, D. Oh, and S. K. Cha, “Codealchemist: Semantics-aware code generation to find vulnerabilities in javascript engines,” in 26th Annual Network and Distributed System Security Symposium , 2019. [9] J. Wang, Y. Kang, C. Wu, Y. Hu, Y. Sun, J. Ren, Y. Lai, M. Xie, C. Zhang, T. Li, and Z. Wang, “Optfuzz: Optimization path guided fuzzing for javascript JIT compilers,” in 33rd USENIX Security Sym-posium , 2024. [10] L. Bernhard, T. Scharnowski, M. Schloegel, T. Blazytko, and T. Holz, “Jit-picking: Differential fuzzing of javascript engines,” in Proceed-ings of the 2022 ACM SIGSAC Conference on Computer and Com-munications Security , 2022. [11] L. Wachter, J. Gremminger, C. Wressnegger, M. Payer, and F. Toffalini, “DUMPLING: fine-grained differential javascript engine fuzzing,” in 32nd Annual Network and Distributed System Security Symposium , 2025. [12] J. Park, Y. Kim, and I. Yun, “Rgfuzz: Rule-guided fuzzer for we-bassembly runtimes,” in IEEE Symposium on Security and Privacy ,2025. [13] L. Zhang, B. Zhao, J. Xu, P. Liu, Q. Xie, Y. Tian, J. Chen, and S. Ji, “Waltzz: webassembly runtime fuzzing with stack-invariant transformation,” in 34th USENIX Security Symposium , 2025. [14] S. Park, W. Xu, I. Yun, D. Jang, and T. Kim, “Fuzzing javascript engines with aspect-preserving mutation,” in 2020 IEEE Symposium on Security and Privacy , 2020. [15] S. Groß, S. Koch, L. Bernhard, T. Holz, and M. Johns, “FUZZILLI: fuzzing for javascript JIT compiler vulnerabilities,” in 30th Annual Network and Distributed System Security Symposium , 2023. [16] T. Yue, P. Wang, Y. Tang, E. Wang, B. Yu, K. Lu, and X. Zhou, “Ecofuzz: Adaptive energy-saving greybox fuzzing as a variant of the adversarial multi-armed bandit,” in 29th USENIX Security Sym-posium , 2020. [17] W3C, “The WebAssembly JavaScript Interface,” https://webassembl y.github.io/spec/js-api/, Accessed Oct. 2025. [18] W3C, “The WebAssembly Core Specification,” https://webassembly. github.io/spec/core/, Accessed Oct. 2025. [19] C. Lyu, H. Liang, S. Ji, X. Zhang, B. Zhao, M. Han, Y. Li, Z. Wang, W. Wang, and R. Beyah, “SLIME: program-sensitive energy allocation for fuzzing,” in Proceedings of the 31st ACM SIGSOFT International Symposium on Software Testing and Analysis , 2022. [20] Bytecode Alliance, “wasm-smith, a WebAssembly test case genera-tor,” https://github.com/bytecodealliance/wasm-tools/tree/main/crate s/wasm-smith, Accessed Oct. 2025. [21] SwiftWasm, “WasmKit, a standalone and embeddable WebAssembly runtime implementation and related tooling written in Swift,” https: //github.com/swiftwasm/WasmKit, Accessed Oct. 2025. [22] WebAssembly, “JS String Builtins Proposal for WebAssembly,” https: //github.com/WebAssembly/js-string-builtins, Accessed Oct. 2025. [23] Mozilla, “Dharma, a generation-based, context-free grammar fuzzer,” https://github.com/MozillaSecurity/dharma, Accessed Oct. 2025. [24] FuzzingLabs, “Fuzzing JavaScript WebAssembly APIs using Dhar-ma/Domato,” https://fuzzinglabs.com/fuzzing-javascript-wasm-dha rma-chrome-v8, Accessed Oct. 2025. [25] Google, “OSS-Fuzz, Continuous Fuzzing for Open Source Software,” https://github.com/google/oss-fuzz, Accessed Oct. 2025. [26] LLVM, “llvm-cov, emit coverage information,” https://llvm.org/docs/ CommandGuide/llvm-cov.html, Accessed Oct. 2025. [27] Google, “American fuzzy lop,” https://github.com/google/AFL, Accessed Oct. 2025. [28] S. Gan, C. Zhang, X. Qin, X. Tu, K. Li, Z. Pei, and Z. Chen, “Collafl: Path sensitive fuzzing,” in 2018 IEEE Symposium on Security and Privacy , 2018. [29] M. B¨ ohme, V. Pham, and A. Roychoudhury, “Coverage-based grey-box fuzzing as markov chain,” in Proceedings of the 2016 ACM SIGSAC Conference on Computer and Communications Security ,2016. [30] G. Zhang, P. Wang, T. Yue, X. Kong, S. Huang, X. Zhou, and K. Lu, “Mobfuzz: Adaptive multi-objective optimization in gray-box fuzzing,” in 29th Annual Network and Distributed System Security Symposium , 2022. [31] J. Wang, C. Song, and H. Yin, “Reinforcement learning-based hierar-chical seed scheduling for greybox fuzzing,” in 28th Annual Network and Distributed System Security Symposium , 2021. [32] D. She, A. Shah, and S. Jana, “Effective seed scheduling for fuzzing with graph centrality analysis,” in 43rd IEEE Symposium on Security and Privacy , 2022. [33] C. Lyu, S. Ji, C. Zhang, Y. Li, W. Lee, Y. Song, and R. Beyah, “MOPT: optimized mutation scheduling for fuzzers,” in 28th USENIX Security Symposium , 2019. [34] P. Jauernig, D. Jakobovic, S. Picek, E. Stapf, and A. Sadeghi, “DAR-WIN: survival of the fittest fuzzing mutators,” in 30th Annual Network and Distributed System Security Symposium , 2023. [35] S. Gan, C. Zhang, P. Chen, B. Zhao, X. Qin, D. Wu, and Z. Chen, “GREYONE: data flow sensitive fuzzing,” in 29th USENIX Security Symposium , 2020. [36] S. Rawat, V. Jain, A. Kumar, L. Cojocar, C. Giuffrida, and H. Bos, “Vuzzer: Application-aware evolutionary fuzzing,” in 24th Annual Network and Distributed System Security Symposium , 2017. [37] C. Aschermann, S. Schumilo, T. Blazytko, R. Gawlik, and T. Holz, “REDQUEEN: fuzzing with input-to-state correspondence,” in 26th Annual Network and Distributed System Security Symposium , 2019. [38] J. Liang, M. Wang, C. Zhou, Z. Wu, Y. Jiang, J. Liu, Z. Liu, and J. Sun, “PATA: fuzzing with path aware taint analysis,” in 43rd IEEE Symposium on Security and Privacy , 2022. [39] Y. Deng, C. S. Xia, H. Peng, C. Yang, and L. Zhang, “Large language models are zero-shot fuzzers: Fuzzing deep-learning libraries via large language models,” in Proceedings of the 32nd ACM SIGSOFT International Symposium on Software Testing and Analysis , 2023. [40] R. Meng, M. Mirchev, M. B¨ ohme, and A. Roychoudhury, “Large language model guided protocol fuzzing,” in 31st Annual Network and Distributed System Security Symposium , 2024. [41] X. Ou, C. Li, Y. Jiang, and C. Xu, “The mutators reloaded: Fuzzing compilers with large language model generated mutation operators,” in Proceedings of the 29th ACM International Conference on Archi-tectural Support for Programming Languages and Operating Systems ,2024. [42] C. Holler, K. Herzig, and A. Zeller, “Fuzzing with code fragments,” in Proceedings of the 21th USENIX Security Symposium , 2012. [43] C. Aschermann, T. Frassetto, T. Holz, P. Jauernig, A. Sadeghi, and D. Teuchert, “NAUTILUS: fishing for deep bugs with grammars,” in 
+
+26th Annual Network and Distributed System Security Symposium ,2019. [44] S. Lee, H. Han, S. K. Cha, and S. Son, “Montage: A neural network language model-guided javascript engine fuzzer,” in 29th USENIX Security Symposium , 2020. [45] J. Wang, Z. Zhang, S. Liu, X. Du, and J. Chen, “Fuzzjit: Oracle-enhanced fuzzing for javascript engine JIT compiler,” in 32nd USENIX Security Symposium , 2023. [46] S. Zhou, M. Jiang, W. Chen, H. Zhou, H. Wang, and X. Luo, “WAD-IFF: A differential testing framework for webassembly runtimes,” in 38th IEEE/ACM International Conference on Automated Software Engineering , 2023. [47] S. Cao, N. He, X. She, Y. Zhang, M. Zhang, and H. Wang, “Was-maker: Differential testing of webassembly runtimes via semantic-aware binary generation,” in Proceedings of the 33rd ACM SIGSOFT International Symposium on Software Testing and Analysis , 2024.

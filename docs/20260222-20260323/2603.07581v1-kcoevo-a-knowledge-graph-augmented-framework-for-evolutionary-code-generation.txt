@@ -1,0 +1,316 @@
+Title: KCoEvo: A Knowledge Graph Augmented Framework for Evolutionary Code Generation
+
+URL Source: https://arxiv.org/pdf/2603.07581v1
+
+Published Time: Tue, 10 Mar 2026 01:14:10 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# KCoEvo: A Knowledge Graph Augmented Framework for Evolutionary Code Generation 
+
+Jiazhen Kang 13 ⋆, Yuchen Lu 1, Chen Jiang 1, Jinrui Liu 1, Tianhao Zhang 1,Bo Jiang 3, Ningyuan Sun 3, Tongtong Wu 2, and Guilin Qi 1⋆⋆  
+
+> 1
+
+Southeast University, Nanjing, China  
+
+> 2
+
+Monash University, Melbourne, Australia  
+
+> 3
+
+ByteDance Ltd., China 
+
+Abstract. Code evolution is inevitable in modern software develop-ment. Changes to third-party APIs frequently break existing code and complicate maintenance, posing practical challenges for developers. While large language models (LLMs) have shown promise in code generation, they struggle to reason without a structured representation of these evolving relationships, often leading them to produce outdated APIs or invalid outputs. In this work, we propose a knowledge graph-augmented framework that decomposes the migration task into two synergistic stages: evolution path retrieval and path-informed code generation. Our ap-proach constructs static and dynamic API graphs to model intra-version structures and cross-version transitions, enabling structured reasoning over API evolution. Both modules are trained with synthetic supervision automatically derived from real-world API diffs, ensuring scalability and minimal human effort. Extensive experiments across single-package and multi-package benchmarks demonstrate that our framework significantly improves migration accuracy, controllability, and execution success over standard LLM baselines. The source code and datasets are available at: 
+
+https://github.com/kangjz1203/KCoEvo .
+
+Keywords: Knowledge Graph · Large Language Model · API Evolution. 
+
+## 1 Introduction 
+
+Modern software development ecosystems evolve as large-scale, systems driven by third-party libraries and frameworks [14]. Rapid API evolution across versions compromises the compatibility and consistency of dependent projects, creating confusion and maintenance challenges in real-world development. For example, Microsoft has addressed the complexity of tracking transitively referenced pack-ages in Visual Studio, noting that a typical project may include 20-70 such dependencies when only 6-10 direct dependencies are declared [6]. Large Language Models (LLMs), such as LLaMa [18] and GPT-4o [16], have shown remarkable capabilities in code understanding, bug fixing, and documen-tation generation [10, 2, 5]. While LLMs demonstrate impressive capabilities in code synthesis and documentation generation, their reasoning process operates over implicit, unstructured internal knowledge. This limits their ability to cap-ture temporal and relational dependencies that characterize code evolution.  
+
+> ⋆
+
+Work done during an internship at ByteDance.  
+
+> ⋆⋆
+
+Corresponding author. gqi@seu.edu.cn  
+
+> arXiv:2603.07581v1 [cs.SE] 8 Mar 2026 2Kang et al.
+
+Empirical studies [20, 19, 24] show that existing LLMs often produce seman-tically inconsistent or version-incompatible code, primarily due to their inability to model code or API evolution as explicit, queryable knowledge. These limita-tions reveal a fundamental gap in current systems: the absence of structured and controllable reasoning mechanisms that can capture version transitions, maintain dependency consistency, and align migration decisions with user intent. Exist-         
+
+> Fig. 1. Illustration of API evolution in PyTorch across three update stages.
+> The figure depicts the progressive modernization of PyTorch’s inference pipeline from
+> v0.3.x (2017) to v2.0.x (2023), covering the transition from Deprecated APIs to Minor
+> and Major Updates .The lower section highlights major industry adopters (e.g., Amazon, Microsoft, Baidu, TikTok, Google, and VSCode), with data samples partially collected from their open-source GitHub repositories, emphasizing the practical relevance of version-aware code migration in large-scale production ecosystems.
+
+ing retrieval-augmented or prompt-tuning methods provide shallow contextual hints but lack a principled representation of code evolution as structured knowl-edge. Consequently, they fail to support symbolic reasoning or graph traversal across versions key operations required for consistent migration. More critically, these approaches lack a principled way to represent or traverse the structural trajectory of code changes [8]. To address this challenge, we propose a knowledge graph-augmented framework that decomposes version-aware code migration into two synergistic subtasks: (1) evolution path retrieval, where the model identifies a compatible transition trajectory from the source API call to the target version, and (2) path-informed code generation, where the model generates updated code using the planned path as structural guidance. The proposed framework adopts a two-level structured knowledge represen-tation, comprising a static API graph that captures intra-version relationships and a dynamic alignment graph that models cross-version transitions [13]. In this representation, API evolution is formalized as a knowledge graph, where each type of evolutionary change is represented as a semantic edge linking related API entities. These graphs empower the model with a structured deductive capabil-ity, compelling its predictions to cohere with both the library’s semantic integrity and their evolutionary trajectory. To summarize, our main contributions in this paper are: 1. We construct a unified knowledge graph framework that explicitly models API evolution as structured knowledge, capturing both intra-version hierar-chies and cross-version transitions. KCoEvo: KG-Augmented Evolutionary Code Generation 3
+
+2. We formulate version-aware code migration as a two-stage task pipeline, enabling controllable planning and generation. 3. We conduct extensive experiments across varied settings, analyzing the ef-fects of graph complexity, reasoning control, and training strategies. 
+
+## 2 Related Work 
+
+2.1 Knowledge Graphs for Code Representation and Reasoning 
+
+For a significant period, knowledge graphs have been increasingly adopted in software engineering to represent and reason over structured information related to code. CodeKG [1], GraphCodeBERT [7] and CodeXGraph [12] demonstrate the effectiveness of graph-based encodings in downstream tasks like code sum-marization, recommendation, and bug detection. Prior studies have employed various graph-based abstractions to represent code, ranging from syntax-level structures such as abstract syntax trees (ASTs) and control-flow graphs (CFGs) to semantic-level representations such as code knowledge graphs. 
+
+2.2 LLM-based Reasoning and Knowledge Integration 
+
+Retrieval-Augmented Generation (RAG) [9, 15] addresses the hallucination in LLMs by grounding their outputs in retrieved data sources. However, it re-mains limited in maintaining version consistency during code generation, es-pecially when dealing with evolving API semantics [24, 3]. To overcome these constraints, recent studies have explored richer integration methods, includ-ing retrieval-aware knowledge injection [4], continual fine-tuning with version-labeled data [11, 22], and graph-based reasoning frameworks that preserve se-mantic structure [24] across evolving entities. 
+
+2.3 Code Evolution and Migration Tooling 
+
+The continuous evolution of third-party libraries introduces persistent challenges for maintaining code compatibility and developer productivity [20, 23]. More re-cently, with the rise of large language models, researchers have begun integrat-ing structured API evolution knowledge into model reasoning [21, 23]. Empirical evaluations such as LLMAPIs [20] reveal that code LLMs frequently recommend deprecated APIs, reflecting temporal knowledge obsolescence. To address this, retrieval-augmented generation frameworks [11] incorporate evolution graphs or version-aware documentation as contextual signals, improving cross-version code generation accuracy. These studies collectively demonstrate that structured evo-lution knowledge encoded as graphs, rules, or retrievable contexts plays a crucial role in bridging static analysis and LLM-based evolutionary code generation. 
+
+## 3 Method 
+
+3.1 Task Definition 
+
+We define the query Q as the input of LLMs for version-aware code generation. It consists of a source code snippet Cold that depends on an older API version 
+
+Vold , together with its corresponding functional description D. The objective is to generate a target code snippet Cnew that conforms to the updated API version 
+
+Vnew while preserving the original semantic functionality. Formally, the task can be represented as: 
+
+Q = ( Cold , V old , V new , D ) (1) 
+
+Cnew = fθ (Gevo , Q ), (2) 4 Kang et al. 
+
+where fθ denotes LLMs parameterized by θ, Gevo represents the structured API evolution knowledge graph encoding API entities, relationships, and temporal dependencies across versions, and Q denotes the query.  
+
+> Fig. 2. Overview of the proposed framework for evolutionary code generation.
+
+3.2 Framework Overview 
+
+We represent API evolution through a structured knowledge graph, which serves as a foundation to guide LLMs in generating code aligned with the target version. This pipeline is conceptually divided into two synergistic stages: Evolutionary Path Retrieval and Path-Informed Code Generation . In the first stage, we first perform Graph Modeling to construct a knowledge graph that encodes API entities, their relationships, and evolutionary patterns. Based on this graph, we then execute Dynamic KG Alignment , where LLMs are employed to iden-tify and rank viable migration trajectories by aligning semantically related API pairs across versions. In the second stage, Path-Informed Code Generation ,the reasoning module leverages these retrieved evolutionary paths to generate version-consistent code that conforms to the target API specifications. 
+
+3.3 Modeling API Evolution with Knowledge Graphs 
+
+The rapid evolution of APIs, while essential to software progress, undermines LLMs’ ability to generate version-consistent code, thereby introducing syntax and compatibility errors during development. To overcome this challenge, we integrate KGs to explicitly capture both the static structure and dynamic evo-lution of APIs across versions. In our framework, each API and its associated evolution types (e.g., rename, relocate, deprecate) are represented as nodes and semantic edges within a version-aware KG. This structured representation allows LLMs to perform graph-guided reasoning, aligning outdated API calls with their updated counterparts and improving version-aware code migration accuracy. KCoEvo: KG-Augmented Evolutionary Code Generation 5 
+
+> Fig. 3. Lightweight schema of the version-aware knowledge graph. Blue edges repre-sent intra-version relations constructed offline; red edges indicate cross-version transi-tions established dynamically at runtime. Dashed lines, associated with ’ Renaming ’ or ’Relocation ’, indicate more complex transformations where an entity evolves through significant modifications to its core attributes or contract.
+
+3.4 API Knowledge Graph Construction 
+
+The static knowledge graph encodes the structural hierarchy and semantic at-tributes of APIs within a specific version of a library. It is constructed offline from open-source repositories such as GitHub 4 and PyPI 5 by analyzing the source code and metadata of each release. Each node in the static graph repre-sents an API entity (e.g., library, module, class, method, function, parameter), and each edge represents a semantic or syntactic relation (e.g., has_function ,
+
+has_parameter , returns , has_description ). The ontology of these types is visualized in Figure 3, and reflects common structures in Python codebases. For entity extraction, we analyze the hierarchical structure of each library to auto-matically identify core API elements, including functions, classes, and methods. Using Abstract Syntax Tree (AST) analysis, we extract these entities and cap-ture their key attributes such as parameters, return types, and docstrings. For relation extraction, we design two complementary modules: one focuses on intra-version relations that capture dependencies and hierarchies within the same API, while the other models inter-version relations to characterize API evolution pat-terns. The latter employs rule-based matching to detect additions, deletions, and signature modifications across different library versions. 
+
+3.5 Dynamic Graph Alignment across Versions 
+
+While the static knowledge graph models intra-version structural dependen-cies, effective code migration further requires reasoning over inter-version API changes. To this end, we introduce a rule-based dynamic alignment mechanism    
+
+> 4https://github.com/
+> 5https://pypi.org/ 6Kang et al.
+
+as shown in Table 1, which identifies semantically related API entities across consecutive library versions in real time. Given a user query comprising a source code snippet and the target library version, the system first retrieves the relevant subgraph from the static knowledge base corresponding to the source version. It then locates the API nodes appearing in the query and traverses the graph using a breadth-first search (BFS) strategy to identify potential evolutionary counterparts. This traversal is guided by explicit version metadata and relation types ( retain , deprecate , add ), thereby producing an aligned subgraph that encodes valid version transitions.                                                       
+
+> Table 1. Formal definition of function-level evolution relations across versions. Fand
+> F′denote the sets of functions in the old and new versions, respectively.
+> Category Type Condition
+> Function Add f / ∈F∧f∈F′
+> Retain (Ret) f∈F∧f∈F′
+> Remove (Rem) f∈F∧f / ∈F′
+> Rename (Ren) f∈F, f ′∈F′∧name (f)̸=name (f′)
+> Relocate (Reloc) f∈F∩F′∧module (f)̸=module (f′)
+
+3.6 Knowledge Graph Augment Evolutionary Code Generation 
+
+Our proposed framework enhances the reasoning capability of LLMs through a structured planning mechanism. It adopts a two-phase process: first, the model generates explicit reasoning plans that outline API evolution trajectories based on the alignment subgraphs, which is named planning module; second, it executes the reasoning process guided by these planning paths to achieve version-aware code generation. Paths are represented as sequences of interconnected entities linked by relations that denote meaningful relationships and interactions within the graph structure. 
+
+Planning Module The planning module serves as the core component that bridges the aligned knowledge graph and the final reasoning process. In our implementation, this module is instantiated directly as an LLM-based planner that operates on the aligned subgraph obtained from the previous stage. Rather than training a separate model, the same large language model is reused for both planning and reasoning phases. Given the aligned subgraph by BFS G and the source code snippet C, the LLM planner denoted as fθ , generates a candidate evolutionary trajectory z, which describes how the API in c transitions to its target version. Formally, this inference process is expressed as: 
+
+z = fθ (Cold , G), (3) where the trajectory z = ( τ1, τ 2, . . . , τ n) is represented as a sequence of evolution-ary triplets. Complicated evolutionary relations, such as relocate , parameter-change ,and rename , are identified during this step to construct precise evolutionary paths across versions. For example, if an API a1 was deprecated in an older KCoEvo: KG-Augmented Evolutionary Code Generation 7
+
+version while a semantically similar API a2 was introduced in a newer ver-sion, emerging with closely aligned parameter definitions and semantic descrip-tions, the corresponding segment of the evolutionary path can be represented as 
+
+a1
+
+> relocate
+
+−−−−−→ a′
+
+> 1
+> parameter-change
+
+−−−−−−−−−−−→ a2.
+
+Reasoning Module In this phase, following the retrieval of candidate planning paths from the API KG, we augment the LLM generation capabilities by in-corporating graph-structured knowledge through graphical representations. The reasoning module, denoted as fθ′ , processes a set of paths Z = {z1, z 2, ...z n}
+
+obtained from the planning module to generate the target version code Cnew in accordance with the task instructions I:
+
+Cnew = fθ′ (Cold , Z, I) (4) During this process, the LLM must accurately implement the reasoning pat-tern specified within each individual planning path and ensure comprehensive adherence to the complete trajectory. 
+
+## 4 Experiments 
+
+We formulate the following research questions (RQs) addressing multiple dimen-sions to systematically evaluate both the effectiveness and generalizability of our proposed approach: 
+
+– RQ1: Does the proposed framework consistently outperform baseline LLMs in cross-version code migration tasks, demonstrating improvements in both syntactic accuracy and semantic consistency? 
+
+– RQ2: How do the proposed planning paths contribute to enhancing model interpretability and reasoning effectiveness compared with raw code-based retrieval approaches? 
+
+– RQ3: To what extent does supervised fine-tuning, particularly when com-bined with LoRA-based adaptation, improve the backbone LLMs’ capability to generalize across evolving API versions? 
+
+4.1 Experiment Settings Models. We selected a range of widely recognized open-source and closed-source models to evaluate the performance of our proposed approach. These models encompass prominent families, including GPT [16], LLaMA [18], Gemini [17], Qwen [25], and DeepSeek [5]. For local deployment and inference, we downloaded smaller-scale models (e.g., those with fewer than 20 billion parameters) from Hugging Face 6.
+
+Data Preparation. We select VersiCode as our primary benchmark, which is designed to evaluate complementary aspects of model performance. VersiCode 
+
+focusing on static accuracy in API-level transformations, it is built by system-atically mining historical version changes from widely used libraries such as 
+
+TensorFlow , Pandas , Scikit-learn , Transformers , etc. The dataset consists   
+
+> 6https://huggingface.co/ 8Kang et al.
+
+of hundreds of aligned source and target code pairs, each annotated with sym-bolic evolution paths derived from API knowledge graphs. VersiCode supports evaluation along two axes: by evolution type (e.g., rename, relocation, depreca-tion) and by release timeline (e.g., v4.45 to v4.46 ). 
+
+Metrics. As a static benchmark, VersiCode employs two complementary met-rics CDC@k and EM@k to assess model performance. First, the Critical Diff Check (CDC) [24] evaluates the functional correctness of API-level transforma-tions based on five rule-based criteria rather than mere textual similarity. Specif-ically, CDC checks: (1) whether the generated code includes the core API token; (2) whether the code is syntactically valid and can be successfully executed or compiled; (3) whether the number of arguments in the generated API call is consistent with the reference implementation; (4) whether contextual constructs such as with statements are preserved; and (5) whether keyword argument as-signments match the reference. Second, EM@1 (Exact Match) measures whether the generated API calls match the reference code both semantically and struc-turally. While EM@1 focuses on functional alignment, CDC further penalizes cases that violate execution constraints, such as invalid syntax, incorrect pa-rameter count, or missing contextual tokens. Therefore, even in the absence of explicit Pass@k evaluation, a high CDC score reliably indicates that the gener-ated code can compile and execute correctly under the target API version. 
+
+Implementation Details. To ensure a fair comparison, all experiments— including the Base models, RAG baselines, and our framework were conducted using identical decoding parameters, specifically, a temperature of 0.0 and top-p
+
+of 1.0. While the incorporation of knowledge graph information inevitably in-creases the prompt length, we ensured that the RAG baselines (Table 3) were provided with retrieved textual contexts of a comparable length. This protocol demonstrates that the performance improvements are specifically attributed to the structured evolutionary knowledge and hierarchical guidance encoded in the KG, rather than a mere increase in the input context size. 
+
+4.2 Results and Analysis Our knowledge-graph-enhanced framework consistently improves both syntactic and semantic accuracy across all migration types. As shown in Table 2, every model achieves notable performance gains under the +KG setting. For instance, DeepSeek-V3 improves from 59 .52 to 96 .83 in CDC@1 and from 59 .52 to 100 .00 in EM@1 under the Major →Major task, yielding a 
+
+∆ of +37 .31 and +40 .48 , respectively. Similarly, Llama-3-70B-Instruct-Turbo 
+
+and Qwen2.5-Coder-32B-Instruct show over +60 points gain in EM@1 across Major →Minor and Minor →Major migrations, confirming that structured API reasoning substantially boosts model robustness. 
+
+Improvements are especially pronounced in complex cross-version mi-grations involving subtle semantic shifts. Cross-version transitions such as Major →Minor and Minor →Major benefit the most from graph-guided reason-ing. For example, DeepSeek-V3 achieves a +60 .60 and +79 .63 improvement in EM@1 on these two types, while Mistral-Small-24B gains +51 .52 and +61 .11 ,respectively. These substantial deltas indicate that our framework effectively KCoEvo: KG-Augmented Evolutionary Code Generation 9
+
+Table 2. Performance across migration types with separate CDC@1 and EM@1 columns. “Base” denotes the original setting; “+KG” denotes the improved setting under our framework; ∆ is the per–metric improvement (+KG − Base). The arrow “→” indicates the direction of migration, where “Major” corresponds to major version changes (e.g., Torch 2.0.0) and “Minor” corresponds to minor version changes (e.g., Torch 2.1.3).                                                                                                                                                                                                                                     
+
+> Model Row Major →Major Major →Minor Minor →Major Minor →Minor
+> CDC@1 EM@1 CDC@1 EM@1 CDC@1 EM@1 CDC@1 EM@1 DeepSeek-V3 Base 59.52 59.52 32.83 33.84 9.26 15.74 16.67 17.74 +KG 96.83 100.00 79.29 94.44 75.00 95.37 53.76 93.01
+> ∆+37.31 +40.48 +46.46 +60.60 +65.74 +79.63 +37.09 +75.27 Qwen2.5-7B-Instruct-Turbo Base 34.13 38.89 15.15 15.66 0.93 7.41 7.53 8.60 +KG 61.90 83.33 40.91 68.18 29.63 41.67 17.74 39.25
+> ∆+27.77 +44.44 +25.76 +52.52 +28.70 +34.26 +10.21 +30.65 Qwen2.5-Coder-32B-Instruct Base 38.10 38.10 16.16 16.16 7.41 7.41 6.99 8.60 +KG 84.92 93.65 67.68 92.42 74.07 87.96 46.24 75.81
+> ∆+46.82 +55.55 +51.52 +76.26 +66.66 +80.55 +39.25 +67.21 Mistral-Small-24B-Instruct Base 38.10 38.10 15.66 16.16 5.56 6.48 6.45 6.45 +KG 72.22 91.27 38.38 67.68 36.11 67.59 33.87 68.28
+> ∆+34.12 +53.17 +22.72 +51.52 +30.55 +61.11 +27.42 +61.83 Llama-3-70B-Instruct-Turbo Base 24.60 39.68 14.14 16.67 0.00 10.19 5.38 8.06 +KG 65.87 89.68 58.59 79.80 54.63 69.44 34.95 74.73
+> ∆+41.27 +50.00 +44.45 +63.13 +54.63 +59.25 +29.57 +66.67 Gemini-1.0 Base 50.00 56.35 32.32 45.96 4.63 21.30 13.44 25.81 +KG 75.40 88.89 46.46 84.34 35.19 93.52 34.95 88.71
+> ∆+25.40 +32.54 +14.14 +38.38 +30.56 +72.22 +21.51 +62.90 Gemini-1.5-Pro-Latest Base 66.67 69.05 35.35 41.41 24.07 37.04 27.96 41.40 +KG 95.24 100.00 92.93 98.48 72.22 98.15 66.13 90.86
+> ∆+28.57 +30.95 +57.58 +57.07 +48.15 +61.11 +38.17 +49.46 Gemini-2.0-Pro Base 38.10 46.83 30.81 43.43 9.26 13.89 16.67 25.81 +KG 80.95 95.24 50.51 86.87 43.52 96.30 34.95 90.32
+> ∆+42.85 +48.41 +19.70 +43.44 +34.26 +82.41 +18.28 +64.51 GPT-5 Base 92.06 95.23 64.65 100.00 82.83 90.91 46.30 72.23 +KG 96.83 100.00 96.97 100.00 100.00 100.00 92.60 100.00
+> ∆+4.77 +4.77 +32.32 +0.00 +17.17 +9.09 +46.30 +27.77
+
+mitigates semantic drift and preserves API alignment when facing fine-grained version changes. 
+
+High-capacity LLMs still require explicit structural grounding for minor-version migrations. Although well-performing models such as GPT-5 
+
+demonstrate strong baseline performance (e.g., > 90 EM@1 on Major →Major), their improvements remain moderate ( ∆ within +5 to +30 ). This suggests that even state-of-the-art LLMs fail to generalize across small yet semantically crit-ical API updates without structured supervision, underscoring the necessity of explicit knowledge integration for stable code migration. 
+
+Retrieval context significantly influences cross-version generalization. 
+
+To further investigate RQ2 , we evaluate similarity-based retrieval augmentation under three external code sources: downstream application code, library source code, and Stack Overflow snippets. As summarized in Table 3, using library source code as the retrieval context yields the highest improvements, particu-larly in minor →minor and minor →major migrations. In contrast, Stack Overflow snippets bring limited gains due to their fragmented and context-poor nature, re-inforcing the importance of structurally aligned retrieval contexts for reasoning consistency. The consistent performance gains across diverse models and mi-gration scenarios confirm that our framework delivers robust version-awareness and interpretable reasoning for evolutionary code generation. In summary, these 10 Kang et al. 
+
+Table 3. Performance (EM@1) of Code Block RAG with Multiple Code Sources. Code sources include downstream application code, library source code, and StackOverflow snippets.                                                     
+
+> Model Major →Major Major →Minor Minor →Major Minor →Minor
+> Qwen2.5-7B-Instruct 38.89 15.66 7.41 8.60 + Downstream Code 38.10 14.65 15.74 7.53 + Library Source 38.10 17.17 11.11 16.67
+> + StackOverflow 32.30 13.03 11.11 6.99 Mistral-24B-Instruct 38.10 16.16 6.48 6.45 + Downstream Code 35.24 16.16 7.41 8.06 + Library Source 38.10 18.18 14.81 13.98
+> + StackOverflow 38.10 15.15 5.56 6.45 Llama-3-70B-Instruct 40.48 16.67 8.33 7.53 + Downstream Code 38.10 16.16 6.48 7.53 + Library Source 38.10 12.42 10.56 14.52
+> + StackOverflow 38.89 16.16 6.48 7.53
+
+results provide empirical support for both RQ1 and RQ2 , demonstrating that structured knowledge grounding not only enhances code correctness but also improves interpretability under version-evolving settings. 
+
+Table 4. Performance (EM@1) of LoRA fine-tuning across version transition types. 
+
+Planning Paths provide graph-guided supervision based on API evolution knowledge. Their combination significantly improves cross-version code generation performance.                                                     
+
+> Model & Configuration Maj →Maj Maj →Min Min →Maj Min →Min
+> Qwen2.5-Coder-7B-Instruct 23.81 8.08 5.56 4.30 + Planning Paths 66.67 46.46 38.89 37.10 + LoRA 27.08 7.78 8.97 4.49 + LoRA + Planning Paths 55.56 48.48 57.41 43.01
+> Meta-Llama-3-8B-Instruct 25.40 10.10 6.48 4.84 + Planning Paths 89.68 85.35 86.11 88.17 + LoRA 23.81 11.11 8.33 3.23 + LoRA + Planning Paths 88.89 84.85 86.11 82.26
+> DeepSeek-Coder-7B-Base-v1.5 3.17 0.51 1.85 1.08 + Planning Paths 26.98 33.84 27.78 22.04 + LoRA 16.67 3.03 2.78 0.54 + LoRA + Planning Paths 39.68 22.22 27.78 23.66
+
+4.3 Ablation study 
+
+To investigate RQ3 , we conduct an ablation study comparing models trained with and without LoRA-based adaptation, as well as configurations that either include or omit the use of planning paths. As shown in Table 4, incorporating super-vised fine-tuning guided by evolutionary path information significantly enhances the model’s ability to handle cross-version code generation. The analysis re-veals that combining lightweight parameter tuning with structured evolutionary supervision bridges the gap between general-purpose LLMs and version-aware reasoning. 
+
+4.4 Case Studies and Error Analysis 
+
+Although integrating the knowledge graph substantially improves models’ aware-ness of API evolution, it also introduces new failure patterns that affect code quality. Our qualitative analysis (Figure 4) focuses on model outputs generated KCoEvo: KG-Augmented Evolutionary Code Generation 11 
+
+under the +KG setting, which still exhibit compilation failures and logical incon-sistencies despite higher semantic alignment scores. As shown in Table 2, models such as Gemini-1.0 , Mistral-Small-24B , and 
+
+Qwen2.5-Coder-32B achieve large EM@1 gains ( ∆EM@1: +60–80%), yet their CDC@1 improvement remains considerably smaller. This divergence indicates that while KG-enhanced reasoning helps models memorize and match API us-age semantically, it does not guarantee syntactically valid or executable code. In particular, we frequently observe Code Validity Error and Parameter Count Error , where the generated code violates argument signatures or includes miss-ing default parameters, typical causes of compilation failure. These findings sug-gest that explicit evolutionary knowledge can overfit models toward symbolic matching rather than structural consistency. In practice, this results in code that appears semantically plausible (high EM@1) but fails under strict syn-tactic or runtime constraints (low CDC@1). We hypothesize that integrating lightweight policy gradient in code generation tasks with compilation feedback could mitigate such inconsistencies, bridging the semantic-syntactic gap.      
+
+> Fig. 4. Representative error types observed in version-aware code migration. The examples illustrate typical reasoning failures encountered by LLMs, including (1)
+> Token Presence Error , (2) Code Validity Error , (3) Parameter Count Error and (4) Parameter Value Error . These cases highlight the limitations of surface-level pat-tern learning and motivate the need for structured, knowledge-driven reasoning in API evolution tasks.
+
+4.5 Discussion 
+
+This study demonstrates that integrating structured code evolution knowledge into large language models can substantially enhance both the reliability and in-terpretability of evolutionary code generation. However, continuously updating and storing large-scale knowledge graph repositories across multiple software ver-sions incurs notable computational and energy overhead, raising concerns about sustainability and cost efficiency in large organisations. Future efforts should therefore focus on developing lightweight, incremental graph update strategies and adaptive integration mechanisms that can seamlessly align evolving code knowledge with LLM reasoning at scale. 
+
+## 5 Conclusion and Future Work 
+
+In this paper, we construct a knowledge graph to capture the structural dynam-ics of API evolution and integrate it into large language models, allowing them to reason over version-specific changes and generate evolution-consistent code across software versions. Our work presents a knowledge graph-retrieval-based framework that bridges the gap between the reasoning capabilities of LLMs and the practical versioning constraints of modern software development. The ex-perimental results reveal that current LLMs struggle to remain synchronized 12 Kang et al. 
+
+with rapidly evolving APIs, primarily due to temporal knowledge obsolescence. In future work, we plan to extend this framework toward broader code intelli-gence scenarios, such as cross-lingual adaptation, cross-framework compatibility, and developer behavior analysis, beyond the current version-specific scope. In parallel, we plan to extend our framework as a plugin integrated into integrated development environments, offering developers proactive, version-consistent code suggestions and automated dependency updates. 
+
+## 6 Acknowledgement 
+
+This research was supported by National Social Science Foundation Key Pro-gram of China (No.23ZD222) and ByteDance Inc. We thank the Big Data Com-puting Center of Southeast University for providing the facility support on the numerical calculations in this paper. 
+
+## References 
+
+1. Abdelaziz, I., Dolby, J., McCusker, J.P., Srinivas, K.: A toolkit for generating code knowledge graphs. In: Proceedings of K-CAP. pp. 137–144 (2021), https: //doi.org/10.1145/3460210.3493578 
+
+2. Chen, M., Tworek, J., Jun, H., Yuan, Q., de Oliveira Pinto, H.P., Kaplan, J., Ed-wards, H., Burda, Y., Joseph, N., Brockman, G., et al.: Evaluating large language models trained on code. CORR abs/2107.03374 (2021), https://arxiv.org/ abs/2107.03374 
+
+3. Chen, Y., Liu, Z., Yu, J., Ren, L., Hu, N., Dai, X., Liu, J., Kang, J., Zhang, S., Wang, X., Ding, K., Shen, P., Zhu, H., Deng, H., Wang, Y., Wu, T., et al.: Oneeval: Benchmarking llm knowledge-intensive reasoning over diverse knowledge bases (2025), https://arxiv.org/abs/2506.12577 
+
+4. Chen, Y., Röder, D., Erker, J.J., Hennig, L., Thomas, P., Möller, S., Roller, R.: Retrieval-augmented knowledge integration into language models: A survey. In: Proceedings of the 1st Workshop on Towards Knowledgeable Language Models (KnowLLM 2024) (2024), https://aclanthology.org/2024.knowllm-1.5/ 
+
+5. DeepSeek-AI: Deepseek-v3 technical report. CoRR abs/2412.19437 (2024), 
+
+https://doi.org/10.48550/arXiv.2412.19437 
+
+6. Douglas, J., Briedé, J.P.: Introducing transitive dependencies in visual stu-dio. Microsoft .NET Blog (2022), https://devblogs.microsoft.com/dotnet/ introducing-transitive-dependencies-in-visual-studio/ 
+
+7. Guo, D., Ren, S., Lu, S., Feng, Z., Tang, D., Liu, S., Zhou, L., Duan, N., Svy-atkovskiy, A., Fu, S., Tufano, M., Deng, S.K., Clement, C.B., Drain, D., Sundare-san, N., Yin, J., Jiang, D., Zhou, M.: Graphcodebert: Pre-training code representa-tions with data flow. In: Proceedings of ICLR (2021), https://openreview.net/ forum?id=jLoC4ez43PZ 
+
+8. Jiang, J., Wang, F., Shen, J., Kim, S., Kim, S.: A survey on large language mod-els for code generation. CORR abs/2406.00515 (2024), https://doi.org/10. 48550/arXiv.2406.00515 
+
+9. Lewis, P., Perez, E., Piktus, A., Petroni, F., Karpukhin, V., Goyal, N., Küttler, H., Lewis, M., Yih, W., Rocktäschel, T., Riedel, S., Kiela, D.: Retrieval-augmented generation for knowledge-intensive NLP tasks. In: Proceed-ings of NeurIPS (2020), https://proceedings.neurips.cc/paper/2020/hash/ 6b493230205f780e1bc26945df7481e5-Abstract.html 
+
+10. Li, Y., Choi, D.H., Chung, J., Kushman, N., Schrittwieser, J., Leblond, R., Ec-cles, T., Keeling, J., Gimeno, F., Lago, A.D., et al.: Competition-level code gen-eration with alphacode. CORR abs/2203.07814 (2022), https://doi.org/10. 48550/arXiv.2203.07814 KCoEvo: KG-Augmented Evolutionary Code Generation 13 11. Liang, L., Gong, J., Liu, M., Wang, C., Ou, G., Wang, Y., Peng, X., Zheng, Z.: Rustevo 2: An evolving benchmark for API evolution in llm-based rust code gener-ation. CoRR abs/2503.16922 (2025), https://doi.org/10.48550/arXiv.2503. 16922 
+
+12. Liu, X., Lan, B., Hu, Z., Liu, Y., Zhang, Z., Wang, F., Shieh, M.Q., Zhou, W.: Codexgraph: Bridging large language models and code repositories via code graph databases. In: Proceedings of NAACL. pp. 142–160 (2025), https://doi.org/10. 18653/v1/2025.naacl-long.7 
+
+13. Lozhkov, A., Li, R., Allal, L.B., Cassano, F., Lamy-Poirier, J., Tazi, N., Tang, A., Pykhtar, D., Liu, J., Wei, Y., et al.: Starcoder 2 and the stack v2: The next generation. CORR abs/2402.19173 (2024), https://doi.org/10.48550/arXiv. 2402.19173 
+
+14. Manikas, K., Hansen, K.M.: Software ecosystems - A systematic literature review. J. Syst. Softw. 86 (5), 1294–1306 (2013), https://doi.org/10.1016/j.jss.2012. 12.026 
+
+15. Min, D., Zhang, K., Wu, T., Cheng, L.: Quco-rag: Quantifying uncertainty from the pre-training corpus for dynamic retrieval-augmented generation (2025), https: //arxiv.org/abs/2512.19134 
+
+16. OpenAI: Hello gpt-4o. OpenAI Blog (2024), https://openai.com/index/ hello-gpt-4o/ 
+
+17. Team, G.: Gemini: A family of highly capable multimodal models. CoRR 
+
+abs/2312.11805 (2023), https://doi.org/10.48550/arXiv.2312.11805 
+
+18. Touvron, H., Martin, L., Stone, K., Albert, P., Almahairi, A., Babaei, Y., Bash-lykov, N., Batra, S., Bhargava, P., Bhosale, S., et al.: Llama 2: Open foundation and fine-tuned chat models. CORR abs/2307.09288 (2023), https://doi.org/ 10.48550/arXiv.2307.09288 
+
+19. Wang, C., Chu, Z., Cheng, Z., Yang, X., Qiu, K., Wan, Y., Zhao, Z., Shi, X., Jin, H., Chen, D.: Codesync: Synchronizing large language models with dynamic code evolution at scale. In: Proceedings of ICML. vol. 267, pp. 62672–62700 (2025), 
+
+https://proceedings.mlr.press/v267/wang25t.html 
+
+20. Wang, C., Huang, K., Zhang, J., Feng, Y., Zhang, L., Liu, Y., Peng, X.: Llms meet library evolution: Evaluating deprecated api usage in llm-based code completion (2025), https://arxiv.org/abs/2406.09834 
+
+21. Wang, Y., Han, C., Wu, T., He, X., Zhou, W., Sadeq, N., Chen, X., He, Z., Wang, W., Haffari, G., Ji, H., McAuley, J.: Towards lifespan cognitive systems. Transac-tions on Machine Learning Research (2025), https://openreview.net/forum?id= LZ9FmeFeLV 
+
+22. Wu, H., Yao, Y., Yu, W., Zhang, N.: Recode: Updating code api knowledge with reinforcement learning (2025), https://arxiv.org/abs/2506.20495 
+
+23. Wu, T., Chen, R., Du, W., Ma, S., Qi, G., Xing, Z., Khadivi, S., Periyathambi, R., Haffari, G.: Environment-aware code generation: How far are we? (2026), https: //arxiv.org/abs/2601.12262 
+
+24. Wu, T., Wu, W., Wang, X., Xu, K., Ma, S., Jiang, B., Yang, P., Xing, Z., Li, Y., Haffari, G.: Versicode: Towards version-controllable code generation. CORR 
+
+abs/2406.07411 (2024), https://doi.org/10.48550/arXiv.2406.07411 
+
+25. Yang, A., Yang, B., Zhang, B., Hui, B., Zheng, B., Yu, B., Li, C., Liu, D., Huang, F., Wei, H., Lin, H., et al.: Qwen2.5 technical report. CoRR abs/2412.15115 
+
+(2024), https://doi.org/10.48550/arXiv.2412.15115

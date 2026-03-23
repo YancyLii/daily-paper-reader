@@ -1,0 +1,632 @@
+Title: FuzzySQL: Uncovering Hidden Vulnerabilities in DBMS Special Features with LLM-Driven Fuzzing
+
+URL Source: https://arxiv.org/pdf/2602.19490v1
+
+Published Time: Tue, 24 Feb 2026 03:08:59 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# FuzzySQL: Uncovering Hidden Vulnerabilities in DBMS Special Features with LLM-Driven Fuzzing 
+
+# Yongxin Chen 
+
+National University of Defense Technology Changsha, China yongxinchen_cx@nudt.edu.cn 
+
+# Zhiyuan Jiang ∗
+
+National University of Defense Technology Changsha, China jzy@nudt.edu.cn 
+
+# Chao Zhang 
+
+Tsinghua University Beijing, China chaoz@tsinghua.edu.cn 
+
+# Haoran Xu 
+
+National University of Defense Technology Changsha, China xuhaoran12@nudt.edu.cn 
+
+# Shenglin Xu 
+
+National University of Defense Technology Changsha, China xushenglin@nudt.edu.cn 
+
+# Jianping Tang 
+
+Hunan University Changsha, China tjp@hnu.edu.cn 
+
+# Zheming Li 
+
+Tsinghua University Beijing, China lizm20@mails.tsinghua.edu.cn 
+
+# Peidai Xie 
+
+National University of Defense Technology Changsha, China xpd2002@126.com 
+
+# Yongjun Wang ∗
+
+National University of Defense Technology Changsha, China wangyongjun@nudt.edu.cn 
+
+## Abstract 
+
+Traditional database fuzzing techniques primarily focus on syn-tactic correctness and general SQL structures, leaving critical yet obscure DBMS features, such as system-level modes (e.g., GTID), programmatic constructs (e.g., PROCEDURE), advanced process commands (e.g., KILL), largely underexplored. Although rarely trig-gered by typical inputs, these features can lead to severe crashes or security issues when executed under edge-case conditions. In this paper, we present FuzzySQL, a novel LLM-powered adaptive fuzzing framework designed to uncover subtle vulnerabilities in DBMS special features. FuzzySQL combines grammar-guided SQL generation with logic-shifting progressive mutation, a novel tech-nique that explores alternative control paths by negating conditions and restructuring execution logic, synthesizing structurally and semantically diverse test cases. To further ensure deeper execution coverage of the back end, FuzzySQL employs a hybrid error repair pipeline that unifies rule-based patching with LLM-driven seman-tic repair, enabling automatic correction of syntactic and context-sensitive failures. We evaluate FuzzySQL across multiple DBMSs, including MySQL, MariaDB, SQLite, PostgreSQL and Clickhouse, uncovering 37 vulnerabilities, 7 of which are tied to under-tested DBMS special features. As of this writing, 29 cases have been con-firmed with 9 assigned CVE identifiers, 14 already fixed by vendors,  
+
+> ∗Zhiyuan Jiang and Yongjun Wang are corresponding authors. Permission to make digital or hard copies of all or part of this work for personal or classroom use is granted without fee provided that copies are not made or distributed for profit or commercial advantage and that copies bear this notice and the full citation on the first page. Copyrights for components of this work owned by others than the author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or republish, to post on servers or to redistribute to lists, requires prior specific permission and/or a fee. Request permissions from permissions@acm.org.
+> Conference acronym ’XX, Woodstock, NY
+> ©2018 Copyright held by the owner/author(s). Publication rights licensed to ACM. ACM ISBN 978-1-4503-XXXX-X/2018/06 https://doi.org/XXXXXXX.XXXXXXX
+
+and additional vulnerabilities scheduled to be patched in upcom-ing releases. Our results highlight the limitations of conventional fuzzers in semantic feature coverage and demonstrate the potential of LLM-based fuzzing to discover deeply hidden bugs in complex database systems. 
+
+## CCS Concepts 
+
+• Security and privacy → Database and storage security ; Soft-ware and application security .
+
+## Keywords 
+
+Database security; Fuzzing; AI for security; Language validity 
+
+ACM Reference Format: 
+
+Yongxin Chen, Zhiyuan Jiang, Chao Zhang, Haoran Xu, Shenglin Xu, Jian-ping Tang, Zheming Li, Peidai Xie, and Yongjun Wang. 2018. FuzzySQL: Uncovering Hidden Vulnerabilities in DBMS Special Features with LLM-Driven Fuzzing. In Proceedings of Make sure to enter the correct conference title from your rights confirmation email (Conference acronym ’XX). ACM, New York, NY, USA, 16 pages. https://doi.org/XXXXXXX.XXXXXXX 
+
+## 1 Introduction 
+
+Modern database management systems (DBMSs) sit at the core of software infrastructure that is critical to security and reliability, where subtle logic flaws can lead to persistent crashes, state corrup-tion, and severe service disruption. As a result, fuzzing has emerged as an effective technique for uncovering DBMS bugs by generating SQL statements and executing them against target systems. How-ever, most existing DBMS fuzzers [ 1, 19 , 23 , 37 , 56 ] predominantly focus on general-purpose statement structures (e.g., SELECT ), cover-ing only a limited portion of the DBMS grammar. Recent efforts such as BUZZBEE [ 51 ] and POLYGLOT [ 7 ] emphasize cross-target gen-eralizability, rather than systematically exercising DBMS-specific features such as read-only modes or GTID control.  
+
+> arXiv:2602.19490v1 [cs.DB] 23 Feb 2026 Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Chen et al.
+
+DBMS special features are vendor-specific extensions that devi-ate from standard SQL specifications and, although invoked less frequently, are deeply embedded in core execution paths and can trigger severe system failures under edge conditions. For example, Listing 1 shows that a seemingly benign combination of statements, such as UPDATE HISTOGRAM and RESET within a read-only trans-action, can lead to a full-system crash—behaviors that are rarely exercised by conventional fuzzers. Existing DBMS fuzzers have explored SQL generation and mutation from multiple perspectives, including structural complexity [ 18 , 56 ], sequence-level interac-tions [ 13 , 22 ], and oracle-guided logic testing [ 19 , 23 , 35 ]. Despite these advances, they share a common limitation: none have made effective attempts to systematically explore feature-specific logic. At a fundamental level, this limitation stems from the mismatch be-tween feature-specific DBMS behaviors and the design assumptions of existing fuzzers, and manifests in several aspects. Concretely, we identify three key factors that hinder existing fuzzers from effectively exploring feature-specific DBMS logic. First, traditional fuzzers lack support for feature-specific SQL constructs that are often tied to internal DBMS mechanisms. These constructs are not only vendor-specific but also version-dependent, making rule-based modeling costly and slow to adapt. Second, semantic modeling remains a fundamental challenge. Without understanding complex schema dependencies and execution context, traditional tools struggle to synthesize auxiliary objects (e.g., PROCEDURE ) or establish the preconditions needed to exercise deep execution paths, leading to low coverage of feature-specific logic. Third, existing fuzzers typically lack global state tracking and replay mechanisms, making it difficult to identify compound failures that arise only through interactions across multiple statements or test cases. For example, the underlying bug demonstrated by Listing 1 was trig-gered by a latent interaction among statements from four distinct test cases. To address these limitations, we present FuzzySQL, a novel adap-tive fuzzing framework driven by LLMs and designed to systemati-cally uncover vulnerabilities in the under-tested feature space of modern DBMSs. FuzzySQL introduces the following key innova-                             
+
+> 1CREATE TABLE t0 ( xxx );
+> 2ALTER DATABASE test_db READ ONLY =1;
+> 3ANALYZE TABLE `t0 `UPDATE HISTOGRAM ON v1 ;
+> 4RESET BINARY LOGS AND GTIDS ;
+> 5INSERT INTO t0 VALUES ( xxx );
+
+Listing 1: Motivational example of a MySQL vulnerability related to DBMS special features. 
+
+tions. First, FuzzySQL targets feature-specific SQL constructs by combining grammar-guided template expansion with LLM-powered instantiation (Section 3.1), enabling systematic coverage of vendor-specific and version-dependent DBMS features that are difficult to model using fixed rules. Second, to overcome the challenges of semantic modeling, FuzzySQL performs semantic exploration through a unified design that integrates progressive mutation with automated error repair (Sections 3.2 and 3.3). Specifically, it priori-tizes semantic diversity by recombining logic fragments across seed programs and applying conditional logic shifts, while automatically repairing high-value test cases that fail due to missing objects or unmet semantic preconditions. This design enables FuzzySQL to construct semantically valid and diverse SQL sequences that reach deep, feature-dependent execution paths. Finally, FuzzySQL main-tains the global execution context throughout fuzzing and performs replay-based analysis to identify and isolate compound failures that arise only under specific internal DBMS states (Section 3.4). This paper makes the following key contributions: 
+
+• Uncovering a critical blind spot in DBMS fuzzing. We demonstrate that conventional fuzzers typically neglect the special features of DBMSs, such as GTID handling, which can lead to severe failures, but are rarely triggered by general-purpose test cases. 
+
+• Enabling deep semantic exploration through LLM-driven fuzzing. We present FuzzySQL, an adaptive fuzzing framework that combines template-guided generation, context-aware mu-tation, and a hybrid error-repair pipeline. This design enables the synthesis of structurally valid and semantically rich SQL statement sequences that activate deeper DBMS control paths. 
+
+• Comprehensive feature coverage via execution state main-tenance and replay. FuzzySQL flexibly adapts to diverse DBMS dialects and feature sets and maintains the global execu-tion context during fuzzing and crash validation. This allows it to detect feature-related bugs that depend on internal state transitions and diverse execution environments. 
+
+• Discovering real-world vulnerabilities across multiple DBMSs. We evaluate FuzzySQL on MySQL, MariaDB, SQLite, and ClickHouse, uncovering 37 vulnerabilities, of which 29 have been confirmed by developers and 7 are associated with under-tested DBMS features. These results highlight FuzzySQL’s ability to expose semantic and feature-specific vulnerabilities consistently missed by existing approaches. 
+
+## 2 Motivation 
+
+Modern DBMSs implement a wide range of system-specific features that go far beyond standard SQL support, introducing complex internal mechanisms and stateful behaviors. These under-tested features often expose latent vulnerabilities that are difficult to un-cover through traditional fuzzing techniques. In this section, we first highlight the limitations of existing fuzzers in exercising such features through a motivating example. We then discuss why previ-ous approaches fail to trigger these bugs and explore the potential of LLMs to address the associated challenges. 
+
+## 2.1 Under-Tested Features in Modern DBMSs 
+
+While traditional database fuzzers primarily target general-purpose SQL statements such as SELECT , INSERT , and CREATE TABLE , mod-ern DBMSs expose a broader attack surface through system-level features that manipulate internal state and metadata. Listing 1 presents a minimal SQL sequence that triggers a persistent crash in MySQL by misusing such special-purpose statements. These features include operations for toggling system modes (e.g., READ ONLY ), managing replication state (e.g., BINARY LOGS and 
+
+GTID ), and maintaining internal statistics (e.g., UPDATE HISTOGRAM ). Although invoked less frequently than standard DML and DDL statements, they directly interact with core DBMS subsystems and global execution state. Each statement in Listing 1 is syntactically valid and semantically reasonable in isolation. However, their spe-cific combination exposes a subtle control-path vulnerability in MySQL’s metadata lock management. In particular, toggling READ FuzzySQL: Uncovering Hidden Vulnerabilities in DBMS Special Features with LLM-Driven Fuzzing Conference acronym ’XX, June 03–05, 2018, Woodstock, NY 
+
+ONLY mode and updating table histograms interact with metadata locks maintained by the dictionary subsystem, while resetting bi-nary logs alters session-level replication state. When followed by a regular INSERT , these interactions violate internal lock invariants and trigger an assertion failure in the metadata lock checker. More critically, triggering this vulnerability leads to persistent state corruption that survives across subsequent executions. Even after restarting the server, later queries result in immediate crashes, indicating a lasting impact on internal state rather than a tran-sient fault. This example demonstrates that under-tested DBMS features can interact in unexpected ways, producing severe and state-dependent failures that are difficult to expose through tradi-tional statement-level fuzzing. 
+
+## 2.2 Why Existing Fuzzers Miss These Bugs 
+
+Despite progress in DBMS fuzzing, most existing tools remain cen-tered on crafting syntactically valid DML and DDL statements, with limited awareness of feature-specific SQL constructs. More-over, such features vary significantly across DBMSs and evolve rapidly between releases. For example, RESET BINARY LOGS AND GTIDS in Listing 1 is a recent feature introduced in MySQL 8.4 to re-place the legacy RESET MASTER , making manual rule-based support both costly and prone to lag behind DBMS evolution. In addition, prior tools typically lack global state awareness. Without tracking execution context or supporting replay, they may overlook or misclassify state-dependent failures as false positives. In our investigation, the vulnerability shown in Listing 1 could not be triggered by a single test case; instead, it was reconstructed from four independent inputs identified among thousands of PoCs. These inputs were discovered through sequential replay and in-put minimization, as there was no semantic guidance suggesting that READ ONLY toggles and RESET commands should be combined. This limitation underscores that current fuzzers are fundamentally inadequate for exposing deep, feature-related vulnerabilities. 
+
+## 2.3 LLM: Opportunities and Challenges 
+
+LLMs enable semantic understanding of complex SQL constructs, al-lowing them to generate coherent multi-statement SQL sequences, infer implicit dependencies, and synthesize missing objects (e.g., creating a PROCEDURE when a CALL is issued). This reduces reliance on manually crafted rules in DBMS fuzzing and supports more com-prehensive testing of system-specific features. However, LLMs also introduce unique challenges in the fuzzing context. Due to their exposure to well-formed data during pretraining and instruction tuning, they exhibit a strong bias toward generating syntactically correct, semantically plausible, and conventionally safe inputs. Spe-cific design choices are required to guide LLMs toward semantic reasoning over schema context, rather than defaulting to generic low-risk outputs. A notable characteristic of LLMs is hallucination, where mod-els generate syntactically or semantically invalid content relative to the underlying system or schema. While typically undesirable, hallucinations can be beneficial for fuzzing, as they help explore un-expected behaviors and may expose corner-case bugs. In the fuzzing context, hallucination acts as a feature that promotes exploration beyond normative inputs. We further illustrate this phenomenon in Section 5.4. 
+
+## 2.4 Goals of FuzzySQL 
+
+Based on the motivations described above, we design FuzzySQL as an LLM-powered adaptive fuzzing framework that aims to cover the under-tested feature space of DBMS. FuzzySQL is designed to: i. Flexibly adapt to diverse DBMS dialects and system-specific features through grammar-based template expansion and LLM-guided semantic instantiation. ii. Generate syntactically valid and semantically meaningful SQL sequences that invoke diverse internal behaviors. iii. Maintain global execution context and support replay-based PoC validation to detect and isolate persistent, state-dependent bugs rooted in non-trivial control flows. FuzzySQL aims to shift the paradigm of database fuzzing from traditional syntax-driven or random mutation strategies toward a semantically guided approach that emphasizes deeper program logic and broader exploration of system features. We provide an anonymized artifact repository to support reproducibility, as de-scribed in the Open Science Appendix C. 
+
+## 3 Methodology 
+
+To uncover deep and stateful bugs in modern DBMSs, FuzzySQL adopts a unified fuzzing pipeline that integrates structured genera-tion, semantic mutation, automated repair, and replay-based valida-tion, as illustrated in Figure 1. Rather than generating isolated SQL statements, FuzzySQL continuously evolves multi-statement pro-grams under a persistent execution context, enabling exploration of feature-specific and state-dependent behaviors. Fuzzing begins with grammar-guided SQL template expansion, followed by LLM-based instantiation under the current schema state to produce executable and semantically meaningful inputs. Executed test cases that yield new coverage are retained and further evolved via progressive muta-tion, which recombines statement sequences and applies logic-level transformations to explore alternative control paths. When execu-tion fails due to syntactic or semantic inconsistencies, FuzzySQL applies a multi-stage repair pipeline to salvage high-value inputs instead of discarding them. Finally, detected crashes are validated through replay-guided execution and minimized to concise, repro-ducible PoCs that capture state-dependent failures. 
+
+## 3.1 Grammar-Guided SQL Generation 
+
+To generate diverse and structurally valid SQL inputs, FuzzySQL employs a two-phase grammar-driven generation process. First, it performs a recursive expansion of production rules extracted from the DBMS grammar definitions. Second, it uses LLM to instantiate concrete SQL statements guided by both the expanded templates and the contextual schema state. 
+
+3.1.1 Grammar Template Expansion. To systematically cover the SQL grammar space, FuzzySQL first parses the target DBMS’s ANTLR4 grammar specification to extract production rules. We abstract all rules into four categories to enable controlled and inter-pretable expansion, as illustrated in Figure 2: 
+
+• SequenceRule: A sequence of grammar symbols to be ex-panded in order. 
+
+• OptionalRule: Grammar elements that may be omitted or included (e.g., IGNORE ). Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Chen et al. 
+
+Figure 1: Overview of FuzzySQL. 
+
+Figure 2: CFG rules of the ‘alterTable’ statement. 
+
+• ChoiceRule: Mutually exclusive options, where one is selected from a set (e.g., ONLINE vs. OFFLINE ). 
+
+• RepeatRule: Patterns that can be repeated one or more times (e.g., comma-separated lists of alterSpecification ).               
+
+> 1al ter Table -> ALTER ONLINE TABLE [ tableName ] [al ter Specification ] [ partitionDefinitions ]
+> 2al ter Table -> ALTER TABLE [ tableName ] [ al ter -Specification ] ,[ al ter Specification ]
+
+Listing 2: SQL templates derived from the alterTable rule. 
+
+Based on this classification, we scan and normalize the grammar file, enabling heuristic control during recursive expansion. Then, FuzzySQL constructs recursive derivation trees rooted at top-level statement nonterminals. Two safeguards are applied to ensure di-versity and manageability: (i) A configurable maximum recursion depth to bound nested grammar derivations; (ii) Rule-specific usage quotas to prevent structural redundancy (e.g., excessive parentheses or nested subqueries). The final output is a collection of skeletal SQL templates—syntax-valid but uninstantiated statement blueprints. Listing 2 shows examples of grammar templates expanded from the 
+
+alterTable rule. Both templates can be further expanded through the alterSpecification rule, as long as the depth and quota limits are not exceeded. Grammar templates form the structural backbone of FuzzySQL’s seed generation process, ready to be instantiated with real schema and data context by LLMs in the next phase. 
+
+3.1.2 LLM-Powered Fuzzy Instantiation. Given a grammar-expanded template, FuzzySQL uses a LLM to instantiate the abstract statement into a complete executable SQL query. To guide this process, we maintain a dynamic schema context—populated via randomly generated CREATE TABLE and INSERT statements, which includes table names, column types and relational structures. These initialization statements not only establish a valid database environment with rich type coverage (e.g., INT , ENUM , GEOMETRY ), but also provide the semantic context necessary for the LLM to generate coherent and meaningful SQL logic. For example, when instantiating a template involving a JOIN or subquery, the LLM leverages both the schema and the grammatical scaffold to synthesize a valid and meaningful test case. Unlike tra-ditional fuzzers, which randomly inject literals or select columns uniformly, FuzzySQL is context-aware and schema-consistent. As a result, FuzzySQL can generate a wide variety of semantically cor-rect and structurally diverse SQL queries ranging from simple data manipulation to complex administrative commands while ensuring that they are executable in the current DBMS state. 
+
+## 3.2 Logic-Shifting Progressive Mutation 
+
+While grammar-based generation ensures structural diversity, mu-tation plays a crucial role in evolving test cases toward deeper execution paths. FuzzySQL introduces context reconstruction that operates at the SQL sequence level, incorporating a logic-shifting progressive mutation strategy to maximize semantic diversity and minimize redundancy. This design avoids complex parsing and rigid mutation rules, enabling efficient discovery of diverse behaviors across DBMS dialects with minimal seed input requirements. The overall process is illustrated in Algorithm 1. 
+
+3.2.1 Sequence Crossover Synthesis. To generate new test cases, FuzzySQL randomly selects a pair of seed SQL statement sequences from the seed pool and performs schema-aware crossover synthesis. The process follows 3 steps: Schema Unification. As shown in lines 3–11 of Algorithm 1, we first extract schema initialization statements (e.g., CREATE TABLE , INSERT INTO ) from both 𝑇 1 and 
+
+𝑇 2, denoted as 𝑆 1 and 𝑆 2. For each table identifier 𝑡 appearing in 
+
+𝑆 1 ∪ 𝑆 2, we resolve potential conflicts: if 𝑡 is defined in both seeds, one version is randomly chosen to ensure consistency and eliminate redundancy. The unified schema statements are appended to form a consistent schema set 𝑆 .FuzzySQL: Uncovering Hidden Vulnerabilities in DBMS Special Features with LLM-Driven Fuzzing Conference acronym ’XX, June 03–05, 2018, Woodstock, NY 
+
+Algorithm 1 Logic-Shifting Progressive Mutation  
+
+> 1:
+
+Input: Two SQL test cases T1, T2 
+
+> 2:
+
+Output: Mutated test case T ∗ 
+
+> 3:
+
+Extract schema fragments S1, S2 and operations O1, O2 
+
+> 4:
+
+Initialize empty schema set S ← ∅  
+
+> 5:
+
+for each table 𝑡 in S1 ∪ S 2 do  
+
+> 6:
+
+if 𝑡 exists in both S1 and S2 then  
+
+> 7:
+
+Randomly select one version of 𝑡 from S1 or S2 
+
+> 8:
+
+else  
+
+> 9:
+
+Use the available definition of 𝑡  
+
+> 10:
+
+end if  
+
+> 11:
+
+Append chosen schema statements of 𝑡 into S 
+
+> 12:
+
+end for  
+
+> 13:
+
+Initialize empty operation sequence O ← 𝐸𝑚𝑝𝑡𝑦𝐿𝑖𝑠𝑡  
+
+> 14:
+
+Let 𝑖, 𝑗 be indices for O1, O2 
+
+> 15:
+
+while 𝑖 < |O 1 | or 𝑗 < |O 2 | do  
+
+> 16:
+
+if 𝑖 < |O 1 | and ( 𝑗 ≥ |O 2 | or random < 0.5) then  
+
+> 17:
+
+Append O1 [𝑖 ] to O; 𝑖 ← 𝑖 + 1 
+
+> 18:
+
+else  
+
+> 19:
+
+Append O2 [ 𝑗 ] to O; 𝑗 ← 𝑗 + 1 
+
+> 20:
+
+end if  
+
+> 21:
+
+end while  
+
+> 22:
+
+for each statement 𝑠 in O do  
+
+> 23:
+
+Sample a drop probability 𝑝 drop ∼ U ( 0.2, 0.4) 
+
+> 24:
+
+if 𝑟𝑎𝑛𝑑𝑜𝑚 () < 𝑝 drop then  
+
+> 25:
+
+Drop 𝑠  
+
+> 26:
+
+end if  
+
+> 27:
+
+end for  
+
+> 28:
+
+for each statement 𝑠 in O do  
+
+> 29:
+
+Apply conditional rewrites (𝑘 → 𝑘 ′): 
+
+> 30:
+
+if 𝑘 is JOIN, randomly replace with supported JOIN;  
+
+> 31:
+
+else replace with 𝑘 ′ 
+
+> 32:
+
+end for  
+
+> 33:
+
+Return: T ∗ = S ∪ O 
+
+Sequence Crossover. We extract non-initialization SQL state-ments (e.g., SELECT , ANALYZE , KILL ) from 𝑇 1 and 𝑇 2 to form opera-tion sequences O1 and O2. As shown in Lines 13–21 of Algorithm 1, these sequences are probabilistically interleaved to produce a new sequence O that preserves partial order while enabling cross-seed logic recombination. This allows FuzzySQL to synthesize test cases that blend behaviorally diverse fragments and explore context-dependent interactions. Sequence crossover may introduce seman-tic inconsistencies, such as mismatched table or column references. To reduce identifier conflicts, we adopt a unified naming conven-tion during generation (e.g., t, c with numeric suffixes). Moreover, syntactic or semantic errors introduced during mutation are not fatal—they are addressed in the subsequent error repair stage. 
+
+Size and Diversity Control. To avoid overly large or redun-dant test cases, we perform probabilistic dropping of operations (lines 22–27). For each statement 𝑠 in O, a drop probability 𝑝 drop 
+
+is sampled from a uniform distribution U, and 𝑠 is discarded with that probability. This strategy ensures that the generated test cases remain compact, computationally efficient, and support progressive exploration of novel context combinations. The resulting synthetic case blends the execution contexts and logic flows from both par-ents, increasing the likelihood of triggering corner-case bugs that require complex state transitions. 
+
+3.2.2 Conditional Logic Shift. After crossover synthesis, FuzzySQL applies a second-stage mutation phase that targets the logical struc-ture of SQL conditions. This logic-shifting transformation rewrites common predicates and joins patterns to explore alternative se-mantic paths while preserving syntactic validity. The process is implemented via rule-driven string rewrites, requiring no schema-specific reasoning or AST instrumentation, and generalizes well across SQL dialects. This logic-level rewriting corresponds to lines 28–32 in Algorithm 1, where each statement 𝑠 in the filtered oper-ation sequence is examined for conditional rewrite opportunities. Specifically, FuzzySQL maintains a rewrite rule set {𝑘 → 𝑘 ′ }, and applies them conditionally based on statement type. We organize these transformations into two primary categories: i. Predicate mutations , which rewrite conditional operators (e.g., = vs. != , IN vs. NOT IN , IS NULL vs. IS NOT NULL , or ordering directions) in WHERE , HAVING , and ORDER BY clauses. These lightweight changes preserve syntactic structure while enabling exploration of complementary execution paths. ii. JOIN rewrites , which substitute join variants (e.g., INNER ,
+
+LEFT , or CROSS JOIN ) to perturb query structure and query-plan generation, potentially exposing logic differences in op-timization or error-handling stages. In contrast to AST-based fuzzers such as Squirrel [ 56 ] that rely on heavyweight intermediate representations, our mutation layer is minimal and DBMS-agnostic, allowing efficient fuzzing over LLM-generated SQL with low engineering cost. To maintain cross-system compatibility, FuzzySQL includes dialect-aware filtering: for instance, disabling FULL JOIN in SQLite or adapting join syntax for ClickHouse. This ensures that semantic variation remains within valid syntactic boundaries for each target engine. 
+
+## 3.3 Automated Error Repair 
+
+Instantiating complex grammar templates into fully valid SQL state-ments in a single pass is inherently difficult, particularly for under-tested features such as PROCEDURE . In addition, random mutations often introduce contextual inconsistencies, producing test cases that are syntactically invalid yet still encode meaningful execu-tion intent. Rather than relying on one-shot generation to produce high-quality inputs, FuzzySQL treats test case construction as a refinement process and introduces a progressive error recovery pipeline. By repairing and completing partially valid SQL programs, the system systematically elevates test case quality and enables exploration of deeper, feature-dependent execution paths that are difficult to reach through direct generation alone. Embracing im-perfection in exchange for broader exploration, FuzzySQL aligns naturally with the fundamental philosophy of fuzzing. 
+
+3.3.1 Error Taxonomy. To ensure the soundness of our repair strat-egy, we conduct a quantitative analysis of error messages returned by MySQL, a representative and widely deployed DBMS. From 12 hours of grammar-guided SQL generation, we collect 65,591 er-rors spanning 184 distinct types (out of 1,960 documented MySQL client error codes). Syntax-related errors account for 29.61% of all messages, while the top 50 semantic error types contribute 68.44%. These high-frequency semantic errors are manually analyzed and Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Chen et al. 
+
+Table 1: SQL Error Handling Strategies Error Category Definition Repair Strategy SAF RBR SAR 
+
+Duplicate Definition A data object is defined more than once. – ✓
+
+Unsupported Feature Uses a feature or syntax not supported by the system. – ✓
+
+Plugin/Component Errors Errors caused by failure or malfunction of plugins or components. Reload, reconfigure, or replace the plugin/com-ponent. 
+
+✓
+
+Inappropriate Setting A configuration setting is invalid or con-textually incorrect. Adjust to a valid or recommended setting. ✓
+
+Formattable Errors Errors that can be resolved through for-matting adjustments. Apply predefined repair rules through SQL statement formatting analysis. 
+
+✓
+
+Invalid Object Refer-ence References a non-existent or illegal data object. Generates a SQL statement template to create or define the object and inserts it in front. 
+
+✓
+
+Preconditions Miss-ing Required preconditions for execution are not met. Extract prerequisite requirements and build guiding prompts. 
+
+✓
+
+Incorrect Feature Us-age Incorrect or improper usage of a feature. Attach the error messages directly to the corre-sponding SQL statements. 
+
+✓
+
+Violate Constraints Operation violates database constraints. Attach the error messages directly to the corre-sponding SQL statements. 
+
+✓  
+
+> SAF : Syntax-Aware Filtering RBR : Rule-Based Repair SAR : Semantic-Aware Repair
+
+mapped to dedicated rule-based or intelligent semantic-aware re-pair strategies, while the remaining long-tail categories are handled via LLM-based semantic repair. Following the same methodology, we perform 12-hour fuzzing sessions for other DBMSs and map the observed error patterns to the corresponding repair strategies. Although MySQL serves as the primary guide for designing our framework, FuzzySQL maintains compatibility across systems by adapting repairs based on error semantics rather than relying on DBMS-specific rules. The SQL error handling strategies we summarized are shown in Table 1. 
+
+3.3.2 Syntax-Aware Filtering. Before invoking any repair strategy, FuzzySQL performs error tagging to map DBMS error messages back to the corresponding SQL statements. This is achieved through log analysis and keyword alignment, allowing precise localization of faulty fragments for subsequent filtering or repair. For syntax-related errors, FuzzySQL applies structural filtering to prioritize repair-worthy candidates. Specifically, SELECT state-ments with abstract syntax tree (AST) depth fewer than three are discarded as overly simplistic and unlikely to exercise deep execu-tion logic. In contrast, statements involving DBMS-specific features (e.g., GTID , PROCEDURE , INSTALL COMPONENT ) are always retained, as these often reside in under-tested paths and are more likely to expose non-trivial bugs. In addition, FuzzySQL filters out errors which are caused by duplicate object definitions or unsupported features rather than input errors. These include errors like Table 
+
+'XX 'already exists , or This version of [DBMS] does not yet support 'XXX '. Filtering these cases early allows FuzzySQL to focus computational resources on repairing inputs with genuine structural or semantic promise. 
+
+3.3.3 Rule-Based Repair. To efficiently handle frequent and struc-turally shallow error cases, FuzzySQL incorporates a rule-based repair layer that operates without requiring deep semantic mod-eling. This module targets predictable error patterns that can be corrected through localized adjustments—such as replacing invalid literals, reformatting malformed clauses, or adjusting configura-tion parameters—based solely on pattern matching and heuristic rewriting. Compared to semantic reasoning approaches, rule-based repair is lightweight and DBMS-agnostic. For example, errors such as ’Cannot get geometry object from data you send to the GEOMETRY field’ can be resolved by adjusting the literal assignment to conform to the expected data type. It avoids the over-head of parsing syntax trees or inferring dependencies, making it portable across dialects. More importantly, it enables fast recovery from common failures without invoking LLMs, thereby conserv-ing LLM query budget for more complex, high-value repairs. By pre-staging repairable cases into this rule-based stage, FuzzySQL ensures high-throughput processing of grammar-generated inputs. 
+
+3.3.4 Intelligent Semantic-Aware Repair. For complex test failures rooted in semantic inconsistencies, such as undefined objects, un-met preconditions, or illegal feature combinations—FuzzySQL in-vokes a LLM to perform intelligent and context-sensitive repair. Unlike deterministic fixes, this stage leverages LLMs’ ability to interpret program intent and synthesize structurally valid SQL fragments to recover test cases that would otherwise be discarded. The repair process begins by grouping remaining errors by type (e.g., invalid object reference, missing prerequisite, constraint viola-tion), each associated with its corresponding faulty SQL fragment and execution context. For each case, FuzzySQL constructs a struc-tured repair prompt that includes the SQL snippet, relevant schema history, the DBMS error message, and a natural language instruction describing the repair objective. Based on this prompt, the LLM gen-erates a patch, either by inserting missing definitions (e.g., creating tables or functions) or rewriting invalid clauses. These transfor-mations are injected directly into the test case for re-evaluation. For instance, when encountering an error such as PROCEDURE xxx does not exist , FuzzySQL constructs a prompt that instructs the LLM to synthesize a valid CREATE PROCEDURE template, placing it before the failing invocation. This effectively guides the repair FuzzySQL: Uncovering Hidden Vulnerabilities in DBMS Special Features with LLM-Driven Fuzzing Conference acronym ’XX, June 03–05, 2018, Woodstock, NY 
+
+process toward restoring missing database objects and leads to the generation of an interesting PROCEDURE .In particular, LLM repairs are highly effective at recovering DBMS-specific constructs and operation sequences. This error-repair loop forms an iterative Chain-of-Thought (COT), where the model refines test cases based on error messages and repair strate-gies. This final repair phase enables FuzzySQL to recover high-value test inputs that exhibit deep structural complexity, significantly in-creasing the coverage of under-tested DBMS behaviors. 
+
+## 3.4 Replay-Guided Crash Validation 
+
+To ensure that detected crashes are genuinely reproducible and rooted in state-dependent behaviors of the DBMS, FuzzySQL im-plements a replay-guided crash validation pipeline followed by test case reduction. This mechanism isolates the root cause of failures and extracts a minimal yet effective proof-of-concept (PoC) that reproduces the crash. 
+
+Replay-based crash validation. Unlike traditional fuzzers that fork a new process for each test case, FuzzySQL resets the database state using DROP DATABASE and CREATE DATABASE statements, pre-serving the global session context across executions. While this approach improves performance, it introduces the possibility of residual state effects. In many cases, a crash does not occur when the current test case is executed in isolation, but only when cer-tain prior statements have altered the environment. To address this, FuzzySQL first attempts to re-execute the crashing test case alone. If the crash does not reproduce, it replays the full execution history, executing prior statements in order before the crashing input, to verify whether the failure is state-dependent. If the error only manifests during the full replay, the issue is classified as a state-dependent crash and proceeds to minimization. 
+
+Dependency-preserving Test Case Reduction. Once a crash is confirmed, FuzzySQL automatically performs test case reduction to produce a minimal proof-of-concept (PoC). This process targets two dimensions: (1) structural simplification of individual SQL state-ments, and (2) reduction of the overall statement sequence. These two simplification strategies are applied iteratively and alternately, progressively minimizing the test case while ensuring the crash remains reproducible. Reduction begins from the last statement in the sequence—where the crash is typically triggered—and proceeds backward. For struc-tural simplification, each SQL statement is first parsed into an abstract syntax tree (AST), and then recursively simplified by prun-ing subtrees or nodes. The simplified AST is converted back into SQL and tested. If the crash still occurs, the simplification is re-tained. Otherwise, the system rolls back the change and attempts alternative simplifications. Once structural simplification weakens or removes certain data or control dependencies, the surround-ing context becomes amenable to further reduction. At this stage, FuzzySQL attempts to delete preceding statements using a delta debugging strategy, preserving only those necessary for triggering the fault. The final output is a compact, semantically valid SQL sequence that isolates the root cause of the crash. FuzzySQL’s replay and reduction workflow reconstructs the full crash path and eliminates irrelevant logic, producing a concise PoC of critical SQL statements, drastically improving debugging clarity and bug report quality. 
+
+## 4 Implemention 4.1 Prompt Engineering 
+
+To ensure stable generation quality and precise control over the output, FuzzySQL uses structured prompt templates tailored to SQL statement instantiation and semantic error repair. The com-plete prompt templates used in our implementation are provided in Appendix A. 
+
+4.1.1 Prompt Structure for SQL Instantiation. The goal of SQL in-stantiation is to transform grammar-expanded abstract templates into concrete, executable SQL queries. FuzzySQL constructs prompts with the following four key components: 
+
+• Task Instruction : A concise natural language directive that instructs the LLM to generate a syntactically valid and seman-tically meaningful SQL query. 
+
+• Schema Initialization Statements : Randomly generated CREATE TABLE/VIEW statements that define the database context. These provide schema and data type grounding (e.g., table names, col-umn types, constraints) for coherent query generation. 
+
+• SQL Templates : A set of SQL templates derived from the grammar, serving as a structural constraint. 
+
+• Output Formatting Instruction : A final constraint that di-rects the LLM to return only complete SQL statements, avoiding comments, explanations, or multiple alternatives. This structured prompting allows the LLM to fill in semantically appropriate content, such as meaningful column selections, valid 
+
+WHERE clauses, or realistic JOIN clauses, all consistent with the provided schema. 
+
+4.1.2 Prompt Structure for Error Repair. If a SQL test case fails with errors addressable by semantic-aware repair, FuzzySQL constructs an LLM repair-instruction prompt containing: 
+
+• Repair Instruction : A natural language request that instructs the model to identify the faulty SQL segment and either mod-ify it or insert the required definitions to ensure successful execution. 
+
+• Full SQL Context : The complete test case, including schema setup and execution sequence, providing the necessary context for understanding the failure and synthesizing a valid patch. 
+
+• Error Annotations : The error message returned by the DBMS is injected near the offending SQL line, using inline comments. 
+
+• Output Formatting Instruction : Follow the same formatting rules as those applied during the Instantiation phase. The prompt structure allows the LLM to reason about schema-object relationships, identify the cause of failure, and propose action-able fixes, such as defining a missing object or correcting column usage, without discarding the broader intent of the test case. 
+
+## 4.2 Execution Framework and Instrumentation 
+
+FuzzySQL supports fuzzing for both client-server and embedded DBMS architectures through adaptive execution strategies tailored to the target under test. Instead of conventional stdin-based fuzzing, it delivers SQL inputs via realistic interaction paths to preserve semantic context and execution fidelity. Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Chen et al. 
+
+4.2.1 DBMS Fuzzing Drivers. FuzzySQL supports both client-server and embedded DBMS architectures through tailored exe-cution strategies. For client-server systems (e.g., MySQL, Mari-aDB), FuzzySQL launches the command-line interface client via 
+
+pexpect.spawn() and maintains a persistent session. To isolate test cases without restarting the server, it resets the environment us-ing a standard SQL prelude: DROP DATABASE IF EXISTS test_db; CREATE DATABASE test_db; USE test_db; . This ensures a clean database context while preserving session-level state, enabling dis-covery of state-dependent bugs beyond fork-per-input fuzzers. For embedded engines (e.g., SQLite), FuzzySQL uses a forkserver-style subprocess to run the SQLite shell. It alternates between temporary and active database files (via .open tmp.db and .open test.db) to simulate a clean environment with minimal overhead, enabling efficient batch fuzzing without shell restarts. 
+
+4.2.2 Instrumentation and Coverage Feedback. All DBMS bina-ries are compiled with AFL++’s afl-clang-fast or afl-clang-fast++ toolchain to enable edge coverage instrumentation. AddressSani-tizer (ASan) is also enabled to capture memory-related faults such as buffer overflows or use-after-free errors. No manual modifica-tions to DBMS source code are required, allowing compatibility with standard upstream builds. Coverage feedback from AFL++ guides the mutation engine by prioritizing test cases that explore novel code paths. Only inputs that contribute new coverage are retained, while others are discarded. 
+
+4.2.3 Fuzzing Strategy and Determinism. FuzzySQL executes test cases in a strictly single-threaded fashion to maintain determin-ism, which is essential for reliable crash replay and debugging. Unlike AFL-style forkserver fuzzing, FuzzySQL maintains a persis-tent DBMS client and executes test inputs sequentially. This design ensures that the entire execution history is preserved and can be replayed when a crash occurs. In contrast, multi-threading is em-ployed only for interacting with the LLM backend, where multiple concurrent threads handle prompt generation, SQL instantiation, and error repair. This architectural separation allows FuzzySQL to balance deterministic fuzzing with high-throughput generation. Crash detection relies on monitoring signal-based terminations (e.g., SIGSEGV, SIGABRT), abnormal exit codes, and standard error logs. Inputs that trigger these crashes, along with those that increase coverage, are retained in the seed pool for further mutation and replay. By combining persistent-mode execution, lightweight state resets, and compiler-based instrumentation, FuzzySQL achieves efficient and scalable fuzzing across diverse DBMS environments. 
+
+## 5 Evaluation 5.1 Experimental Setup 
+
+All experiments are carried out on a server equipped with an Intel Xeon Gold 6430 CPU (32 cores), 256 GB RAM, and a NVIDIA A100 GPU, running Ubuntu 20.04 LTS. The GPU resources are reserved exclusively for local inference of LLMs. To ensure broad applica-bility, we evaluate FuzzySQL on five representative open source database systems that collectively cover both client-server and em-bedded DBMS architectures. Specifically, we target MySQL 9.1.0, MariaDB 11.4.0, SQLite 3.47.2, PostgreSQL 17.2, and ClickHouse v24.12.2.29-stable. FuzzySQL integrates the LLM model via a locally 
+
+Figure 3: The number of new edges discovered in 24 hours. 
+
+deployed instance of Qwen3-30B, running on the vLLM inference framework. During vulnerability mining, we also tested several ad-vanced models; however, for controlled and reproducible evaluation, all reported results are based on Qwen3-30B. We used a temper-ature of 0.3–0.5 to balance stability and diversity. In pilot tests, a temperature of 0.4 produced natural yet varied outputs—sufficiently diverse for fuzzing under structured constraints. All experiments used an 8K-token context window. To demonstrate the advantage of FuzzySQL, we compare it against three state-of-the-art open-source fuzzing baselines: Squir-rel [ 56 ], EET [ 19 ], and SQLancer [ 35 ]. Among them, Squirrel repre-sents mutation-based fuzzing, while both EET and SQLancer adopt generation-based approaches. Since EET and SQLancer are not in-herently a grey-box fuzzing tool, we first collect their generated test cases and then utilize FuzzySQL’s replay mechanism to measure its coverage. For SQLancer, we use TLP [ 36 ] as the test oracle for MySQL, and NoREC [ 35 ] for the other DBMS targets. This choice is constrained by the design of SQLancer, which employs different oracle-based testing strategies tailored to specific DBMSs. All base-lines were evaluated under identical runtime conditions and DBMS versions. We adopted official configurations and standardized crash triage procedures to ensure fair and reproducible comparisons. Ex-cept for Squirrel, a mutation-based fuzzer using its default seeds, all baselines ran without a seed corpus. Each experiment was repeated five times on identical hardware, and the reported results are the averages, which show consistent statistical stability. 
+
+## 5.2 Bug Discovery Effectiveness 
+
+To evaluate the practical effectiveness of FuzzySQL, we conducted a systematic fuzzing campaign on five representative open-source DBMSs. In total, FuzzySQL discovered 37 distinct bugs, among which 29 have been confirmed by vendors and 9 have been assigned CVE identifiers. As summarized in Table 2, 14 issues have already been fixed, while the remaining ones are scheduled for upcoming releases. Notably, 7 of the confirmed bugs are related to under-tested FuzzySQL: Uncovering Hidden Vulnerabilities in DBMS Special Features with LLM-Driven Fuzzing Conference acronym ’XX, June 03–05, 2018, Woodstock, NY 
+
+Table 2: Bugs discovered by FuzzySQL                         
+
+> DBMS Found Confirmed Fixed Feature-Related
+> MySQL 15 15 10 4MariaDB 12 12 32SQLite 2211ClickHouse 8000
+> Total 37 29 14 7
+
+DBMS special features, such as GTID , PROCEDURE , and INSTALL COMPONENT , demonstrating FuzzySQL’s ability to explore feature-specific execution paths that are rarely exercised by existing fuzzers. Beyond long-term bug discovery, we further compare fuzzing effectiveness under a fixed 24-hour budget. As shown in Figure 3, FuzzySQL consistently outperforms all baselines across all evalu-ated DBMSs in terms of newly discovered execution edges. The performance gap is particularly evident on MySQL, MariaDB, and PostgreSQL, where FuzzySQL achieves several times higher cov-erage than the strongest baseline. On SQLite and ClickHouse, the advantage is less pronounced, which can be attributed to the light-weight feature set of SQLite and the highly optimized execution engine of ClickHouse, where EET benefits from generating deeply nested analytical queries. Nevertheless, FuzzySQL still achieves the highest overall coverage across all systems. To examine how this coverage advantage translates into concrete vulnerability discovery, Table 3 presents a breakdown of unique MySQL bugs discovered within 24 hours. Among the evaluated baselines, only EET uncovers a limited number of bugs, while none of the baselines discover any feature-related vulnerabilities. In contrast, FuzzySQL consistently exposes both feature-related and non-feature-related bugs within the same time budget. This result highlights a fundamental capability gap between FuzzySQL and existing fuzzers: while prior approaches can occasionally detect generic crashes, they lack the ability to synthesize and evolve state-ful, feature-specific SQL programs required to exercise under-tested DBMS functionality. 
+
+Table 3: Unique MySQL bugs discovered by different fuzzers within 24 hours                                                                 
+
+> Target ID †FR Type FuzzySQL Squirrel EET SQLancer FuzzySQL !r
+> FuzzySQL !r !m
+> MySQL 3◦Use After Free ✔✗✔✗✗✗
+> MySQL 6◦Assertion Failure ✔✗✗✗✔✗
+> MySQL 8•Assertion Failure ✔✗✗✗✔✗
+> MySQL 9◦NULL Ptr Deref ✔✗✔✗✔✔
+> MySQL 13 •Assertion Failure ✔✗✗✗✗✗
+> MySQL 15 ◦NULL Ptr Deref ✔✗✔✗✔✗
+> FR: •feature-related, ◦not feature-related; !r : repair disabled; !m : mutation disabled.
+> †Bug ID corresponds to Table 4 (Appendix B).
+
+Overall, these results demonstrate that FuzzySQL’s effectiveness lies not merely in discovering more bugs or achieving higher cover-age, but in exposing qualitatively different classes of vulnerabilities that current DBMS fuzzers are structurally incapable of revealing. This capability stems from FuzzySQL’s integrated design, which en-ables efficient and systematic exploration of semantically sensitive logic across diverse database systems. 
+
+## 5.3 Ablation Study 
+
+We perform an ablation study to assess the impact of three core design choices in FuzzySQL: logic-shifting progressive mutation, automated semantic repair, and the choice of LLM for semantic instantiation. Our analysis addresses the following questions: 
+
+• How critical is the logic mutation for triggering complex bugs? 
+
+• Does the error repair pipeline meaningfully improve fuzzing effectiveness despite its computational cost? 
+
+• How significantly does the choice of LLM affect the quality of generated test cases? 
+
+System-Level Impact of Core Components. Figure 4 illus-trates the system-level impact of logic-shifting mutation and se-mantic repair on both coverage growth and early bug discovery. All configurations exhibit comparable coverage gains during the initial 
+
+∼2 hours, indicating that grammar-guided generation is sufficient to bootstrap shallow execution paths. However, clear divergence emerges as fuzzing progresses: the full FuzzySQL consistently ad-vances faster and achieves the highest final coverage (152.7k edges), compared to 146.0k for FuzzySQL !r and 149.5k for FuzzySQL !r !m .This gap suggests that generation alone is insufficient for sustained exploration of deeper and more stateful DBMS behaviors. The benefit of these components is more pronounced when con-sidering bug discovery efficiency. As shown by the shaded regions, FuzzySQL triggers its first confirmed bug within approximately 0.83 hours, whereas disabling semantic repair delays the first bug to 2 hours, and disabling both repair and mutation further postpones dis-covery to 3.5 hours. Although FuzzySQL !r and FuzzySQL !r !m reach similar final coverage, logic-shifting mutation clearly improves early-phase exploration and accelerates vulnerability discovery, rather than merely increasing eventual coverage. 
+
+Figure 4: Ablation Study of FuzzySQL Components. 
+
+This observation aligns with Table 3. Under the same 24-hour budget, only the full FuzzySQL reliably discovers feature-related bugs and uncovers more unique vulnerabilities overall, while ab-lated variants miss several feature-dependent failures or exhibit reduced bug-finding capability. We attribute this difference to FuzzySQL’s integrated pipeline design, in which grammar-guided generation, progressive logic-shifting mutation, and semantic-aware repair jointly construct, evolve, and recover diverse exe-cution contexts. Together, these components enable systematic Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Chen et al. 
+
+exploration of feature-specific and state-dependent control paths and convert them into reproducible vulnerabilities, beyond what any individual component can achieve in isolation. 
+
+Effectiveness of Logic Mutation. We analyze all 29 confirmed bugs discovered by FuzzySQL to identify those that depend on logic-shifting transformations. A bug is considered logic-sensitive if its PoC contains a condition (e.g., =, IN , JOIN ) mutated from an-other semantically valid form and becomes non-triggering when reverted. Using this criterion, 20 out of 29 bugs (68.96%) are logic-sensitive, indicating that logic mutation is a major contributor to vulnerability discovery. Figure 5 summarizes the distribution of these bugs by transformation type. NULL -related rewrites account for the largest fraction (11 PoCs), followed by equality polarity changes (10 PoCs) and join rewrites (8 PoCs). Membership pred-icates ( IN /NOT IN ) and other transformations, including AND /OR 
+
+rewrites, ordering reversals, and EXISTS manipulation, contribute additional unique triggers. Together, these results show that small, semantics-preserving logic shifts can effectively expose alternative execution paths that are rarely exercised by structure-preserving or generation-only fuzzers. 
+
+Figure 5: Impact of Logic-shifting on POC Effectiveness. Effectiveness of Automated Repair. Although semantic-aware repair introduces additional overhead, it substantially improves fuzzing yield. In our evaluation, 27% of the discovered bugs origi-nate from test cases that were initially invalid and would have been discarded without repair, including cases with missing objects or unmet semantic preconditions. Consistent with the system-level results and Table 3, disabling repair reduces the number of unique bugs discovered and causes several feature-related failures to be missed. These results indicate that automated repair is essential for preserving and exploiting high-value test cases, rather than serving as a mere convenience for handling invalid inputs. 
+
+Impact of LLM Choice. We conducted an ablation study on MySQL to assess the impact of different LLMs on FuzzySQL’s per-formance. We evaluated Gemma3-27B, Gemma2-27B, Gemma2-9B, Qwen2.5-32B, and Qwen3-30B, each running on an A100 GPU with a context length of 8192. Over a 12-hour period, we recorded the number of valid SQL statements generated (Figure 6a) and the num-ber of new execution edges discovered (Figure 6b). Figure 6a shows that Gemma2-9B produces the largest number of valid SQL state-ments with the highest throughput and efficiency. However, Figure 6b reveals that this advantage does not translate into deeper code 
+
+Figure 6: Effectiveness of Different LLMs. 
+
+exploration. In contrast, Qwen3-30B generates fewer statements overall but consistently achieves the highest coverage growth over time. This indicates that its outputs are of higher semantic quality, capable of exercising deeper and more diverse program behaviors. These results demonstrate that stronger models, such as Qwen3-30B, produce higher-quality and more diverse test cases, leading to greater coverage and bug-discovery potential. However, we opt for locally deployed models rather than API-based SoTA ones (e.g., GPT-4o) due to cost and scalability concerns—running such models at fuzzing scale would incur thousands of dollars and hundreds of compute hours. Similarly, reasoning-oriented models (e.g., OpenAI-o1, DeepSeek-R1) were excluded because their multi-step reasoning severely limits throughput, making them unsuitable for large-scale fuzzing. Therefore, FuzzySQL’s design favors efficient, instruction-aligned local LLMs, which strike a balance between semantic quality and generation efficiency for large-scale fuzzing workloads. 
+
+## 5.4 Case Study 
+
+To complement our quantitative evaluation, we present case studies that demonstrate the effectiveness of FuzzySQL in three distinct dimensions. These examples illustrate how the system exposes critical vulnerabilities in the DBMS internals by leveraging feature-specific generation, semantic-aware mutation, and error recovery. Each case highlights a different challenge in DBMS fuzzing and how FuzzySQL overcomes it through its design. 
+
+Feature-related bugs in under-tested DBMS functionalities. 
+
+We present two representative vulnerability-triggering inputs found in MySQL and MariaDB, which are shown in Listing 3, Listing 4 and 5 respectively. These cases violate the standard SQL syntax or DBMS usage rules—MySQL does not support the combined use of DESC 
+
+and FORMAT ; MariaDB’s KILL statement lacks support for predicate logic; and the incorporation of composite subquery expressions within PROCEDURE declarations in MariaDB is improper. As a result, traditional DBMS fuzzers, often guided by hand-crafted grammars and strict semantic correctness, are unlikely to generate such inputs. In contrast, FuzzySQL leverages grammar-driven structural ex-pansion combined with LLM-based forced instantiation to generate FuzzySQL: Uncovering Hidden Vulnerabilities in DBMS Special Features with LLM-Driven Fuzzing Conference acronym ’XX, June 03–05, 2018, Woodstock, NY 
+
+atypical, boundary-pushing SQL inputs. By decoupling structure from content, these "fuzzy templates" serve as scaffolds that guide the LLM beyond its default bias toward well-formed, canonical queries—a limitation inherited from pretraining on normative data. This mechanism encourages the generation of rule-bending or un-derspecified statements that lie outside conventional syntax but re-main executable. Such flexibility cannot be easily achieved through manually crafted grammars. For example, the combination of KILL 
+
+with predicate logic in Listing 4 represents a usage pattern that is both rare and counterintuitive, something human-authored tem-plates are unlikely to anticipate, and traditional generators lack the means to instantiate. FuzzySQL’s design, by contrast, allows it to discover these error-prone interactions naturally through guided structural diversity and semantic inference.                     
+
+> 1CREATE TABLE t1 ( v1 JSON , v2 CHAR (7) , v3 BINARY (3) );
+> 2DESC ANALYZE FORMAT =JSON ( SELECT v1 FROM t1 UNION XXXX );
+
+Listing 3: MySQL crash via invalid DESC ANALYZE syntax.        
+
+> 1KILL 1IN ( SELECT 1) IN ( XXXX );
+
+Listing 4: MariaDB crash via malformed KILL expression.                 
+
+> 1CREATE PROCEDURE test_proc ( id VARCHAR (255) ) BEGIN DECLARE dt
+> 2DATETIME (6) DEFAULT ROW ( XXXX ) =SOME ( SELECT 1) =ALL ( XXXX );
+
+Listing 5: MariaDB crash via subquery misuse in PROCEDURE. Logic-sensitive bugs enabled by conditional mutation. 
+
+FuzzySQL’s lightweight logic mutation enables subtle yet effective transformations in SQL conditions, allowing it to explore alternative control paths often missed by traditional fuzzers. A representative example is shown in Listing 6, where a conditional expression in-side an INSTALL COMPONENT statement includes a comparison of the disjunctive subquery. This particular crash is triggered only when the clause t0.c1 = 1 is present—replacing it with t0.c1 != 1 or any other variation prevents the assertion failure (as confirmed by GDB stack trace analysis). This demonstrates that the bug is not merely exposed through structural coverage, but depends on a precise logical condition being satisfied during execution. Ex-isting mutation strategies, whether focused on AST structures or statement-level heuristics, often overlook such fine-grained control flow variations and struggle to achieve this level of logical preci-sion. By systematically shifting operators, FuzzySQL introduces semantic perturbations that preserve syntax while altering the eval-uation paths. This approach not only increases test diversity, but also surfaces fragile logic handling within DBMS internals. 
+
+Repaired bugs salvaged from initially invalid test cases. 
+
+FuzzySQL’s semantic-aware repair module enables recovery of otherwise invalid inputs that can still uncover real vulnerabilities. Listing 7 shows a PoC that triggers a heap-buffer-overflow in SQLite during join resolution in sqlite3WhereEnd() . Initially, this input failed with the error “ ambiguous column name: main.t2.v1 ” due to multiple unaliased uses of table t2 , which caused semantic am-biguity during join resolution. Traditional fuzzers typically discard such malformed cases. Instead, FuzzySQL follows the SAR Violate Constraints error handling strategy to capture error message via tag-ging and incorporates it into a structured LLM prompt. The model identifies the ambiguity and suggests a minimal fix—assigning an alias to one instance of t2 —which enables execution and exposes the underlying bug. This example highlights how FuzzySQL’s repair pipeline can salvage high-value test cases that would otherwise be lost, turning parse-time failures into exploitable paths through lightweight, context-aware correction. 
+
+## 6 Discussion 
+
+This section discusses the broader implications, strengths, and limi-tations of FuzzySQL. This work not only delivers concrete results in uncovering functionality-related vulnerabilities in DBMSs, but also offers new perspectives on how LLMs can reshape the design of fuzzing frameworks. 
+
+Uncovering Hidden Vulnerabilities in DBMS Special Fea-tures. Our findings reveal that modern DBMSs expose a wide range of special-purpose SQL features—such as replication con-trol, logging, and statistical commands—that are rarely targeted by traditional fuzzers. Although infrequent in everyday workloads, these features are tightly integrated into critical control paths and can cause severe runtime failures when misused or exercised un-der uncommon conditions. FuzzySQL systematically explores this under-tested space by generating multi-statement SQL sequence that simulate realistic yet edge-case feature combinations. This ex-poses control-path inconsistencies and metadata mismanagement bugs that are not triggered by typical DML/DDL queries. These results highlight a critical blind spot in conventional fuzzing tech-niques, which tend to focus on common syntax patterns and fail to explore the operational depth of feature-rich systems. 
+
+Flexibly Adapt to Diverse DBMS Targets. To migrate FuzzySQL to a new DBMS, users only need to provide the tar-get’s grammar specification (e.g., an ANTLR4 .g4 file), from which FuzzySQL automatically extracts syntax rules for template-based SQL generation. In addition, FuzzySQL requires a lightweight data-base initialization component to generate basic CREATE and INSERT 
+
+statements. This component involves enumerating supported data types of the target DBMS and applying largely uniform schema and data generation rules, which introduces minimal manual ef-fort and is straightforward to implement. For error repair, users collect execution feedback during an initial fuzzing phase and map observed errors to high-level categories. Most repair strategies are DBMS-agnostic and can be reused across systems, requiring little to no customization for new targets. As a result, supporting new DBMS targets requires limited manual customization.                  
+
+> 1INSTALL COMPONENT 'plugin2 'SET GLOBAL default . variable1 =ON , t0 . c1 =1OR 1=ANY ( XXXX );
+
+Listing 6: MySQL crash via malformed INSTALL COMPONENT inducing conditional logic. Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Chen et al.                                                                                                 
+
+> 1CREATE TABLE t1 ( XXXX );
+> 2CREATE TABLE t2 ( XXXX ) WITHOUT ROWID ;
+> 3INSERT INTO t2 ( XXXX ) VALUES ( XXXX );
+> 4ANALYZE t2 ;
+> 5WITH cte_0 AS ( SELECT 1) SELECT DISTINCT ref_2 . v1 FROM ( cte_0 JOIN generate_series (79 , 105 , 7) AS ref_1 ON ( ref_1 . value =1) ) CROSS JOIN ( t2 AS t2a JOIN ( t1 AS ref_2 JOIN t2 ON (ref_2 . v2 =1) )); --Error : ambiguous column name : main . t2 . v1
+> 6WITH cte_0 AS ( SELECT 1) SELECT DISTINCT ref_2 . v1 FROM ( cte_0 JOIN generate_series (79 , 105 , 7) AS ref_1 ON ( ref_1 . value =1) ) CROSS JOIN ( t2 AS t2a JOIN ( t1 AS ref_2 JOIN t2 as ref_3 ON ( ref_2 . v2 =1) )); --Fixed and Trigger Crash
+
+Listing 7: Repaired SQLite input that originally failed due to ambiguous column references. Revisiting the Role of LLMs in Fuzzing. A key insight of this work is that LLMs, when guided by structured grammar tem-plates and diverse execution contexts, can serve as more than just language generators—they can be used as semantic reasoning en-gines. Rather than relying solely on random AST-level mutations, FuzzySQL uses LLMs to instantiate meaningful programs based on context, such as generating valid stored procedure bodies or logi-cally connected statement sequences. This allows fuzzing to move beyond surface-level syntax exploration and into deeper logic mod-eling. By decoupling structural constraints (enforced by templates) from content generation (handled by LLM), we retain structural di-versity while still harnessing the semantic strengths of LLMs. This design helps mitigate LLMs’ bias toward producing safe, canonical outputs and encourages exploration of more unusual and error-prone cases. 
+
+Limitations and Future Outlook. While FuzzySQL is effective in exposing semantic and control-flow bugs, it currently underper-forms compared to EET in metrics such as statement depth and nesting complexity. This stems from inherent limitations in cur-rent LLMs, which tend to struggle with generating deeply nested or highly recursive SQL structures. Additionally, LLM-generated inputs occasionally require repair due to inconsistencies between declared objects and later usage, prompting our design of a repair pipeline. However, these challenges largely reflect the limitations of current LLMs. As LLMs improve in reasoning depth and code synthesis capability, their effectiveness in fuzzing high-complexity structures will improve correspondingly. FuzzySQL excels at trig-gering feature-related failures and hard-to-reach logic branches, aspects that are often invisible to basic coverage models. 
+
+## 7 Related Work 7.1 DBMS Fuzzing 
+
+Fuzzing has emerged as a critical technique for testing database management systems (DBMSs) by directly targeting components such as parsers, optimizers, and execution engines through crafted SQL inputs. Depending on the bug types targeted—ranging from crash vulnerabilities [ 1 , 12 , 13 , 18 , 22 , 27 , 45 , 56 ] to logic inconsis-tencies [ 4, 19 , 23 , 35 –37 , 52 ] and performance regressions [ 5 , 20 ,28 , 53 ]—existing DBMS fuzzers follow either generation-based or mutation-based strategies. Generation-based approaches rely on hand-crafted grammars or learned rules to synthesize SQL sequences from scratch. SQL-Smith [ 1] uses randomized AST construction to generate struc-turally valid SQL inputs, but often fails on semantic soundness. To enhance expressiveness, DynSQL [ 18 ] dynamically tracks schema evolution to guide generation, while TreeGAN [ 27 ] adopts grammar-aware GANs to synthesize syntactically valid SQL trees. SQLancer [ 35 – 37 , 52 ] and EET [ 19 ] generate ASTs while preserv-ing contextual variable bindings to ensure validity. However, most generators still rely heavily on manual rule engineering or specifica-tions. The concurrent work ShQveL [ 57 ] uses LLM to construct frag-ments and then uses these fragments to combine SQL statements. This test case generation method still relies on the implementation of general syntax rules. Mutation-based fuzzers, in contrast, transform existing SQL state-ments through changes at the syntax or intermediate representation (IR) level. Some prior work also explores context-dependent mu-tations arising from the composition of SQL statement sequences. Squirrel [ 56 ] represents SQL as intermediate representation (IR) and applies typed, data-aware mutation. RATEL [ 45 ] adds fine-grained coverage tracking and feedback-guided deduplication for robust crash reporting. Griffin [ 13 ] shuffles SQL statement se-quences while tracking metadata dependencies to enable semanti-cally consistent recombination. LEGO [ 22 ] introduces a type affinity model to mutate SQL type sequences and enrich structural diver-sity, though semantic restoration remains limited. BUZZBEE [ 51 ]generalizes mutation by abstracting all database interactions into define–use–invalidate triples and uses a lightweight query language (CQL) to ensure semantic compatibility. Unlike prior DBMS fuzzers that rely on rigid rule coding or handcrafted dependency models, FuzzySQL leverages LLMs to infer semantic dependencies and supports grammar-guided test case synthesis, targeting feature-rich, stateful DBMS. 
+
+## 7.2 Grammar-Based Fuzzing 
+
+Grammar-based fuzzing generates syntactically valid test inputs by leveraging formal grammars such as context-free grammars (CFGs), addressing the limitations of traditional mutation-based fuzzers that often fail in structured input formats. Early tools like LangFuzz [ 17 ], CSmith [ 50 ], NAUTILUS [ 3],and Superion [ 43 ] and FuzzFlow [ 47 ]established grammar-guided mutation or derivation-based input synthesis to maintain structural correctness. Later works incorpo-rated context-sensitivity and probabilistic modeling to capture se-mantic constraints more effectively, such as Skyfire [ 42 ], SAGE [ 58 ], and GrayC [ 11 ], which learn constraints from corpora or feedback. Other systems like SYNTHFUZZ [ 24 ], FreeDom [ 48 ], and MLIR-Smith [ 41 ] encode def-use chains, type consistency, or intermediate representations to preserve semantic validity. Despite these advances, many grammar-based fuzzers still strug-gle with expressing inter-statement dependencies, environmental assumptions, and stateful execution paths—factors critical in do-mains like database fuzzing. Some systems mitigate this via prob-abilistic grammars [ 54 ], derivation tree splicing [ 2], or grammar automata [ 38 ], but semantic gaps remain. Tribble [ 16 ] systemati-cally explores derivation paths to maximize rule coverage. IR-based systems such as POLYGLOT [ 7 ], MLIRod [ 39 ], and NNSmith [ 26 ]aim to generalize semantics, while Grimoire [ 6], Evogram [ 15 ] and Grammar-based Whitebox Fuzzing[ 14 ] explore structure without formal grammars. However, integrating semantics into generation pipelines remains complex. FuzzySQL: Uncovering Hidden Vulnerabilities in DBMS Special Features with LLM-Driven Fuzzing Conference acronym ’XX, June 03–05, 2018, Woodstock, NY 
+
+While traditional grammar-based fuzzers emphasize syntactic validity, FuzzySQL synthesizes diverse grammar-derived templates and then uses LLMs to force context-aware completion, enabling the generation of corner cases that uncover functionality-specific bugs beyond the expressive reach of fixed grammar rules. 
+
+## 7.3 LLM-Assisted Fuzzing 
+
+LLMs have recently enabled a new generation of fuzzing tools ca-pable of generating semantically rich and structurally valid inputs across a wide range of domains. For example, CovRL-Fuzz [ 10 ] com-bines reinforcement learning with LLM-based mutation to improve coverage in JavaScript engines. PromptFuzz [ 30 ] mutates prompts instead of programs to synthesize valid C/C++ fuzz drivers guided by runtime feedback. Fuzz4All [ 46 ] introduces automatic prompting to fuzz heterogeneous systems without manual seed or grammar engineering. In protocol fuzzing, LLMIF [ 44 ], CHATAFL [ 32 ], and mGPTFuzz [ 31 ] extract protocol structure from natural language documents to guide specification-aware input generation. Titan-Fuzz [ 8], FuzzGPT [ 9], KernelGPT [ 49 ], and ProphetFuzz [ 40 ] target deep learning frameworks and OS kernels by mining vulnerable code patterns or system configurations using LLM reasoning. Additional efforts explore LLMs as intelligent mutators or input generators. MetaMut [ 34 ] synthesizes compiler-level mutators from AST APIs and domain prompts. Magneto [ 59 ] leverages LLMs to reconstruct multi-stage call chains for exploit generation. ECG [ 55 ]uses LLMs to extract syscall specifications and guide semantic mutations in embedded OSs, while CodaMosa [ 21 ] mixes search-based testing with Codex-based test generation. EAGLEYE [ 25 ]targets hidden interfaces in IoT firmware by extracting routing patterns, and InputBlaster [ 29 ] simulates edge-case input behavior in mobile apps via constraint-violating prompt synthesis. Some studies focus on improving seed quality and diversity [ 33 ]. Sedar [ 12 ] leverages LLMs for SQL seed adaptation across DBMS dialects but suffers from context hallucination and dependency misalignment. Notably, FuzzySQL does not rely on LLM for mutation, but in-stead leverages them selectively for semantic instantiation and error-guided repair. This integration enables exploration of deeper feature-related paths that remain out of reach for most prompt-only or grammar-guided LLM fuzzers. 
+
+## 8 Conclusion 
+
+We presented FuzzySQL, an LLM-driven fuzzing framework that un-covers deep-seated bugs in DBMS special features often missed by existing tools. By combining grammar-guided generation, semantic mutation, hybrid error repair, and state-aware execution, FuzzySQL enables broad feature coverage and precise bug reproduction. Eval-uations across multiple DBMSs revealed 37 unique vulnerabilities, 7 of which were tied to under-tested DBMS features. These results validate the effectiveness of our approach and highlight the need for semantically guided fuzzing in database security. Our findings suggest that integrating LLMs with structured generation offers a promising direction for advancing semantic fuzzing across complex software systems. 
+
+## References 
+
+[1] 2015. SQLsmith. https://github.com/anse1/sqlsmith. [2] Ziyad Alsaeed and Michal Young. 2023. Finding short slow inputs faster with grammar-based search. In Proceedings of the 32nd ACM SIGSOFT International Symposium on Software Testing and Analysis . 1068–1079. [3] Cornelius Aschermann, Tommaso Frassetto, Thorsten Holz, Patrick Jauernig, Ahmad-Reza Sadeghi, and Daniel Teuchert. 2019. NAUTILUS: Fishing for deep bugs with grammars.. In NDSS .[4] Jinsheng Ba and Manuel Rigger. 2023. Testing database engines via query plan guidance. In 2023 IEEE/ACM 45th International Conference on Software Engineering (ICSE) . IEEE, 2060–2071. [5] Jinsheng Ba and Manuel Rigger. 2024. Cert: Finding performance issues in database systems through the lens of cardinality estimation. In Proceedings of the IEEE/ACM 46th International Conference on Software Engineering . 1–13. [6] Tim Blazytko, Cornelius Aschermann, Moritz Schlögel, Ali Abbasi, Sergej Schu-milo, Simon Wörner, and Thorsten Holz. 2019. {GRIMOIRE }: Synthesizing structure while fuzzing. In 28th USENIX Security Symposium (USENIX Security 19) . 1985–2002. [7] Yongheng Chen, Rui Zhong, Hong Hu, Hangfan Zhang, Yupeng Yang, Dinghao Wu, and Wenke Lee. 2021. One engine to fuzz’em all: Generic language processor testing with semantic validation. In 2021 IEEE Symposium on Security and Privacy (SP) . IEEE, 642–658. [8] Yinlin Deng, Chunqiu Steven Xia, Haoran Peng, Chenyuan Yang, and Lingming Zhang. 2023. Large language models are zero-shot fuzzers: Fuzzing deep-learning libraries via large language models. In Proceedings of the 32nd ACM SIGSOFT international symposium on software testing and analysis . 423–435. [9] Yinlin Deng, Chunqiu Steven Xia, Chenyuan Yang, Shizhuo Dylan Zhang, Shu-jing Yang, and Lingming Zhang. 2024. Large language models are edge-case generators: Crafting unusual programs for fuzzing deep learning libraries. In 
+
+Proceedings of the 46th IEEE/ACM international conference on software engineering .1–13. [10] Jueon Eom, Seyeon Jeong, and Taekyoung Kwon. 2024. Fuzzing JavaScript Inter-preters with Coverage-Guided Reinforcement Learning for LLM-Based Mutation. In Proceedings of the 33rd ACM SIGSOFT International Symposium on Software Testing and Analysis . 1656–1668. [11] Karine Even-Mendoza, Arindam Sharma, Alastair F Donaldson, and Cristian Cadar. 2023. Grayc: Greybox fuzzing of compilers and analysers for c. In Proceed-ings of the 32nd ACM SIGSOFT International Symposium on Software Testing and Analysis . 1219–1231. [12] Jingzhou Fu, Jie Liang, Zhiyong Wu, and Yu Jiang. 2024. Sedar: Obtaining high-quality seeds for dbms fuzzing via cross-dbms sql transfer. In Proceedings of the IEEE/ACM 46th International Conference on Software Engineering . 1–12. [13] Jingzhou Fu, Jie Liang, Zhiyong Wu, Mingzhe Wang, and Yu Jiang. 2022. Griffin: Grammar-free DBMS fuzzing. In Proceedings of the 37th IEEE/ACM International Conference on Automated Software Engineering . 1–12. [14] Patrice Godefroid, Adam Kiezun, and Michael Y Levin. 2008. Grammar-based whitebox fuzzing. In Proceedings of the 29th ACM SIGPLAN conference on pro-gramming language design and implementation . 206–215. [15] Rahul Gopinath, Hamed Nemati, and Andreas Zeller. 2021. Input algebras. In 2021 IEEE/ACM 43rd International Conference on Software Engineering (ICSE) . IEEE, 699–710. [16] Nikolas Havrikov and Andreas Zeller. 2019. Systematically covering input struc-ture. In 2019 34th IEEE/ACM international conference on automated software engi-neering (ASE) . IEEE, 189–199. [17] Christian Holler, Kim Herzig, and Andreas Zeller. 2012. Fuzzing with code fragments. In 21st USENIX Security Symposium (USENIX Security 12) . 445–458. [18] Zu-Ming Jiang, Jia-Ju Bai, and Zhendong Su. 2023. {DynSQL }: Stateful Fuzzing for Database Management Systems with Complex and Valid {SQL } Query Gen-eration. In 32nd USENIX Security Symposium (USENIX Security 23) . 4949–4965. [19] Zu-Ming Jiang and Zhendong Su. 2024. Detecting logic bugs in database en-gines via equivalent expression transformation. In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24) . 821–835. [20] Jinho Jung, Hong Hu, Joy Arulraj, Taesoo Kim, and Woonhak Kang. 2019. Apollo: Automatic detection and diagnosis of performance regressions in database sys-tems. Proceedings of the VLDB Endowment 13, 1 (2019), 57–70. [21] Caroline Lemieux, Jeevana Priya Inala, Shuvendu K Lahiri, and Siddhartha Sen. 2023. Codamosa: Escaping coverage plateaus in test generation with pre-trained large language models. In 2023 IEEE/ACM 45th International Conference on Soft-ware Engineering (ICSE) . IEEE, 919–931. [22] Jie Liang, Yaoguang Chen, Zhiyong Wu, Jingzhou Fu, Mingzhe Wang, Yu Jiang, Xi-angdong Huang, Ting Chen, Jiashui Wang, and Jiajia Li. 2023. Sequence-oriented DBMS fuzzing. In 2023 IEEE 39th International Conference on Data Engineering (ICDE) . IEEE, 668–681. [23] Yu Liang, Song Liu, and Hong Hu. 2022. Detecting logical bugs of {DBMS } with coverage-based guidance. In 31st USENIX Security Symposium (USENIX Security 22) . 4309–4326. Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Chen et al. 
+
+[24] Ben Limpanukorn, Jiyuan Wang, Hong Jin Kang, Zitong Zhou, and Miryung Kim. 2024. Fuzzing MLIR Compilers with Custom Mutation Synthesis. In 2025 IEEE/ACM 47th International Conference on Software Engineering (ICSE) . IEEE Computer Society, 457–468. [25] Hangtian Liu, Lei Zheng, Shuitao Gan, Chao Zhang, Zicong Gao, Hongqi Zhang, Yishun Zeng, Zhiyuan Jiang, and Jiahai Yang. 2025. EAGLEYE: Exposing Hidden Web Interfaces in IoT Devices via Routing Analysis. In Proceedings of the 32st Annual Network and Distributed System Security Symposium (NDSS) .[26] Jiawei Liu, Jinkun Lin, Fabian Ruffy, Cheng Tan, Jinyang Li, Aurojit Panda, and Lingming Zhang. 2023. Nnsmith: Generating diverse and valid test cases for deep learning compilers. In Proceedings of the 28th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2. 530–543. [27] Xinyue Liu, Xiangnan Kong, Lei Liu, and Kuorong Chiang. 2018. TreeGAN: syntax-aware sequence generation with generative adversarial networks. In 2018 IEEE International Conference on Data Mining (ICDM) . IEEE, 1140–1145. [28] Xinyu Liu, Qi Zhou, Joy Arulraj, and Alessandro Orso. 2022. Automatic detection of performance bugs in database systems using equivalent queries. In Proceedings of the 44th International Conference on Software Engineering . 225–236. [29] Zhe Liu, Chunyang Chen, Junjie Wang, Mengzhuo Chen, Boyu Wu, Zhilin Tian, Yuekai Huang, Jun Hu, and Qing Wang. 2024. Testing the limits: Unusual text inputs generation for mobile app crash detection with large language model. In 
+
+Proceedings of the IEEE/ACM 46th international conference on software engineering .1–12. [30] Yunlong Lyu, Yuxuan Xie, Peng Chen, and Hao Chen. 2024. Prompt Fuzzing for Fuzz Driver Generation. In Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security . 3793–3807. [31] Xiaoyue Ma, Lannan Luo, and Qiang Zeng. 2024. From One Thousand Pages of Specification to Unveiling Hidden Bugs: Large Language Model Assisted Fuzzing of Matter IoT Devices. In 33rd USENIX Security Symposium (USENIX Security 24) .4783–4800. [32] Ruijie Meng, Martin Mirchev, Marcel Böhme, and Abhik Roychoudhury. 2024. Large language model guided protocol fuzzing. In Proceedings of the 31st Annual Network and Distributed System Security Symposium (NDSS) , Vol. 2024. [33] Yaroslav Oliinyk, Michael Scott, Ryan Tsang, Chongzhou Fang, Houman Homay-oun, et al . 2024. Fuzzing BusyBox: Leveraging LLM and Crash Reuse for Embed-ded Bug Unearthing. In 33rd USENIX Security Symposium (USENIX Security 24) .883–900. [34] Xianfei Ou, Cong Li, Yanyan Jiang, and Chang Xu. 2024. The mutators reloaded: Fuzzing compilers with large language model generated mutation operators. In 
+
+Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 4 . 298–312. [35] Manuel Rigger and Zhendong Su. 2020. Detecting optimization bugs in database engines via non-optimizing reference engine construction. In Proceedings of the 28th ACM Joint Meeting on European Software Engineering Conference and Symposium on the Foundations of Software Engineering . 1140–1152. [36] Manuel Rigger and Zhendong Su. 2020. Finding bugs in database systems via query partitioning. Proceedings of the ACM on Programming Languages 4, OOP-SLA, Article 211 (2020), 30 pages. doi:10.1145/3428279 [37] Manuel Rigger and Zhendong Su. 2020. Testing database engines via pivoted query synthesis. In 14th USENIX Symposium on Operating Systems Design and Implementation (OSDI 20) . 667–682. [38] Prashast Srivastava and Mathias Payer. 2021. Gramatron: Effective grammar-aware fuzzing. In Proceedings of the 30th acm sigsoft international symposium on software testing and analysis . 244–256. [39] Chenyao Suo, Junjie Chen, Shuang Liu, Jiajun Jiang, Yingquan Zhao, and Jianrong Wang. 2024. Fuzzing MLIR Compiler Infrastructure via Operation Dependency Analysis. In Proceedings of the 33rd ACM SIGSOFT International Symposium on Software Testing and Analysis . 1287–1299. [40] Dawei Wang, Geng Zhou, Li Chen, Dan Li, and Yukai Miao. 2024. ProphetFuzz: Fully Automated Prediction and Fuzzing of High-Risk Option Combinations with Only Documentation via Large Language Model. In Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security . 735–749. [41] Haoyu Wang, Junjie Chen, Chuyue Xie, Shuang Liu, Zan Wang, Qingchao Shen, and Yingquan Zhao. 2023. Mlirsmith: Random program generation for fuzzing mlir compiler infrastructure. In 2023 38th IEEE/ACM International Conference on Automated Software Engineering (ASE) . IEEE, 1555–1566. [42] Junjie Wang, Bihuan Chen, Lei Wei, and Yang Liu. 2017. Skyfire: Data-driven seed generation for fuzzing. In 2017 IEEE Symposium on Security and Privacy (SP) .579–594. [43] Junjie Wang, Bihuan Chen, Lei Wei, and Yang Liu. 2019. Superion: Grammar-aware greybox fuzzing. In 2019 IEEE/ACM 41st International Conference on Soft-ware Engineering (ICSE) . IEEE, 724–735. [44] Jincheng Wang, Le Yu, and Xiapu Luo. 2024. Llmif: Augmented large language model for fuzzing iot devices. In 2024 IEEE Symposium on Security and Privacy (SP) . IEEE, 881–896. [45] Mingzhe Wang, Zhiyong Wu, Xinyi Xu, Jie Liang, Chijin Zhou, Huafeng Zhang, and Yu Jiang. 2021. Industry practice of coverage-guided enterprise-level DBMS fuzzing. In 2021 IEEE/ACM 43rd International Conference on Software Engineering: Software Engineering in Practice (ICSE-SEIP) . IEEE, 328–337. [46] Chunqiu Steven Xia, Matteo Paltenghi, Jia Le Tian, Michael Pradel, and Lingming Zhang. 2024. Fuzz4all: Universal fuzzing with large language models. In Pro-ceedings of the IEEE/ACM 46th International Conference on Software Engineering .1–13. [47] Haoran Xu, Zhiyuan Jiang, Yongjun Wang, Shuhui Fan, Shenglin Xu, Peidai Xie, Shaojing Fu, and Mathias Payer. 2024. Fuzzing JavaScript Engines with a Graph-based IR. In Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security . 3734–3748. [48] Wen Xu, Soyeon Park, and Taesoo Kim. 2020. Freedom: Engineering a state-of-the-art dom fuzzer. In Proceedings of the 2020 ACM SIGSAC Conference on Computer and Communications Security . 971–986. [49] Chenyuan Yang, Zijie Zhao, and Lingming Zhang. 2025. Kernelgpt: Enhanced kernel fuzzing via large language models. In Proceedings of the 30th ACM Inter-national Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2 . 560–573. [50] Xuejun Yang, Yang Chen, Eric Eide, and John Regehr. 2011. Finding and under-standing bugs in C compilers. In Proceedings of the 32nd ACM SIGPLAN conference on Programming language design and implementation . 283–294. [51] Yupeng Yang, Yongheng Chen, Rui Zhong, Jizhou Chen, and Wenke Lee. 2024. Towards generic database management system fuzzing. In 33rd USENIX Security Symposium (USENIX Security 24) . 901–918. [52] Chi Zhang and Manuel Rigger. 2025. Constant Optimization Driven Database System Testing. Proceedings of the ACM on Management of Data 3, 1 (2025), 1–24. [53] Lixi Zhang, Chengliang Chai, Xuanhe Zhou, and Guoliang Li. 2022. Learnedsql-gen: Constraint-aware sql generation using reinforcement learning. In Proceedings of the 2022 International Conference on Management of Data . 945–958. [54] Qifan Zhang, Xuesong Bai, Xiang Li, Haixin Duan, Qi Li, and Zhou Li. 2024. ResolverFuzz: Automated Discovery of DNS Resolver Vulnerabilities with Query-Response Fuzzing. In 33rd USENIX Security Symposium (USENIX Security 24) .4729–4746. [55] Qiang Zhang, Yuheng Shen, Jianzhong Liu, Yiru Xu, Heyuan Shi, Yu Jiang, and Wanli Chang. 2024. ECG: Augmenting Embedded Operating System Fuzzing via LLM-Based Corpus Generation. IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems 43, 11 (2024), 4238–4249. [56] Rui Zhong, Yongheng Chen, Hong Hu, Hangfan Zhang, Wenke Lee, and Dinghao Wu. 2020. Squirrel: Testing database management systems with language validity and coverage feedback. In Proceedings of the 2020 ACM SIGSAC Conference on Computer and Communications Security . 955–970. [57] Suyang Zhong and Manuel Rigger. 2025. Testing Database Systems with Large Language Model Synthesized Fragments. arXiv:2505.02012 [cs.SE] [58] Chijin Zhou, Quan Zhang, Lihua Guo, Mingzhe Wang, Yu Jiang, Qing Liao, Zhiy-ong Wu, Shanshan Li, and Bin Gu. 2023. Towards better semantics exploration for browser fuzzing. Proceedings of the ACM on Programming Languages 7, OOPSLA2 (2023), 604–631. [59] Zhuotong Zhou, Yongzhuo Yang, Susheng Wu, Yiheng Huang, Bihuan Chen, and Xin Peng. 2024. Magneto: A Step-Wise Approach to Exploit Vulnerabilities in Dependent Libraries via LLM-Empowered Directed Fuzzing. In Proceedings of the 39th IEEE/ACM International Conference on Automated Software Engineering .1633–1644. FuzzySQL: Uncovering Hidden Vulnerabilities in DBMS Special Features with LLM-Driven Fuzzing Conference acronym ’XX, June 03–05, 2018, Woodstock, NY 
+
+## Appendix A Prompts Used In FuzzySQL 
+
+This section documents the exact prompts used in FuzzySQL for SQL instantiation and semantic-aware repair. 
+
+## SQL Instantiation Prompt 
+
+Here we initialize a database test_db by executing the initialization SQL statements: 
+
+{init_schema_statements} 
+
+Please instantiate the following SQL statements using the guidance of the given SQL templates: 
+
+{sql_templates} 
+
+The generated SQL statements must satisfy the following requirements: 
+
+• They must be syntactically and semantically correct. 
+
+• They must be executable in {targetDB} .
+
+• Each subsequent statement must reference only objects created by previous statements (e.g., tables, views, or columns). You are allowed to complete the necessary parts of the templates. Return only the SQL statements generated from the templates. Do not repeat the initialization SQL statements or include any other content. Before output, correct any syntax or semantic errors in the generated SQL statements. Output the result in JSON format. 
+
+Example response: 
+
+["SQL1;", "SQL2;", ...] 
+
+## Semantic-Aware Repair Prompt 
+
+We need you to fix a SQL test case that contains erroneous SQL statements. The input test case contains multiple SQL statements. SQL statements that require repair are explicitly marked using the following format: 
+
+-- [Need to repair< <SQL statement> -- <error message> -- (repair suggestion) -- >Need to repair] 
+
+Here is the input test case: 
+
+{casecontent} 
+
+You should fix each erroneous SQL statement using: 
+
+• the surrounding SQL context, 
+
+• the error message, and 
+
+• the repair suggestion if provided. 
+
+Target database: {targetDB} .Do not output anything other than SQL statements. Output the fully fixed test case in JSON format. 
+
+Example response: 
+
+["SQL1;", "SQL2;", ...] 
+
+## B Vulnerability Status Across DBMSs 
+
+This section summarizes the vulnerabilities discovered across mul-tiple DBMSs, and reports their affected components and current handling status (e.g., fixed, verified, or in progress). It provides an at-a-glance view of our disclosure and validation outcomes. 
+
+Table 4: Vulnerability Discovered Across DBMSs                                                                                                                     
+
+> DBMS ID Reference Location Status
+> MySQL 1CVE-redacted Optimizer Fixed 2CVE-redacted Optimizer Fixed 3CVE-redacted Optimizer Fixed 4CVE-redacted Optimizer Fixed 5CVE-redacted Optimizer Fixed 6CVE-redacted Optimizer Fixed 7CVE-redacted Optimizer Fixed 8CVE-redacted Components Services Fixed 9CVE-redacted Optimizer Fixed 10 S{redacted} Item_ref Fixed 11 S{redacted} Tmp_table Verified 12 Debug Build MDL_checker Verified 13 Debug Build Mysql_execute_command Verified 14 Debug Build Explain_query Verified 15 Debug Build Item_in_subselect Verified SQLite 1{redacted} WhereEnd Fixed 2{redacted} VdbeExec Fixed MariaDB 1MDEV-redacted Optimizer Fixed 2MDEV-redacted Tmp_table Fixed 3MDEV-redacted Item_func_not Fixed 4MDEV-redacted Item_subselect Verified 5MDEV-redacted Item_subselect Verified 6MDEV-redacted Item Verified 7MDEV-redacted Item_field Verified 8MDEV-redacted Filesort Verified 9MDEV-redacted Select_value_catcher Verified 10 MDEV-redacted Window_funcs_sort Verified 11 MDEV-redacted Optimizer Verified 12 MDEV-redacted Filesort Verified ClickHouse 1{redacted} Condition_variable In progress 2{redacted} FunctionIn In progress 3{redacted} FunctionBinaryArithmetic In progress 4{redacted} FormatStringHelperImpl In progress 5{redacted} AlterCommand In progress 6{redacted} ExecuteQueryImpl In progress 7{redacted} Planner In progress 8{redacted} IAST In progress
+
+Status legend. We label an entry as Fixed once a patch is avail-able in an upstream release; Verified indicates that we reproduced the issue and reported it, but an official fix is still pending; and 
+
+In progress denotes that triage with the maintainers is ongoing. Overall, Table 4 summarizes 37 issues across four DBMSs (MySQL: 15, SQLite: 2, MariaDB: 12, ClickHouse: 8), with identifiers redacted where required by responsible disclosure. 
+
+## C Open Science 
+
+This section follows the ACM CCS Open Science policy by listing the artifacts needed to evaluate our core contributions and explain-ing how reviewers can access them during double-blind review. Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Chen et al. 
+
+Access during double-blind review. We provide an anonymized artifact repository at: https://anonymous.4open.science/r/fuzzysql-D589/ 
+
+Artifacts. The repository contains the artifacts needed to eval-uate this paper, including: (i) the implementation of FuzzySQL, (ii) experiment scripts/configurations, (iii) instructions to run the experiments. 
+
+Unavailable artifacts and responsible disclosure. This work stud-ies real-world security vulnerabilities. Detailed information about specific vulnerabilities (e.g., vulnerability-triggering inputs, proof-of-concept exploits, and affected systems) is not publicly disclosed at submission time due to responsible disclosure and security con-cerns. Several of the discovered vulnerabilities have been reported to the corresponding vendors and are undergoing coordinated dis-closure. Releasing full vulnerability details prior to patch availability could pose security risks. To enable evaluation of our methodology, we provide the full im-plementation of FuzzySQL, experiment scripts, configurations, and partially sanitized examples that illustrate the vulnerability patterns discussed in the paper, without exposing sensitive or actionable details.

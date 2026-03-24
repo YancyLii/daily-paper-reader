@@ -6,35 +6,29 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-03-23
-- 运行时间：2026-03-23 19:29:56 UTC
+- 最新运行日期：2026-03-24
+- 运行时间：2026-03-24 20:34:16 UTC
 - 运行状态：成功
-- 本次总论文数：4
+- 本次总论文数：2
 - 精读区：0
-- 速读区：4
+- 速读区：2
 
 ### 今日简报（AI）
-今日聚焦 AI 驱动的软件工程，深入探讨 LLM 调用私有库及编译器自动化测试的前沿方案。
-重点关注如何教大模型掌握特定代码库，以及利用智能体（Agent）和模糊测试提升编译器的稳定性。
-建议开发者关注 LLM 在私有代码环境下的落地，并尝试将智能体引入自动化开发流程。
-- 详情：[/202603/23/README](/202603/23/README)
+今日聚焦 AI 编程的“氛围感”实测与 LLM 智能体工具调用的安全性审计。
+研究评估了 Vibe Coders 的技术达标情况，并系统性揭示了智能体在调用外部工具时存在的安全覆盖漏洞。
+建议开发者在利用 AI 提效的同时，加强对智能体自动化操作的合规性校验与代码质量把控。
+- 详情：[/202603/24/README](/202603/24/README)
 
 ### 精读区论文标签
 - 本次无精读推荐。
 
 ### 速读区论文标签
-1. [To See is Not to Master: Teaching LLMs to Use Private Libraries for Code Generation](/202603/23/2603.15159v2-to-see-is-not-to-master-teaching-llms-to-use-private-libraries-for-code-generation)  
-   标签：评分：7.0/10、query:libfuz
-   evidence：通过合成数据教LLM有效调用私有库API
-2. [TENSURE: Fuzzing Sparse Tensor Compilers (Registered Report)](/202603/23/2603.18372v1-tensure-fuzzing-sparse-tensor-compilers-registered-report)  
-   标签：评分：7.0/10、query:libfuz
-   evidence：针对编译器的模糊测试框架
-3. [Agentic Harness for Real-World Compilers](/202603/23/2603.20075v1-agentic-harness-for-real-world-compilers)  
-   标签：评分：7.0/10、query:libfuz
-   evidence：用于编译器漏洞理解与修复的智能体测试桩
-4. [An Agentic Evaluation Framework for AI-Generated Scientific Code in PETSc](/202603/23/2603.15976v1-an-agentic-evaluation-framework-for-ai-generated-scientific-code-in-petsc)  
+1. [VIBEPASS: Can Vibe Coders Really Pass the Vibe Check?](/202603/24/2603.15921v1-vibepass-can-vibe-coders-really-pass-the-vibe-check)  
    标签：评分：6.0/10、query:libfuz
-   evidence：对库代码和API规范的智能体评估
+   evidence：针对潜在漏洞的故障触发测试生成
+2. [Who Tests the Testers? Systematic Enumeration and Coverage Audit of LLM Agent Tool Call Safety](/202603/24/2603.18245v1-who-tests-the-testers-systematic-enumeration-and-coverage-audit-of-llm-agent-tool-call-safety)  
+   标签：评分：6.0/10、query:libfuz
+   evidence：系统枚举用于安全性测试的工具调用工作流
 
 
 <div class="dpr-home-promo-card">

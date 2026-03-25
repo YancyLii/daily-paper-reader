@@ -6,29 +6,29 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-03-24
-- 运行时间：2026-03-24 20:34:16 UTC
+- 最新运行日期：2026-03-25
+- 运行时间：2026-03-25 19:39:06 UTC
 - 运行状态：成功
 - 本次总论文数：2
 - 精读区：0
 - 速读区：2
 
 ### 今日简报（AI）
-今日聚焦 AI 编程的“氛围感”实测与 LLM 智能体工具调用的安全性审计。
-研究评估了 Vibe Coders 的技术达标情况，并系统性揭示了智能体在调用外部工具时存在的安全覆盖漏洞。
-建议开发者在利用 AI 提效的同时，加强对智能体自动化操作的合规性校验与代码质量把控。
-- 详情：[/202603/24/README](/202603/24/README)
+今日聚焦移动应用自动化测试与 MCP 服务安全，探索从自然语言到可执行属性的转化。
+重点关注如何利用自然语言提升移动端测试效率，并警惕 MCP 服务器中工具权限过大的安全风险。
+建议开发者在引入 MCP 架构时加强权限审计，并尝试将自然语言需求转化为自动化测试脚本。
+- 详情：[/202603/25/README](/202603/25/README)
 
 ### 精读区论文标签
 - 本次无精读推荐。
 
 ### 速读区论文标签
-1. [VIBEPASS: Can Vibe Coders Really Pass the Vibe Check?](/202603/24/2603.15921v1-vibepass-can-vibe-coders-really-pass-the-vibe-check)  
+1. [From Natural Language to Executable Properties for Property-based Testing of Mobile Apps](/202603/25/2603.21263v1-from-natural-language-to-executable-properties-for-property-based-testing-of-mobile-apps)  
    标签：评分：6.0/10、query:libfuz
-   evidence：针对潜在漏洞的故障触发测试生成
-2. [Who Tests the Testers? Systematic Enumeration and Coverage Audit of LLM Agent Tool Call Safety](/202603/24/2603.18245v1-who-tests-the-testers-systematic-enumeration-and-coverage-audit-of-llm-agent-tool-call-safety)  
+   evidence：自动合成用于基于属性测试的可执行属性
+2. [Auditing MCP Servers for Over-Privileged Tool Capabilities](/202603/25/2603.21641v1-auditing-mcp-servers-for-over-privileged-tool-capabilities)  
    标签：评分：6.0/10、query:libfuz
-   evidence：系统枚举用于安全性测试的工具调用工作流
+   evidence：为MCP服务器实现动态沙箱模糊测试
 
 
 <div class="dpr-home-promo-card">

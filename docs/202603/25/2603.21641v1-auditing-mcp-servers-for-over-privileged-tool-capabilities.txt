@@ -1,0 +1,245 @@
+Title: Auditing MCP Servers for Over-Privileged Tool Capabilities
+
+URL Source: https://arxiv.org/pdf/2603.21641v1
+
+Published Time: Tue, 24 Mar 2026 01:54:24 GMT
+
+Number of Pages: 5
+
+Markdown Content:
+# Auditing MCP Servers for Over-Privileged Tool Capabilities 
+
+## Charoes Huang 
+
+Department of Computer Science New York Institute of Technology Vancouver, BC, Canada yhuang93@nyit.edu 
+
+## Xin Huang 
+
+Department of Computer Science New York Institute of Technology Vancouver, BC, Canada xhuang31@nyit.edu 
+
+## Amin Milani Fard 
+
+Department of Computer Science New York Institute of Technology Vancouver, BC, Canada amilanif@nyit.edu 
+
+Abstract 
+
+The Model Context Protocol (MCP) has emerged as a standard for connecting Large Language Models (LLMs) to external tools and data. However, MCP servers often expose privileged capabilities, such as file system access, network requests, and command exe-cution that can be exploited if not properly secured. We present 
+
+mcp-sec-audit , an extensible security assessment toolkit designed specifically for MCP servers. It implements static pattern matching for Python-based MCP servers and dynamic sandboxed fuzzing and monitoring via Docker and eBPF. The tool detects risky capabilities through configurable rule-based analysis and provides mitigation recommendations. 
+
+CCS Concepts 
+
+• Security and privacy → Software and application security ;
+
+• Software and its engineering → Software reliability .
+
+Keywords 
+
+Model Context Protocol, Large Language Models, MCP Server, MCP Security, Static Analysis 
+
+ACM Reference Format: 
+
+Charoes Huang, Xin Huang, and Amin Milani Fard. 2026. Auditing MCP Servers for Over-Privileged Tool Capabilities. In Proceedings of Make sure to enter the correct conference title from your rights confirmation email (Conference acronym ’XX). ACM, New York, NY, USA, 5 pages. https: //doi.org/XXXXXXX.XXXXXXX 
+
+1 Introduction 
+
+As LLM agents increasingly rely on external tools via protocols such as MCP [ 1], the security boundary shifts from the model to the servers providing these tools [ 3]. Existing Static Application Security Testing (SAST) tools do not model MCP-specific artifacts such as tool metadata/descriptions, and therefore cannot directly report exposed capabilities from MCP tool definitions. There is a lack of dedicated tooling to audit MCP servers for security risks before they are deployed in sensitive environments. Traditional SAST tools identify risky code patterns such as command execution and insecure file handling; however, they operate on source code alone and lack protocol-specific awareness.  
+
+> Permission to make digital or hard copies of all or part of this work for personal or classroom use is granted without fee provided that copies are not made or distributed for profit or commercial advantage and that copies bear this notice and the full citation on the first page. Copyrights for components of this work owned by others than the author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or republish, to post on servers or to redistribute to lists, requires prior specific permission and/or a fee. Request permissions from permissions@acm.org.
+> Conference acronym ’XX, Woodstock, NY
+> ©2026 Copyright held by the owner/author(s). Publication rights licensed to ACM. ACM ISBN 978-x-xxxx-xxxx-x/YYYY/MM https://doi.org/XXXXXXX.XXXXXXX
+
+We present mcp-sec-audit 1, which analyzes both the implemen-tation code and MCP tool metadata, and reports capability-based deployment risks with actionable hardening guidance. Existing vulnerability scanners focus on package dependencies and con-tainer misconfigurations. While complementary, they do not infer runtime capabilities from tool definitions. Our tool bridges this gap by mapping code-level indicators to capability categories such as command_exec and file_write , and pairing them with least-privilege deployment recommendations. Many defenses focus on runtime policy enforcement. mcp-sec-audit operates earlier in the lifecycle as a pre-deployment audit tool using rule-driven static analysis and optional sandbox-based dynamic verification. 
+
+Contributions. This work makes the following contributions: 
+
+• Auditing Framework: We present mcp-sec-audit , an au-diting framework that automatically identifies high-risk ca-pabilities in MCP servers and outputs deployment-oriented mitigation guidance such as least-privilege container and filesystem recommendations. 
+
+• Modular Pipeline Architecture: A pipeline-based archi-tecture with a static pipeline (TOML-driven keyword/regex matching over Python and metadata), and a dynamic pipeline that supports sandbox execution and telemetry collection on eBPF-enabled Linux hosts. 
+
+• Protocol-Aware Detection: Protocol-aware static detectors for (1) Python source code and (2) MCP tool metadata/de-scriptions, driven by a unified TOML rulebook that defines capability families, indicators, and severity weights. 
+
+• Mitigation Recommendation Engine: Mapping detected capabilities such as file_write to deployment hardening recommendations using a built-in mapping with a place-holder interface for loading external templates. 
+
+• Extensible Plugin System: A lightweight registry abstrac-tion that enables adding new detectors without modifying the pipeline logic. Our tool provides pre - deployment auditing of MCP servers, while several runtime defenses offer complementary protection by filtering prompts and model outputs during execution. Azure Prompt Shields detect prompt - injection attempts in real time [ 5], Llama Guard 3 performs safety classification for both inputs and responses [ 2], and LLM -Guard supplies prompt/output scanners for production systems [ 6]. Complementing these layers, assessing se-curity issues by simulating action results and applying LLM-based safety evaluators [ 4, 7] can help users identify the security severity of actions performed by agents.     
+
+> 1https://github.com/nyit-vancouver/mcp-sec-audit
+> arXiv:2603.21641v1 [cs.CR] 23 Mar 2026 Conference acronym ’XX, June 03–05, 2026, Woodstock, NY Charoes Huang, Xin Huang, and Amin Milani Fard
+> Control Plane & Knowledge Base Core Analysis Plane Output Generation Plane Web Detection Portal
+> User / CLI
+> Orchestration Core
+> (Pipeline Manager, Session Context)
+> Security Rules & Policies Data Models (Findings)
+> Static Analysis Engine
+> Pattern & Metadata Analyzers
+> Dynamic Analysis Engine
+> Sandbox / eBPF Monitor
+> Risk Scoring
+> (Aggregate Findings, Calculate Score)
+> Mitigation Generator
+> Final Security Report
+> Frontend Interface
+> RESTful API Layer
+
+Figure 1: System Architecture of the MCP Security Analyzer. 
+
+Figure 2: A Screenshot of the Web-based Detection Portal. 
+
+2 Tool Architecture and Implementation 
+
+We designed our tool based on a modular architecture that is shown in Figure 1 and is described as follows: (1) Control Plane and Knowledge Base 
+
+• Orchestration Core: This component serves as the sys-tem’s entry point. It initializes the DetectionSession to maintain runtime state and manages the lifecycle of plug-ins via the DetectorRegistry . It orchestrates the flow of data between the user CLI and the analysis engines. 
+
+• Security Rules and Policies: A TOML-based rulebook such as detection/rules/keywords.toml defines capa-bility families, high-risk indicators (keywords/regex), and severity weights, serving as the knowledge base for both analysis streams. (2) Core Analysis Plane 
+
+• Static Analysis Engine: Scans source code and processes metadata configuration files (JSON). This engine utilizes efficient pattern matching with regex and keywords to identify potential capabilities by validating against the loaded rulebook. 
+
+• Dynamic Analysis Engine: Executes the target tool within an isolated Docker Sandbox. An active Protocol Fuzzer stimulates tool endpoints with malicious payloads, while a kernel-level eBPF Monitor attaches to the con-tainer to capture runtime telemetry (syscalls, file I/O, net-work connections), serializing these events into Common Event Format (CEF) logs for behavioral reconstruction. (3) Output Synthesis Plane 
+
+• Risk Scoring: The pipeline calculates the total risk score as a weighted sum of capability confidences and maps it to a risk level (low/medium/high/critical). 
+
+• Mitigation Generator: Maps detected capabilities to de-ployment hardening recommendations such as Docker isolation, read-only mounts, and network restrictions. 
+
+• Report Builder: Renders results in a MD or JSON format. (4) Web Detection Portal 
+
+• Front-end Interface Layer: An interactive web dash-board parses and visualizes JSON results in sortable, fil-terable tables with columns for severity, result type, and detected keywords. A sample screenshot is shown in Fig-ure 2. Risk score is visualized using color-coded indicators based on configurable thresholds with expandable rows showing detailed capability breakdowns and traces. 
+
+• RESTful API Layer: – POST /api/detect - Primary detection endpoint ac-cepting MCP tool description for real-time detection and returning severity based on keyword matching. 
+
+– GET /api/results - Returns the complete detection re-sult as JSON including identified capabilities, risk scores, and evidence chains. 
+
+– GET /api/stats - Returns aggregated statistics includ-ing detector configuration (categories: file_access, net-work, execution), risk thresholds, total keyword rules, and storage statistics (injection count, warning count, normal count, total scans, injection rate). 
+
+– POST /api/import/detection - Batch import end-point for pre-computed detection results from external scanners, updating the storage statistics and enabling trend analysis. Auditing MCP Servers for Over-Privileged Tool Capabilities Conference acronym ’XX, June 03–05, 2026, Woodstock, NY 
+
+> Static Analysis
+> Dynamic Analysis (Optional)
+> Output Generation
+> Static Pipeline
+> Docker Sandbox Provider
+> Target Code (Source Files)
+> Pattern Matching
+> Static Findings (Potential)
+> Docker Container (Privileged)
+> Kernel Events (eBPF Probes)
+> CEF Logs (events.cef)
+> Dynamic Behavior Analyzer
+> Dynamic Findings (Verified)
+> Aggregation (sum scores)
+> DetectionResult (Risk Level)
+> Mitigation Engine
+> Final Report (MD / JSON)
+
+Figure 3: Runtime Workflow of Dual-stream Analysis with Static Inspection and Dynamic eBPF Monitoring. Runtime Workflow. As illustrated in Figure 3, the system pro-cesses the target tool through the following steps: (1) Initialization: The user invokes the CLI with a target direc-tory. The system initializes a DetectionSession and loads the security rulebook into the DetectorRegistry .(2) Static Analysis: The Static Pipeline scans source code and metadata files, using registered detectors to identify potential capabilities and generate initial static findings. (3) Dynamic Fuzzing: If triggered, the Docker Sandbox Provider executes the tool in an isolated container where a protocol-aware fuzzer injects payloads such as command injection patterns. Simultaneously, an eBPF monitor captures kernel-level events (syscalls, I/O) and serializes them into CEF logs. (4) Behavioral Analysis: The Dynamic Behavior Analyzer parses CEF-formatted logs to extract capability evidence (command execution, file I/O, network connections). (5) Scoring: The pipeline aggregates findings and calculates the total risk score as a weighted sum of detected capabilities. (6) Mitigation: Finally, the Mitigation Engine maps confirmed capabilities to specific hardening actions, and a comprehen-sive security report is generated. 
+
+Implementation Details. We implemented our tool in Python with a plugin-based architecture for extensibility. 
+
+• Static Analysis: We utilize efficient regular expression and keyword matching to identify patterns of privileged opera-tions such as subprocess.run and open(..., ’w’) . Rule definitions are in TOML files ( rules/keywords.toml ), cur-rently supporting Python source code and MCP metadata JSON files. 
+
+• Dynamic Analysis: It includes infrastructure for Docker SDK-based container management and CEF log parsing. The engine includes a Python-based MCP Fuzzer that handles the protocol handshake and automatically injects payloads such as shell injection and path traversal into tool arguments. The implementation expects an external Docker image with eBPF instrumentation to generate runtime telemetry. 
+
+• Data Models: Strictly typed dataclasses define models including DetectionResult and CapabilityFinding , en-suring consistency across analysis modes. 
+
+3 Installation, Demonstration, and Scenarios 
+
+The system requires Python 3.10+ and Docker. The installation steps are explained in the README.md file on our Github repository. For more information about the code, security detection frame-work, calculations of risk score and confidence, and web-based detection portal, please visit the project page 2. In addition, a video demonstration 3 presents the architecture and usage of the tool. To confirm installation, run the CLI help command. Then test it on a sample server: 
+
+cd detection uv run -m detection . cli -- help 
+
+uv run -m detection . cli \examples / vulnerable - mcp - servers - lab / vulnerable - mcp - server - malicious - code - exec \-- pipeline dynamic 
+
+The output displays detected capabilities and a risk assessment. 
+
+Scenario A: Pre-deployment Audit. A developer has created a new Python-based MCP server financial-tools capable of read-ing local reports. 
+
+uv run -m detection . cli ./ financial - tools --pipeline static -- format markdown 
+
+The tool generates a risk report that flags the file_read capability as HIGH risk and recommends restricting the mount path. 
+
+Scenario B: Continuous Integration Gate. A DevOps engi-neer wants to prevent over-privileged servers from merging. This is done by configuring the CI pipeline to run the detection tool: 
+
+uv run -m detection . cli ./ target -- pipeline static -- format json 
+
+The build should fail if risk_level is CRITICAL . As the output, a Pull Request introducing arbitrary shell execution ( os.system )would be flagged, with the JSON report identifying files containing the matched patterns. 
+
+Scenario C: Mitigation Recommendations. A security engi-neer needs guidance on deploying a third-party MCP server. By run-ning the static analyzer, the MitigationEngine provides general recommendations based on detected capabilities, such as "Mount only required directories, preferably read-only" for file access or "Run with no-new-privileges" for command execution.  
+
+> 2https://nyit-vancouver.github.io/mcp-sec-audit/
+> 3https://tinyurl.com/mcp-sec-audit-demo Conference acronym ’XX, June 03–05, 2026, Woodstock, NY Charoes Huang, Xin Huang, and Amin Milani Fard
+
+Table 1: MCPTox Benchmark Detection Results. Capability Detected 
+
+file_write 179 
+
+tool_sequence_hijack 136 
+
+prompt_injection 87 
+
+param_override 60 
+
+network_outbound 47 
+
+command_exec 46 
+
+file_read 43 
+
+network_inbound 41 
+
+env_access 24 
+
+Total 663 
+
+4 Evaluation 
+
+We evaluate the detection rate of mcp-sec-audit along three ex-periments on a controlled vulnerable server, the MCPTox academic dataset [8], and a curated vulnerability lab. 
+
+Static Analysis Assessment. We test the static analyzer on a synthesized malicious tool ( examples/static_analysis_test.py )with command execution, file I/O, and network operations. The static pipeline successfully identified all three capability categories with confidence scores ranging from 0.65 to 0.85, assigned a MEDIUM 
+
+risk level (total score: 42.5/100), and generated 5 mitigation recom-mendations including Docker isolation and read-only mounts. The analysis completed in under 2 seconds without requiring Docker. 
+
+MCPTox Benchmark Assessment. We evaluate the detection capability of our tool on the MCPTox benchmark for tool poisoning attack on 45 real-world MCP servers [ 8 ]. Table 1 summarizes the detection results. The tool identified 663 capability instances with 100% detection rate across 491 samples (1.35 capabilities per sample on average - many tools triggered multiple capability types). The most frequent ones were file_write , tool_sequence_hijack ,and prompt_injection . In total, 367 out of 491 samples were de-tected, indicating a detection rate of 74.7%. 124 samples (25.3%) did not have explicit capability indicators in the dataset metadata, though some may still be detected by broader rules. Note that we get 100% detection rate when capability indicators are present. Risk distribution is 92.3% LOW and 7.7% MEDIUM , with average score of 9.96 and max 49.05. 
+
+Static and Dynamic Analysis on Vulnerable Lab. We evalu-ated both static and dynamic pipelines on Vulnerable MCP Servers Lab 4, a repository containing 9 intentionally vulnerable implemen-tations of MCP servers each implementing a distinct attack vector: RCE via eval() , path traversal, prompt injection, typosquatting, secrets exposure, and dependency vulnerabilities. Each server was analyzed twice: once with static analysis and once with dynamic sandbox execution. Results are shown in Table 2. The static analyzer achieved 100% detection (2/2) on Python-based servers but 0% detection (0/7) on JavaScript-based servers due to current JavaScript/TypeScript AST parsing limitations. The Python-based filesystem-workspace-actions server was flagged as MEDIUM risk (score: 29.0) with detected capabilities command_exec ,
+
+file_read , and file_write .
+
+> 4https://github.com/appsecco/vulnerable-mcp-servers-lab
+
+Table 2: Vulnerable Servers Lab Detection Results.                                                             
+
+> Server Static Dynamic Δ
+> Risk Score Risk Score
+> filesystem-workspace (Py) M29.0 M48.5 +19.5
+> wikipedia-streamable (Py) L15.0 M34.2 +19.2
+> malicious-code-exec (JS) —0.0 H65.3 +65.3
+> secrets-pii (JS) —0.0 HI 62.3 +62.3
+> indirect-prompt-inj (JS) —0.0 H60.7 +60.7
+> indirect-prompt-rmt (JS) —0.0 H60.7 +60.7
+> malicious-tools (JS) —0.0 H60.7 +60.7
+> namespace-typosquat (JS) —0.0 H60.7 +60.7
+> outdated-packages (JS) —0.0 H60.7 +60.7 Detection rates: Static (Py: 2/2, JS: 0/7), Dynamic (Py: 2/2, JS: 7/7)
+
+In contrast, the dynamic analyzer demonstrated language-agnostic detection, achieving 100% coverage (9/9 servers) regardless of im-plementation language. All seven JavaScript servers—previously undetected by static analysis—were successfully identified, with an average risk score of 61.4/100 (classified as HIGH risk). The 
+
+malicious-code-exec server (containing explicit eval() RCE) received the highest score (65.3), capturing 4 capability categories including command execution with concrete evidence. Dynamic analysis consistently assigned higher scores than static analysis (average increase: +36.2 points), reflecting behavioral evidence from runtime monitoring. 
+
+5 Limitations and Future Work 
+
+Language Support. The static analyzer currently supports Python and JSON metadata but not TypeScript/JavaScript, despite rule def-initions in keywords.toml . Extending language support requires implementing additional text-based analyzers following the exist-ing plugin interface. 
+
+Detection Accuracy. Pattern-based detection is inherently sus-ceptible to false positives (benign code matching risky keywords) and false negatives (obfuscated or indirect invocations). Rule re-finement and context-aware heuristics may improve precision. Al-though the tool identifies prompt injection patterns in tool de-scriptions, it does not validate runtime behavior against semantic constraints, including parameter manipulation and tool sequence hi-jacking. Hybrid approaches combining static rules with LLM-based semantic analysis may improve detection accuracy. 
+
+Dynamic Analysis Deployment. The sandbox-based pipeline requires Linux with eBPF support, privileged Docker containers, and manual image builds. Future work includes automating sandbox provisioning and supporting non-Linux environments via alterna-tive instrumentation such as macOS DTrace or Windows ETW. 
+
+Mitigation Specificity. Current recommendations are hard-coded and generic, including directives like "use Docker with no-new-privileges". The tool lacks fine-grained policy templates, no-tably per-capability seccomp profiles, and does not generate deployment-ready configurations such as Dockerfiles or Kubernetes manifests. 
+
+Integration and Automation. While the CLI enables manual audits, production use cases require CI/CD integration with auto-mated policy enforcement such as blocking PRs with critical-risk findings. We plan to provide GitHub Actions, pre-commit hooks, and SARIF output for SAST platform compatibility. Auditing MCP Servers for Over-Privileged Tool Capabilities Conference acronym ’XX, June 03–05, 2026, Woodstock, NY 
+
+References 
+
+[1] Anthropic. 2024. Model Context Protocol Specification v1.0. https://modelcontext protocol.io/docs/getting-started/intro. [2] Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, et al . 2024. The Llama 3 Herd of Models. arXiv preprint arXiv:2407.21783 
+
+(2024). [3] Charoes Huang, Xin Huang, Ngoc Phu Tran, and Amin Milani Fard. 2026. Model Context Protocol Threat Modeling and Analyzing Vulnerabilities to Prompt Injec-tion with Tool Poisoning. arXiv preprint (2026). [4] Chia-Hao Lin and Amin Milani Fard. 2025. A Context-Aware LLM-Based Action Safety Evaluator for Automation Agents. In Proceedings of the 38th Canadian Conference on Artificial Intelligence (Canadian AI) .[5] Microsoft. 2025. Prompt Shields in Azure AI Content Safety. https://learn.micr osoft.com/en-us/azure/ai-services/content-safety/concepts/jailbreak-detection. Accessed 2026-01-26. [6] Protect AI. 2024. LLM Guard: The Security Toolkit for LLM Interactions. https: //github.com/protectai/llm-guard. Accessed 2026-01-26. [7] Yangjun Ruan, Honghua Dong, Andrew Wang, Silviu Pitis, Yongchao Zhou, Jimmy Ba, Yann Dubois, Chris J Maddison, and Tatsunori Hashimoto. 2024. Identifying the Risks of LM Agents with an LM-Emulated Sandbox. In The Twelfth International Conference on Learning Representations (ICLR) .[8] Z. Wang, Y. Gao, Y. Wang, S. Liu, H. Sun, H. Cheng, G. Shi, H. Du, and X. Li. 2025. MCPTox: A Benchmark for Tool Poisoning Attack on Real-World MCP Servers. 
+
+arXiv preprint arXiv:2508.14925 (2025). doi:10.48550/arXiv.2508.14925

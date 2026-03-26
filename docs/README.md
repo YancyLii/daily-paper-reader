@@ -6,29 +6,35 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-03-25
-- 运行时间：2026-03-25 19:39:06 UTC
+- 最新运行日期：2026-03-26
+- 运行时间：2026-03-26 19:55:58 UTC
 - 运行状态：成功
-- 本次总论文数：2
+- 本次总论文数：4
 - 精读区：0
-- 速读区：2
+- 速读区：4
 
 ### 今日简报（AI）
-今日聚焦移动应用自动化测试与 MCP 服务安全，探索从自然语言到可执行属性的转化。
-重点关注如何利用自然语言提升移动端测试效率，并警惕 MCP 服务器中工具权限过大的安全风险。
-建议开发者在引入 MCP 架构时加强权限审计，并尝试将自然语言需求转化为自动化测试脚本。
-- 详情：[/202603/25/README](/202603/25/README)
+今日聚焦 LLM 在软件工程中的深度应用，探索代码生成、自动化测试与复杂仓库检索的闭环优化。
+重点关注 LLMLOOP 通过迭代反馈提升代码质量，以及 HCAG 利用层级抽象增强对理论型代码库的检索生成能力。
+建议开发者关注如何利用自动化反馈循环，以应对软件演进过程中复杂的测试与代码维护挑战。
+- 详情：[/202603/26/README](/202603/26/README)
 
 ### 精读区论文标签
 - 本次无精读推荐。
 
 ### 速读区论文标签
-1. [From Natural Language to Executable Properties for Property-based Testing of Mobile Apps](/202603/25/2603.21263v1-from-natural-language-to-executable-properties-for-property-based-testing-of-mobile-apps)  
+1. [LLMLOOP: Improving LLM-Generated Code and Tests through Automated Iterative Feedback Loops](/202603/26/2603.23613v1-llmloop-improving-llm-generated-code-and-tests-through-automated-iterative-feedback-loops)  
+   标签：评分：7.0/10、query:libfuz
+   evidence：自动优化测试用例并通过变异分析提升质量
+2. [HCAG: Hierarchical Abstraction and Retrieval-Augmented Generation on Theoretical Repositories with LLMs](/202603/26/2603.20299v1-hcag-hierarchical-abstraction-and-retrieval-augmented-generation-on-theoretical-repositories-with-llms)  
    标签：评分：6.0/10、query:libfuz
-   evidence：自动合成用于基于属性测试的可执行属性
-2. [Auditing MCP Servers for Over-Privileged Tool Capabilities](/202603/25/2603.21641v1-auditing-mcp-servers-for-over-privileged-tool-capabilities)  
+   evidence：针对仓库级代码生成的层次化抽象与跨文件依赖建模
+3. [Evaluating LLM-Based Test Generation Under Software Evolution](/202603/26/2603.23443v1-evaluating-llm-based-test-generation-under-software-evolution)  
    标签：评分：6.0/10、query:libfuz
-   evidence：为MCP服务器实现动态沙箱模糊测试
+   evidence：代码演化背景下基于LLM的自动化单元测试生成
+4. [APISENSOR: Robust Discovery of Web API from Runtime Traffic Logs](/202603/26/2603.23852v1-apisensor-robust-discovery-of-web-api-from-runtime-traffic-logs)  
+   标签：评分：6.0/10、query:libfuz
+   evidence：从运行时流量日志中动态发现Web API
 
 
 <div class="dpr-home-promo-card">

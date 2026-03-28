@@ -6,32 +6,22 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-03-27
-- 运行时间：2026-03-27 19:19:50 UTC
+- 最新运行日期：2026-03-28
+- 运行时间：2026-03-28 19:50:58 UTC
 - 运行状态：成功
-- 本次总论文数：3
+- 本次总论文数：0
 - 精读区：0
-- 速读区：3
+- 速读区：0
 
 ### 今日简报（AI）
-今日聚焦 LLM 复杂工具调度、代码属性图增强分析及多目标模糊测试三大前沿。
-重点关注通过分级奖励优化多步工具链合成，以及利用 CPG 结构化信息提升大模型对程序逻辑的理解。
-建议关注图表示学习与大模型的融合，以探索更精准的自动化漏洞挖掘与代码分析方案。
-- 详情：[/202603/27/README](/202603/27/README)
+> 今日无新推荐，系统未产出可展示论文。
+- 详情：[/202603/28/README](/202603/28/README)
 
 ### 精读区论文标签
 - 本次无精读推荐。
 
 ### 速读区论文标签
-1. [Training LLMs for Multi-Step Tool Orchestration with Constrained Data Synthesis and Graduated Rewards](/202603/27/2603.24709v1-training-llms-for-multi-step-tool-orchestration-with-constrained-data-synthesis-and-graduated-rewards)  
-   标签：评分：6.0/10、query:libfuz
-   evidence：多步依赖的 API 调用序列
-2. [Bridging Code Property Graphs and Language Models for Program Analysis](/202603/27/2603.24837v1-bridging-code-property-graphs-and-language-models-for-program-analysis)  
-   标签：评分：6.0/10、query:libfuz
-   evidence：集成代码属性图进行程序切片和数据流分析
-3. [Multi-target Coverage-based Greybox Fuzzing](/202603/27/2603.25354v1-multi-target-coverage-based-greybox-fuzzing)  
-   标签：评分：6.0/10、query:libfuz
-   evidence：研究通过接口进行协作执行的模糊测试
+- 本次无速读推荐。
 
 
 <div class="dpr-home-promo-card">

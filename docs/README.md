@@ -6,85 +6,79 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-03-31
-- 运行时间：2026-03-31 20:41:14 UTC
+- 最新运行日期：2026-04-02
+- 运行时间：2026-04-02 20:24:18 UTC
 - 运行状态：成功
-- 本次总论文数：21
-- 精读区：9
+- 本次总论文数：19
+- 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-聚焦 LLM Agent 的闭环控制与安全防线，今日深度解析 21 篇 AI 智能体核心论文。
-ATLAS-RTC 突破性地实现了 Token 级运行时控制，而 Agent Audit 则为智能体应用构建了严密的安全性分析体系。
-建议开发者优先关注 Agent 的授权内化与治理分歧，从底层逻辑提升自动化系统的可控性与安全性。
-- 详情：[/202603/31/README](/202603/31/README)
+今日聚焦 AI 智能体与多模态安全，深度解读 19 篇论文中关于防御间接提示注入与模型修复的最新突破。
+核心结论指出，“认知防火墙”与因果发现技术能有效阻断浏览器插件及视觉语言模型中的安全漏洞。
+建议开发者优先关注 AI 智能体的混合云防御架构，以应对日益复杂的提示词攻击。
+- 详情：[/202604/02/README](/202604/02/README)
 
 ### 精读区论文标签
-1. [ATLAS-RTC: Closing the Loop on LLM Agent Output with Token-Level Runtime Control](/202603/31/2603.27905v1-atlas-rtc-closing-the-loop-on-llm-agent-output-with-token-level-runtime-control)  
-   标签：评分：10.0/10、query:agsec
-   evidence：在解码过程中强制执行结构化输出的Token级运行时控制系统
-2. [Agent Audit: A Security Analysis System for LLM Agent Applications](/202603/31/2603.22853v1-agent-audit-a-security-analysis-system-for-llm-agent-applications)  
+1. [The Cognitive Firewall:Securing Browser Based AI Agents Against Indirect Prompt Injection Via Hybrid Edge Cloud Defense](/202604/02/2603.23791v1-the-cognitive-firewallsecuring-browser-based-ai-agents-against-indirect-prompt-injection-via-hybrid-edge-cloud-defense)  
    标签：评分：9.0/10、query:agsec
-   evidence：LLM智能体应用和工具代码的安全分析系统
-3. [Agent-Sentry: Bounding LLM Agents via Execution Provenance](/202603/31/2603.22868v1-agent-sentry-bounding-llm-agents-via-execution-provenance)  
+   evidence：混合边缘云防御及确定性守护程序执行策略
+2. [Diagnosing and Repairing Unsafe Channels in Vision-Language Models via Causal Discovery and Dual-Modal Safety Subspace Projection](/202604/02/2603.27240v1-diagnosing-and-repairing-unsafe-channels-in-vision-language-models-via-causal-discovery-and-dual-modal-safety-subspace-projection)  
    标签：评分：9.0/10、query:agsec
-   evidence：通过执行溯源限制智能体系统，以验证用户意图和安全性
-4. [ClawKeeper: Comprehensive Safety Protection for OpenClaw Agents Through Skills, Plugins, and Watchers](/202603/31/2603.24414v1-clawkeeper-comprehensive-safety-protection-for-openclaw-agents-through-skills-plugins-and-watchers)  
+   evidence：多模态智能体输入的安全子空间投影
+3. [SafeClaw-R: Towards Safe and Secure Multi-Agent Personal Assistants](/202604/02/2603.28807v1-safeclaw-r-towards-safe-and-secure-multi-agent-personal-assistants)  
    标签：评分：9.0/10、query:agsec
-   evidence：自主智能体运行时和工具执行的实时安全框架
-5. [The System Prompt Is the Attack Surface: How LLM Agent Configuration Shapes Security and Creates Exploitable Vulnerabilities](/202603/31/2603.25056v1-the-system-prompt-is-the-attack-surface-how-llm-agent-configuration-shapes-security-and-creates-exploitable-vulnerabilities)  
+   evidence：多智能体系统中安全风险的实时执行保护
+4. [Robust Multimodal Safety via Conditional Decoding](/202604/02/2604.00310v1-robust-multimodal-safety-via-conditional-decoding)  
    标签：评分：9.0/10、query:agsec
-   evidence：系统提示词配置作为大模型智能体的攻击面
-6. [SEVerA: Verified Synthesis of Self-Evolving Agents](/202603/31/2603.25111v1-severa-verified-synthesis-of-self-evolving-agents)  
-   标签：评分：9.0/10、query:agsec
-   evidence：自我进化Agent的正式安全保证
-7. [SafetyDrift: Predicting When AI Agents Cross the Line Before They Actually Do](/202603/31/2603.27148v1-safetydrift-predicting-when-ai-agents-cross-the-line-before-they-actually-do)  
-   标签：评分：9.0/10、query:agsec
-   evidence：使用马尔可夫链预测智能体动作何时复合为安全违规
-8. [Kill-Chain Canaries: Stage-Level Tracking of Prompt Injection Across Attack Surfaces and Model Safety Tiers](/202603/31/2603.28013v1-kill-chain-canaries-stage-level-tracking-of-prompt-injection-across-attack-surfaces-and-model-safety-tiers)  
-   标签：评分：9.0/10、query:agsec
-   evidence：跨流水线阶段和防御条件追踪提示注入
-9. [Evaluating Privilege Usage of Agents on Real-World Tools](/202603/31/2603.28166v1-evaluating-privilege-usage-of-agents-on-real-world-tools)  
-   标签：评分：9.0/10、query:agsec
-   evidence：用于分析Agent权限使用和工具控制的安全评估沙箱
+   evidence：在响应生成前预测二进制安全Token，以确保稳健的安全对齐
+5. [AgentRFC: Security Design Principles and Conformance Testing for Agent Protocols](/202604/02/2603.23801v1-agentrfc-security-design-principles-and-conformance-testing-for-agent-protocols)  
+   标签：评分：8.0/10、query:agsec
+   evidence：智能体协议的安全设计原则与形式化不变性
+6. [Willful Disobedience: Automatically Detecting Failures in Agentic Traces](/202604/02/2603.23806v1-willful-disobedience-automatically-detecting-failures-in-agentic-traces)  
+   标签：评分：8.0/10、query:agsec
+   evidence：检测智能体轨迹中的不安全工具使用和规则违规
+7. [ROSClaw: An OpenClaw ROS 2 Framework for Agentic Robot Control and Interaction](/202604/02/2603.26997v1-rosclaw-an-openclaw-ros-2-framework-for-agentic-robot-control-and-interaction)  
+   标签：评分：8.0/10、query:agsec
+   evidence：Agent在可配置安全包络内的执行前动作验证
 
 ### 速读区论文标签
-1. [Silent Commitment Failure in Instruction-Tuned Language Models: Evidence of Governability Divergence Across Architectures](/202603/31/2603.21415v1-silent-commitment-failure-in-instruction-tuned-language-models-evidence-of-governability-divergence-across-architectures)  
+1. [Robust Safety Monitoring of Language Models via Activation Watermarking](/202604/02/2603.23171v1-robust-safety-monitoring-of-language-models-via-activation-watermarking)  
    标签：评分：8.0/10、query:agsec
-   evidence：代理输出提交前模型错误的可检测性
-2. [Chain-of-Authorization: Internalizing Authorization into Large Language Models via Reasoning Trajectories](/202603/31/2603.22869v1-chain-of-authorization-internalizing-authorization-into-large-language-models-via-reasoning-trajectories)  
+   evidence：推理过程中不安全行为的鲁棒安全监控与检测
+2. [Not All Tokens Are Created Equal: Query-Efficient Jailbreak Fuzzing for LLMs](/202604/02/2603.23269v1-not-all-tokens-are-created-equal-query-efficient-jailbreak-fuzzing-for-llms)  
    标签：评分：8.0/10、query:agsec
-   evidence：将授权和访问边界内化到LLM推理轨迹中
-3. [SoK: The Attack Surface of Agentic AI -- Tools, and Autonomy](/202603/31/2603.22928v1-sok-the-attack-surface-of-agentic-ai----tools-and-autonomy)  
+   evidence：针对越狱模糊测试的Token级拒绝行为分析
+3. [Prompt Attack Detection with LLM-as-a-Judge and Mixture-of-Models](/202604/02/2603.25176v1-prompt-attack-detection-with-llm-as-a-judge-and-mixture-of-models)  
    标签：评分：8.0/10、query:agsec
-   evidence：智能体AI攻击面的系统化研究，包括工具利用和多智能体威胁
-4. [Describe-Then-Act: Proactive Agent Steering via Distilled Language-Action World Models](/202603/31/2603.23149v1-describe-then-act-proactive-agent-steering-via-distilled-language-action-world-models)  
+   evidence：LLM 系统的提示攻击检测和安全信号验证
+4. [Beyond Content Safety: Real-Time Monitoring for Reasoning Vulnerabilities in Large Language Models](/202604/02/2603.25412v1-beyond-content-safety-real-time-monitoring-for-reasoning-vulnerabilities-in-large-language-models)  
    标签：评分：8.0/10、query:agsec
-   evidence：主动智能体引导以预防失败
-5. [Efficient Failure Management for Multi-Agent Systems with Reasoning Trace Representation](/202603/31/2603.21522v1-efficient-failure-management-for-multi-agent-systems-with-reasoning-trace-representation)  
+   evidence：推理漏洞与轨迹安全的实时监控
+5. [Invisible Threats from Model Context Protocol: Generating Stealthy Injection Payload via Tree-based Adaptive Search](/202604/02/2603.24203v1-invisible-threats-from-model-context-protocol-generating-stealthy-injection-payload-via-tree-based-adaptive-search)  
    标签：评分：7.0/10、query:agsec
-   evidence：基于大语言模型的多智能体系统的故障管理与可靠性
-6. [SafePilot: A Framework for Assuring LLM-enabled Cyber-Physical Systems](/202603/31/2603.21523v1-safepilot-a-framework-for-assuring-llm-enabled-cyber-physical-systems)  
+   evidence：模型上下文协议中工具响应的恶意操纵
+6. [C-STEP: Continuous Space-Time Empowerment for Physics-informed Safe Reinforcement Learning of Mobile Agents](/202604/02/2603.24241v1-c-step-continuous-space-time-empowerment-for-physics-informed-safe-reinforcement-learning-of-mobile-agents)  
    标签：评分：7.0/10、query:agsec
-   evidence：LLM赋能系统的安全控制策略
-7. [LLM-Based Test Case Generation in DBMS through Monte Carlo Tree Search](/202603/31/2603.21530v1-llm-based-test-case-generation-in-dbms-through-monte-carlo-tree-search)  
-   标签：评分：7.0/10、query:libfuz
-   evidence：基于LLM的数据库管理系统自动化测试用例生成与模糊测试
-8. [Are AI-assisted Development Tools Immune to Prompt Injection?](/202603/31/2603.21642v1-are-ai-assisted-development-tools-immune-to-prompt-injection)  
+   evidence：基于物理信息的强化学习自主智能体安全控制策略
+7. [AIP: Agent Identity Protocol for Verifiable Delegation Across MCP and A2A](/202604/02/2603.24775v1-aip-agent-identity-protocol-for-verifiable-delegation-across-mcp-and-a2a)  
    标签：评分：7.0/10、query:agsec
-   evidence：AI开发工具中的提示词注入和工具中毒漏洞分析
-9. [Safety as Computation: Certified Answer Reuse via Capability Closure in Task-Oriented Dialogue](/202603/31/2603.21448v1-safety-as-computation-certified-answer-reuse-via-capability-closure-in-task-oriented-dialogue)  
-   标签：评分：6.0/10、query:agsec
-   evidence：将安全认证作为任务导向对话的计算原语
-10. [SkillClone: Multi-Modal Clone Detection and Clone Propagation Analysis in the Agent Skill Ecosystem](/202603/31/2603.22447v1-skillclone-multi-modal-clone-detection-and-clone-propagation-analysis-in-the-agent-skill-ecosystem)  
-   标签：评分：6.0/10、query:agsec
-   evidence：智能体技能中的多模态克隆检测，防止漏洞传播
-11. [Model Context Protocol Threat Modeling and Analyzing Vulnerabilities to Prompt Injection with Tool Poisoning](/202603/31/2603.22489v1-model-context-protocol-threat-modeling-and-analyzing-vulnerabilities-to-prompt-injection-with-tool-poisoning)  
-   标签：评分：6.0/10、query:agsec
-   evidence：针对AI助手的模型上下文协议威胁建模及提示词注入漏洞分析
-12. [STRIATUM-CTF: A Protocol-Driven Agentic Framework for General-Purpose CTF Solving](/202603/31/2603.22577v1-striatum-ctf-a-protocol-driven-agentic-framework-for-general-purpose-ctf-solving)  
+   evidence：用于可验证委派和溯源的调用绑定能力令牌 (IBCT)
+8. [LogitScope: A Framework for Analyzing LLM Uncertainty Through Information Metrics](/202604/02/2603.24929v1-logitscope-a-framework-for-analyzing-llm-uncertainty-through-information-metrics)  
+   标签：评分：7.0/10、query:agsec
+   evidence：用于分析大模型不确定性的词元级信息指标
+9. [Towards Leveraging LLMs to Generate Abstract Penetration Test Cases from Software Architecture](/202604/02/2603.23698v1-towards-leveraging-llms-to-generate-abstract-penetration-test-cases-from-software-architecture)  
    标签：评分：6.0/10、query:libfuz
-   evidence：标准化用于攻击性安全中系统内省和运行时调试的工具接口
+   evidence：从软件架构生成抽象渗透测试用例
+10. [SafeFlow: Real-Time Text-Driven Humanoid Whole-Body Control via Physics-Guided Rectified Flow and Selective Safety Gating](/202604/02/2603.23983v1-safeflow-real-time-text-driven-humanoid-whole-body-control-via-physics-guided-rectified-flow-and-selective-safety-gating)  
+   标签：评分：6.0/10、query:agsec
+   evidence：人形机器人控制智能体的安全门控机制
+11. [Environment-Grounded Multi-Agent Workflow for Autonomous Penetration Testing](/202604/02/2603.24221v1-environment-grounded-multi-agent-workflow-for-autonomous-penetration-testing)  
+   标签：评分：6.0/10、query:agsec
+   evidence：使用多智能体 LLM 在机器人环境中进行自主渗透测试
+12. [Boosting LLMs for Mutation Generation](/202604/02/2603.24560v1-boosting-llms-for-mutation-generation)  
+   标签：评分：6.0/10、query:libfuz
+   evidence：基于LLM的变异测试和自适应检索的语义变异
 
 
 <div class="dpr-home-promo-card">

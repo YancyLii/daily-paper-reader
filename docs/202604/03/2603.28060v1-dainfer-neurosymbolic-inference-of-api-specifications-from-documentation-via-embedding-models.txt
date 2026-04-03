@@ -1,0 +1,865 @@
+Title: DAInfer+: Neurosymbolic Inference of API Specifications from Documentation via Embedding Models
+
+URL Source: https://arxiv.org/pdf/2603.28060v1
+
+Published Time: Tue, 31 Mar 2026 01:39:05 GMT
+
+Number of Pages: 35
+
+Markdown Content:
+# DAInfer+ : Neurosymbolic Inference of API Specifications from Documentation via Embedding Models 
+
+MARYAM MASOUDIAN, The Hong Kong University of Science and Technology, China 
+
+ANSHUNKANG ZHOU, The Hong Kong University of Science and Technology, China 
+
+CHENGPENG WANG, The Hong Kong University of Science and Technology, China 
+
+CHARLES ZHANG, The Hong Kong University of Science and Technology, China Modern software systems heavily rely on various libraries, which require understanding the API semantics in static analysis. However, summarizing API semantics remains challenging due to complex implementations or unavailable library code. This paper presents DAInfer+ , a novel approach for inferring API specifications from library documentation. We employ Natural Language Processing (NLP) to interpret informal semantic information provided by the documentation, which enables us to reduce the specification inference to an optimization problem. Specifically, we investigate the effectiveness of sentence embedding models and Large Language Models (LLMs) in deriving memory operation abstractions from API descriptions. These abstractions are used to retrieve data-flow and aliasing relations to generate comprehensive API specifications. To solve the optimization problem efficiently, we propose neurosymbolic optimization, yielding precise data-flow and aliasing specifications. Our evaluation of popular Java libraries shows that zero-shot sentence embedding models outperform few-shot prompted LLMs in robustness, capturing fine-grained semantic nuances more effectively. While our initial attempts using two-stage LLM prompting yielded promising results, we found that the embedding-based approach proved superior. Specifically, these models achieve over 82% recall and 85% precision for data-flow inference and 88% recall and 79% precision for alias relations, all within seconds. These results demonstrate the practical value of DAInfer+ in library-aware static analysis. CCS Concepts: • Software and its engineering → Software libraries and repositories ; Automated static analysis ; • Applied computing → Document analysis .Additional Key Words and Phrases: specification inference, documentation mining, alias analysis, data-flow analysis 
+
+1 INTRODUCTION 
+
+In modern programming languages, programmers often develop their applications based on various libraries, which provide fundamental building blocks for client-side implementation. Undoubtedly, the behaviors of library APIs directly affect the functionality of the application code. As targeted by existing studies [ 9 , 29 ], several library APIs are essentially generalized store and load operations, forming aliasing relations through store-load matches. For example, the APIs HashMap.put and 
+
+HashMap.get conduct the store and load operations, respectively. When they are invoked upon the same HashMap object with the same first parameters successively, the return value of HashMap.get 
+
+can be aliased with the second parameter of HashMap.put . To identify value flows in the application code, a static analyzer should be aware of such API aliasing specifications, which play critical roles for pointer analysis and other downstream clients. According to our investigation, many existing static analysis techniques rely on manually specified library API aliasing specifications [ 4 , 6 , 32 ]. However, the emergence of third-party libraries introduces a large number of APIs, making this laborious effort unacceptable in practice. This work initially targets the API aliasing specification inference problem to support library-aware alias analysis. Existing approaches infer API aliasing specifications from three perspectives.      
+
+> Authors’ addresses: Maryam Masoudian, The Hong Kong University of Science and Technology, Hong Kong, China, mamt@ cse.ust.hk; Anshunkang Zhou, The Hong Kong University of Science and Technology, Hong Kong, China, azhouah@ust.hk; Chengpeng Wang, The Hong Kong University of Science and Technology, Hong Kong, China, cwangch@connect.ust.hk; Charles Zhang, The Hong Kong University of Science and Technology, Hong Kong, China, charlesz@cse.ust.hk.
+> arXiv:2603.28060v1 [cs.SE] 30 Mar 2026 2Maryam Masoudian, Anshunkang Zhou, Chengpeng Wang, and Charles Zhang
+> Fig. 1. Examples of library documentation. We use 𝑚 𝑖 to denote the API with the ID 𝑖 in the paper.
+
+The first line analyzes the source code statically [ 5, 61 ]. Although it can derive the function summaries as the API aliasing specifications, the solution suffers from the scalability problem due to deep call chains [ 67 ]. More importantly, the implementation of several library APIs can depend on native code, such as System.arraycopy in the implementation of java.util.Vector , which makes static analysis intractable [ 9 ]. The second line of the techniques constructs unit tests via active learning to trigger the execution of library APIs, so as to infer aliasing relations in the runtime [ 9 ]. Compared to static analysis-based inference techniques, they are more applicable when the source code of the library is unavailable. However, it can be infeasible to generate unit tests to trigger the target library APIs due to the difficulties of constructing the parameters with complex data structures and executing APIs on specific devices or environments. Third, several researchers learn the aliasing specifications from applications using libraries [ 29 ], which does not require the source code of the libraries or the execution of the programs. Unfortunately, their approach only discovers the API specifications used in the applications, finally causing the low recall in the inference. This paper presents a new perspective on inferring API aliasing specifications. Unlike existing studies, we utilize another important library artifact: the documentation, to analyze the semantics of library APIs. As shown in Figure 1, library documentation contains formal semantic properties, e.g., class hierarchy relation and type signatures, and informal semantic information, e.g., semantic descriptions and naming information. Although the library documentation demonstrates the library API semantics in detail, it is far from trivial to derive API aliasing specifications from it. First, effectively understanding the informal semantic information is quite difficult. Even if we apply the recent advances in the large language models (LLMs), e.g., feeding the documentation of 
+
+android.content.Intent to ChatGPT , we can only obtain nine API aliasing specifications, all of which are incorrect. Second, library documentation can be quite lengthy, which may introduce significant overhead. For example, feeding the lengthy documentation to ChatGPT not only demands much time but also introduces a high financial cost due to enormous token consumption. Beyond the cost, we observe a fundamental reliability gap. While LLMs show promise in software engineering tasks such as programming [ 1, 19 , 33 , 40 , 45 , 50 , 73 ], program analysis [ 31 , 37 , 49 , 70 ], and program repair [ 12 , 83 ], they are prone to semantic over-engineering and hallucinations that compromise their reliability. For instance, an LLM may incorrectly attribute a memory write opera-tion to the simple API method Stack.contains despite the method’s signature and documentation clearly indicating it only reads from the stack. Advanced prompt engineering techniques do not consistently mitigate these errors; indeed, the two-staged prompting approach in our previous work [ 69 ] mistakenly attributes a memory deletion to this method. Furthermore, LLMs struggle to isolate distinct operations within compound sentences in an API method’s semantic description, such as the “ removes the object... and returns... ” phrasing of Stack.pop shown in Figure 1. For 3
+
+instance, an LLM may focus exclusively on the removal of an item from the stack while failing to infer the data-flow link to the return value. In the context of taint analysis, this oversight creates a broken propagation chain. These failures in distinguishing conjoined operations, coupled with high computational over-head, necessitate a shift toward more robust methodologies. We argue that sentence embedding models [ 59 , 71 ] provide a superior foundation for this task. By focusing on semantic similarity within atomic, single-intent sentences, these models can robustly identify memory operations while maintaining computational efficiency and structural precision. To effectively achieve the inference with high efficiency, we propose our inference algorithm named DAInfer+ which originates from three key insights: 
+
+• The class hierarchy determines the available APIs of a given class, while type signatures enable us to over-approximate aliasing facts based on the types of API parameters and returns. If two values can not be aliased, we do not need to analyze the naming information and semantic descriptions, which decreases the overhead by avoiding applying NLP models. 
+
+• The named entities in the names of APIs and parameters indicate the high-level semantics and narrow down aliasing relations between the parameters and return values. In Figure 1(a), the named entities in getIdentifier and the parameter name of Intent.setIdentifier are the same, indicating that the return value of Intent.getIdentifier can be aliased with the parameter of 
+
+Intent.setIdentifier .
+
+• Semantic descriptions reveal memory operations through specific verbs, supporting the identifi-cation of store-load matches that may introduce the derivation of aliasing facts. In Figure 1(b), verbs such as push and look indicate that Stack.push and Stack.peek perform insertion and read operations, respectively. Based on our insights, we propose DAInfer+ , an algorithm to infer API specifications by find-ing data-flow and aliasing relations. Technically, we introduce a graph representation to over-approximate the aliasing relations between parameters and return values based on type information. To interpret informal semantic information, we use NLP models to abstract memory operation kinds and high-level semantics of API parameters/return values, respectively. We formulate the task as mapping from semantic information from API documentations to formal memory behaviors that govern data-flow and aliasing relations. We leverage a tagging model to infer the alias relations between return values and parameters of APIs. Then, we reduce the specification inference problem to an optimization problem that enforces the aliasing pairs between API parameters as many as pos-sible for precise semantic abstraction. Particularly, the optimization problem poses constraints on the results of the two NLP models. To solve the problem efficiently, we propose the neurosymbolic optimization algorithm, which interacts with the two NLP models in a demand-driven manner, achieving low resource cost in the inference. To accurately infer memory operations for each API method, we previously proposed a staged prompting technique using generative LLMs [ 69 ]. In this paper, we introduce a more robust solu-tion utilizing zero-shot sentence embedding models for semantic mapping. While the prompting approach tasks the LLM with simulating a developer to categorize API behaviors based on doc-umentation, the embedding approach calculates the cosine similarity between API descriptions and standardized memory operation definitions (e.g., read , write , insert , delete ). Our evaluation (Section 6) demonstrates that embedding models achieve significantly higher recall and precision than LLMs using either zero-shot or few-shot prompting. By reducing the inference task to a semantic similarity comparison, we eliminate the hallucination risks associated with generative models while achieving greater efficiency. 4 Maryam Masoudian, Anshunkang Zhou, Chengpeng Wang, and Charles Zhang 
+
+We implement our approach DAInfer+ and evaluate it upon Java classes in several popular When the two-stage prompting is selected to retrieve memory operation abstractions, DAInfer+ achieves the alias specification inference with a precision of 79.78% and a recall of 82.29%, consuming 5.35 seconds per class on average. Additionally, DAInfer+ promotes the alias analysis by discovering 80.05% more aliasing facts for the API return values and enables the taint analysis to discover 85 more taint flows in the experimental subjects. Furthermore, we assess DAInfer+ capability in retrieving data-flow specifications using embedding models vs. LLMs. Our results demonstrate its recall and precision of embedding models are more than 82% and 85%, respectively. In contrast, programming-trained LLMs could only reach up to 75% recall, albeit with a higher precision of 94%. This suggests that while specialized LLMs can be more precise, embedding models may provide a more comprehensive retrieval of specifications, which is crucial for effective static analysis. Furthermore, when employing embedding models, DAInfer+ achieves 88% recall and 79% precision in inferring alias specifications while maintaining high efficiency by retrieving results in only a few seconds. The main contributions of this work are: 
+
+• We propose a novel neurosymbolic optimization technique to solve the API specification inference problem efficiently. 
+
+• We introduce a comprehensive pipeline to perform memory operation inference, which serves as a foundational layer for subsequent alias inference. 
+
+• We introduce a new embedding-driven paradigm for inferring API specifications, replacing gener-ative LLM prompting with a deterministic, embedding-based retrieval mechanism that leverages latent vector comparisons between API descriptions and memory operation abstractions. 
+
+• We conduct a comprehensive comparative analysis between general-purpose LLMs and state-of-the-art programming-specific models, demonstrating that our embedding-based approach achieves superior efficiency and precision in API specification inference. 
+
+• We extensively evaluate our approach over real-world libraries to demonstrate its improved accuracy and efficiency compared to existing techniques, and to quantify its impact on client analyses. 
+
+2 BACKGROUND AND OVERVIEW 
+
+In this section, we introduce the background of API data-flow and aliasing specification inference and outline our key ideas to infer data-flow and aliasing relations of API methods from their documentations. 
+
+2.1 Library-Aware Data-Flow and Alias Analysis 
+
+Modern software systems heavily depend on various libraries. A recent study found that a Java project can include an average of 48 libraries transitively [ 72 ]. This prevalence of library usage stimulates the demand for modeling API semantics in fundamental static analyses, such as data-flow and alias analysis. However, the deep call chains and unavailable source code (e.g., native functions) complicate the scalability and applicability of static analysis. Many static analyzers use specifications to abstract the library API semantics to achieve library-aware analysis. A data-flow specification for an API 𝑚 presents the flows of data from its parameters to its body (acting as a data sink) or from its body to the return value (acting as a data source). This specification primarily represents the memory operations that a method performs upon its execution, such as 
+
+read , write , insert , and delete .
+
+Example 1. Figure 1(a) indicates that the first parameter of Intent.putStringArrayListExtra is used to insert a new String list into an “ Intent ” object, whereas Intent.getStringArrayListExtra retrieves the list from the same object if invoked successively. In a data-flow context, the former method 5
+
+performs an insertion memory operation on the internal state of the “ Intent ” object, while the latter performs a read operation on the same object; this establishes a potential taint path through the “ Intent ” container. By identifying the specific memory operations within these individual specifications, one can derive higher-order relationships between multiple APIs. Specifically, the API aliasing specification for an API pair (𝑚 1, 𝑚 2) is established by matching their respective memory behaviors: When 
+
+𝑚 1 and 𝑚 2 conduct the store and load operations, respectively, the return value of 𝑚 2 may be aliased with the parameter of 𝑚 1 if 𝑚 2 is invoked after 𝑚 1 upon the same object. Based on the specification, a static analyzer can model the library API semantics without explicitly analyzing the implementation of 𝑚 1 and 𝑚 2, ultimately promoting the scalability and applicability of the overall analysis. 
+
+Example 2. Figure 1(a) indicates that when the first parameters of Intent.putStringArrayListExtra 
+
+and 
+
+Intent.getStringArrayListExtra are aliased, the return value of the latter can be aliased with the second parameter of the former if they are invoked successively upon the same “ Intent ” object. 
+
+2.2 Different Perspectives of Inferring API Specifications 
+
+With the increasing number of third-party libraries, manually specifying the API specifications demands incredibly laborious effort [ 4 , 6, 32 ]. To mitigate this problem, previous studies infer data-flow and aliasing API specifications from different artifacts, including library implementation [ 5 ], application code using libraries [23, 29], and tests synthesized via active learning [9] or coverage-guided fuzzing [ 47 ]. However, their solutions can be hindered by three main drawbacks. First, analyzing the library implementation suffers from the scalability issue due to complex program structures, such as deep call chains, and can even become inapplicable due to the unavailability of the implementation or the presence of native code. Second, inferring the specifications from the application code using libraries may fail to achieve high recall when specific APIs are not utilized in the application code. Third, deriving the data-flow or aliasing facts from dynamic execution suffers from the inapplicability issue when it is infeasible to construct executable tests in specific devices or environments. To fill the research gap, our work proposes another perspective to infer the API specifications. We realize that there is another essential library artifact, i.e., library documentation, demonstrating the library API semantics in a semi-formal structure. As shown in Figure 1, the formal semantic properties, including class hierarchy relation and type signatures, are explicitly provided. Mean-while, the naming information, e.g., the parameter names and API names, shows the intent of API parameters and return values, while semantic descriptions demonstrate the functionalities of the APIs informally. These ingredients permit us to understand how the library APIs manipulate the memory. Specifically, this enables the inference of data-flows to and from the heap upon method invocation, which in turn facilitates the identification of aliasing relations between parameters and return values. More importantly, the documentation is often available for analysis, as the developers tend to refer to it during the development. Hence, inferring the API data-flow and aliasing specifications from documentation would exhibit better applicability than the existing techniques. 
+
+2.3 Overview of DAInfer+ 
+
+Although the documentation guides the developers in understanding the API semantics, there exists a gap between the API knowledge and API data-flow and aliasing specifications. Concretely, we need to understand how the API parameters are stored and how the API return values are loaded. 6 Maryam Masoudian, Anshunkang Zhou, Chengpeng Wang, and Charles Zhang 
+
+However, achieving this is quite complicated in front of informal semantic information. Even if we leverage the new advances in the LLMs, they cannot understand how the APIs manipulate memory and eventually fail to identify the aliasing relations between API parameters and return values. With lengthy documentation, frequent interactions with LLMs can incur significant time and token costs. To address the challenges, we propose a novel inference algorithm named DAInfer+ , which effectively understands the API semantics and efficiently infers the API specification from library documentation. Our key idea originates from three critical observations on the data-flow and aliasing relations between the parameters and return values of the library APIs as follows. 
+
+• The parameters and return values should be type-consistent if they are aliased. Specifically, their types should be the same, or one of them is the subtype/super-type of the other. Such facts can be easily obtained from the class hierarchy relation and type signatures in the documentation. In Figure 1, for example, we can obtain the potential aliasing relation between the return value of Intent.getIdentifier and the parameter of Intent.setIdentifier , while the second parameter of 
+
+Intent.putStringArrayListExtra can not be aliased with the return value of Intent.getIdentifier .
+
+• If the return values and parameters of two APIs are aliased, the named entities in their names tend to be the same, indicating the same high-level semantics. For example, the APIs Intent.setIdentifier 
+
+and Intent.getIdentifier in Figure 1(a) share the same named entity “ identifier ”, indicating that they manipulate the same inner field. For general-purpose data structures, such as java.util.Stack 
+
+in Figure 1(b), the API names of Stack.peek and Stack.pop do not have any named entities, indicating that their return values can be aliased with other parameters with consistent types. 
+
+• If a library API stores its parameters or loads the inner field as the return value, the verbs in its semantic description can reflect the memory operation kind intuitively. For example, the verbs “set ” and “insert ” are commonly used for the APIs storing their parameters, while the verbs “get ”and “return” are prevalent in the semantic descriptions of the APIs loading inner fields. Based on the observations, we realize that we can leverage type information to over-approximate aliasing relations and utilize named entities, verbs, and descriptive simple sentences to understand the high-level semantic meanings of the APIs and their data-flow facts. For any store-load API pair, we can finalize an API aliasing specification as long as we discover the parameters and return values with the same semantic meanings and consistent types. According to these insights, we design our inference algorithm DAInfer+ , of which the workflow is shown in Figure 2. Our key technical design consists of three components. 
+
+• We introduce a new graph representation, namely the API value graph , to approximate aliasing relations. After converting a library documentation to a normalized documentation model, we encode the potential aliasing relations in the API value graph. 
+
+• We reduce the inference problem to an optimization problem upon the API value graph, where we aim to discover as many aliasing facts among parameters and return values as possible. Particularly, we leverage NLP models to extract the named entities and interpret the semantic descriptions to infer memory operation abstractions, respectively. These abstractions repre-sent the underlying data-flow facts for each API method, serving as the foundation for our optimization-based inference. 
+
+• We instantiate the optimization problem and propose an efficient neurosymbolic optimization algorithm to solve the problem, of which the solution induces the API aliasing specifications. Our neurosymbolic optimization algorithm interacts with the tagging model and the memory operation abstraction module in a demand-driven manner, significantly improving the efficiency of our algorithm. 7 
+
+> Fig. 2. Workflow of DAInfer+
+
+Benefiting from our insights, our inference algorithm DAInfer+ simultaneously achieves high precision, recall, and efficiency. The high availability of library documentation also promotes the applicability of our approach in real-world scenarios. In the following sections, we will formulate our problem (§ 3) and provide our technical design (§ 4 and § 5) in detail. 
+
+3 PROBLEM FORMULATION 
+
+This section first formulates the documentation model (§ 3.1) and then defines the API aliasing specification (§ 3.2). Lastly, we provide the formal statement of the API aliasing specification inference problem and highlight the technical challenges (§ 3.3). 
+
+3.1 Documentation Model 
+
+Definition 1. (Documentation Model) Given a library, its documentation model is L := (H, T, N, D):
+
+• Class hierarchy model H maps a class 𝑐 to a set of classes, which are the superclasses of 𝑐 .
+
+• Type signature model T maps (𝑐, 𝑚, 𝑖 ) to a type, where 𝑚 is an API of the class 𝑐 and 𝑖 is the index of the parameter. Without ambiguity, we regard the index of the return value as -1. 
+
+• Naming model N maps (𝑐, 𝑚, 𝑖 ) to a string indicating the parameter name or API name, where 
+
+𝑚 is an API of the class 𝑐 and 𝑖 is the index of the parameter. Without ambiguity, N(𝑐, 𝑚, −1)
+
+indicates the name of the API 𝑚 of the class 𝑐 .
+
+• Description model D maps (𝑐, 𝑚 ) to a string indicating the API semantic description. 
+
+Example 3. According to the documentation of the class Intent in Figure 1, we have 
+
+H(Intent ) = {Object }, T(Intent , 𝑚 1, −1) = void , T(Intent , 𝑚 1, 1) = ArrayList<String> 
+
+N(Intent , 𝑚 1, 0) = name , N(Intent , 𝑚 1, 1) = value , N(Intent , 𝑚 1, −1) = putStringArrayListExtra 
+
+D(Intent , 𝑚 1) is “ Add extracted data to the intent ” . Here, 𝑚 1 is the API Intent.putStringArrayListExtra .Due to space limits, we do not discuss other APIs in detail. Based on documentation, we can collect all the APIs offered by a specific class and its superclasses, forming the universe of available APIs when using the class. The naming information and API semantic descriptions are informal specifications, guiding the developers to use proper APIs in their programming contexts. Based on the documentation model, not only do developers achieve their program logic conveniently, but also analyzers can understand the behavior of each API. 
+
+3.2 API Aliasing Specification 
+
+To support the library-aware alias analysis, we concentrate on the API aliasing specification inference and follow an important form of aliasing specifications formulated in the prior study [ 29 ], which is defined as follows. 
+
+Definition 2. (API Aliasing Specification) An API aliasing specification is a tuple (𝑚 1, 𝑚 2, 𝑃, 𝑡 ),where 𝑚 1 and 𝑚 2 are two APIs, 𝑃 := {( 𝑖 (1) 
+
+> 1
+
+, 𝑖 (2) 
+
+> 1
+
+), · · · , (𝑖 (1) 
+
+> 𝑗
+
+, 𝑖 (2) 
+
+> 𝑗
+
+)} is a set of non-negative integer pairs, and 𝑡 is an non-negative integer. It indicates that the return value of 𝑚 2 can be aliased with the 𝑡 -th parameter of 𝑚 1 if 8 Maryam Masoudian, Anshunkang Zhou, Chengpeng Wang, and Charles Zhang 
+
+• 𝑚 1 is called before 𝑚 2 upon the same object 
+
+• The 𝑖 (1) 
+
+> 𝑘
+
+and 𝑖 (2) 
+
+> 𝑘
+
+-th parameters of 𝑚 1 and 𝑚 2 are aliased accordingly. Here, 0 ≤ 𝑖 (1) 
+
+> 𝑘
+
+≤ 𝑛 1, 0 ≤ 𝑖 (2) 
+
+> 𝑘
+
+≤ 𝑛 2, and 0 ≤ 𝑘 ≤ 𝑗 . 𝑛 1 and 𝑛 2 are the parameter numbers of 𝑚 1 and 
+
+𝑚 2, respectively. Without ambiguity, we call 𝑚 1 and 𝑚 2 a store-load API pair. Definition 2 shows that the APIs 𝑚 1 and 𝑚 2 conduct the store and load operations upon the memory, respectively. Unlike simple load and store operations of pointers, storing and loading the values in memory may depend on the values of other parameters, which are induced by the set 𝑃 ,determining the memory location where the values are stored and loaded, respectively. Essentially, the set 𝑃 indicates the precondition of the aliasing relation between the return value of 𝑚 2 and the 𝑡 -th parameter of 𝑚 1. If 𝑃 is empty, the parameters of 𝑚 1 and 𝑚 2 are not necessarily aliased to enforce the aliasing relation between the return value of 𝑚 2 and the 𝑡 -th parameter of 𝑚 1.
+
+Example 4. In Figure 1(a), we have two API aliasing specifications (𝑚 1, 𝑚 4, {( 0, 0)} , 1) and 
+
+(𝑚 2, 𝑚 3, ∅, 0). Specifically, the API aliasing specification (𝑚 1, 𝑚 4, {( 0, 0)} , 1) indicates that the return value of Intent.getStringArrayListExtra and the second parameter of Intent.putStringArrayListExtra 
+
+are aliased when they are invoked upon the same object and their first parameters are aliased. The API aliasing specification in Definition 2 is more general than the one targeted by USpec [29 ]. Specifically, USpec only infers that calling 𝑚 2 may return a value aliased with the 𝑡 -th parameter of a preceding call of 𝑚 1 on the same object if all other parameters are aliased . However, there exist many store-load API pairs in which not all the other parameters are aliased. For instance, the API 
+
+createBitmap of android.graphics.Bitmap sets the values of DisplayMetrics , Config , width, and height simultaneously, while the API getConfig only fetches the value of Config . Our formulation in Definition 2 is expressive enough to depict such a store-load API pair. 
+
+3.3 Problem Statement 
+
+We aim to address the API aliasing specification inference problem from another perspective. As demonstrated in § 3.1, the library documentation provides various forms of semantic information about the library APIs. Hence, we can hopefully derive the API aliasing specifications from docu-mentation without conducting deep semantic analysis upon the source code or program runtime information. The API aliasing specification for a given store-load API pair may not be unique. In Example 4, for instance, (𝑚 1, 𝑚 4, ∅, 1) is also a valid specification, while it does not pose any restrictions upon the parameters of the two APIs as the pre-condition. In our work, we want to ensure that the inferred specifications exhibit as strong pre-conditions as possible, which implies the maximal size of the set 𝑃 . Finally, we state the problem of the API aliasing specification inference as follows. Given a documentation model L = (H, T, N, D), infer a set of API aliasing specifications 𝑆 AS 
+
+such that |𝑃 | is maximized for each (𝑚 1, 𝑚 2, 𝑃, 𝑡 ) ∈ 𝑆 AS .
+
+Technical Challenges. Although library documentation offers semantic information, solving the above problem is quite challenging. First, the naming information and semantic descriptions can be ambiguous. Without an effective interpretation, we cannot understand how the APIs operate on memory or identify aliasing relations between parameters and return values. Second, there are often many available APIs offered by a single class and even its superclasses. It is non-trivial to obtain high efficiency in front of a large number of available APIs for each class. 
+
+Roadmap. In this work, we propose an inference algorithm DAInfer+ to address the two technical challenges. Specifically, we introduce the documentation model abstraction to formulate 9(Intent, 𝑚 ! , -1) (Intent, 𝑚 ", -1)                                                               
+
+> (Intent, 𝑚 ",1)
+> (Intent, 𝑚 #,0)
+> (Intent, 𝑚 #,-1)
+> (Intent, 𝑚 ",0)
+> (Intent, 𝑚 $,0)
+> (Intent, 𝑚 $,-1)
+> (Intent, 𝑚 %,-1)
+> (Intent, 𝑚 %,0)
+> (Intent, 𝑚 &,0)
+> (Intent, 𝑚 &,-1) (Intent, 𝑚 &,1)
+> getIdentifier s3
+> normalizeMimeType s5
+> identifier s2
+> name s4
+> name s1
+> type s5
+> value s1 getStringArrayListExtra s4
+> setIdentifier s2
+> flags s6 fillIn s6
+> (Stack, 𝑚 ',0) (Stack, 𝑚 ',-1)
+> (Stack, 𝑚 (,-1) (Stack, 𝑚 ),-1)
+> (Stack, 𝑚 "* ,-1)
+> other s6
+> putStringArrayListExtra s1 empty s10
+> push s7 item s7
+> peek s8 pop s9
+
+Fig. 3. The API value graph of the documentation model induced by the documentation in Figure 1 
+
+semantic information, which enables us to reduce the original problem to an optimization problem (§ 4). Furthermore, we propose the neurosymbolic optimization to efficiently solve the instantiated optimization problem (§ 5). We present the details of our implementation (§ 6) and demonstrate the evaluation quantifying the effectiveness and efficiency of DAInfer+ (§ 7). 
+
+4 DOCUMENTATION MODEL ABSTRACTION 
+
+This section presents the abstraction of the documentation model. Specifically, we propose the concept of the API value graph (§ 4.1) and introduce two label abstractions over the graph (§ 4.2), which enables us to reduce the API aliasing specification problem to an optimization problem (§ 4.3). 
+
+4.1 API Value Graph 
+
+As shown in § 3.1, the formal semantic information, namely class hierarchy and the type signatures, reveals potential aliasing relations between API parameters and return values, while the informal semantic information, e.g., naming information and semantic descriptions, shows how parameters and return values are utilized. To depict aliasing relations that can be introduced by API invocations, we propose a graph representation, namely API value graph , as follows. 
+
+Definition 3 (API Value Graph) . Given a documentation model L = (H, T, N, D), its API value graph is the labeled graph 𝐺 := (𝑉 , 𝐸, ℓ 𝑛 , ℓ 𝑑 ), where 
+
+• The node set 𝑉 contains API parameters and return values, which are referred to as API values .
+
+(𝑐, 𝑚, 𝑖 ) ∈ 𝑉 if and only if (𝑐, 𝑚, 𝑖 ) ∈ dom (N) or there is 𝑐 ′ ∈ H(𝑐 ) such that (𝑐 ′, 𝑚, 𝑖 ) ∈ dom (N).
+
+• The edge set 𝐸 ⊆ 𝑉 × 𝑉 indicates possible aliasing relations between API values. Specifically, 
+
+(𝑣 1, 𝑣 2) ∈ 𝐸 if and only if T(𝑣 1) = T(𝑣 2), T(𝑣 1) ∈ H(T(𝑣 2)) , or T(𝑣 2) ∈ H(T(𝑣 1)) .
+
+• The name label ℓ𝑛 is a function that maps an API value to its name, i.e., ℓ𝑛 (𝑣 ) = N(𝑣 ).
+
+• The description label ℓ𝑑 is a function that maps an API value to the semantic description of the API, i.e., ℓ𝑑 (𝑣 ) = D(𝑐, 𝑚 ), where 𝑣 = (𝑐, 𝑚, 𝑖 ).The API value graph regards API values, namely API parameters and return values, as first-class citizens, and depicts their high-level semantics with labels. Intuitively, an edge from (𝑐, 𝑚 1, 𝑖 1)
+
+to (𝑐, 𝑚 2, 𝑖 2) indicates the fact that the two values may be aliased when 𝑚 2 is invoked after 𝑚 1
+
+upon the same object. Meanwhile, the two labels attach the informal semantic information to API values, showing their usage intention. From a high-level perspective, the API value graph over-approximates aliasing relations according to class hierarchy relations and type signatures, and still preserves informal semantic information as labels to support further specification inference. 
+
+Example 5. Figure 3 shows the API value graph for the documentation model induced by the classes in Figure 1, where the name labels and description labels are shown in the left and right 10 Maryam Masoudian, Anshunkang Zhou, Chengpeng Wang, and Charles Zhang 
+
+boxes, respectively. 𝑠 𝑖 indicates the semantic description of 𝑚 𝑖 in Figure 1. Specifically, the edge from (Intent , 𝑚 2, 0) to (Intent , 𝑚 5, 0) indicates that the first parameters of Intent.setIdentifier and 
+
+Intent.normalizeMimeType may be aliased when the two APIs are invoked successively. 
+
+4.2 Label Abstraction 
+
+Although the edges of the API value graph over-approximate aliasing relations over API values, not all the aliasing relations can hold when using APIs. In Figure 1, for example, the return value of getIdentifier and the first parameter of normalizeMimeType are unlikely to be aliased as the named entities in their names are different, revealing the different usage intention of the two API values. To formulate this key idea, we first introduce the concept of the semantic unit abstraction as follows. 
+
+Definition 4. (Semantic Unit Abstraction) A semantic unit abstraction 𝛼 𝜏 is a function mapping a string 𝑠 to a set of named entities contained in 𝑠 . We call the elements in 𝛼 𝜏 (𝑠 ) as semantic units .
+
+Example 6. The named entities in the API name of getStringArrayListExtra include string , array ,
+
+list , and extra . Hence, we have 𝛼 𝜏 (getStringArrayListExtra ) = {string , array , list , extra }.Essentially, the semantic unit abstraction extracts the named entities from the names as semantic units, which shows the high-level semantics of API values, enabling us to refine aliasing relations according to the following two intuitions: (1) If two API values 𝑣 1 and 𝑣 2 have names with the same semantic units, we can obtain the confidence that they are very likely to indicate the same object in the memory; (2) If the name of an API value does not have any semantic units, we can conservatively regard that it can be aliased with any other API values with consistent types. Hence, we formally define the semantic unit consistency to formulate the two intuitions. 
+
+Definition 5. (Semantic Unit Consistency) Given a semantic unit abstraction 𝛼 𝜏 upon an API value graph 𝐺 = (𝑉 , 𝐸, ℓ 𝑛 , ℓ 𝑑 ), two nodes 𝑣 1 and 𝑣 2 are semantic-unit consistent if and only if (1) 
+
+𝛼 𝜏 (ℓ𝑛 (𝑣 1)) = 𝛼 𝜏 (ℓ𝑛 (𝑣 2)) , or (2) 𝛼 𝜏 (ℓ𝑛 (𝑣 1)) = ∅ ∨ 𝛼 𝜏 (ℓ𝑛 (𝑣 2)) = ∅.
+
+Example 7. Consider the API value graph in Figure 3. We have 𝛼 𝜏 (getIdentifier ) = {identifier }, so the return value of the API getIdentifier and the first parameter of setIdentifier are semantic-unit consistent for the class Intent . Also, we have 𝛼 𝜏 (item ) = {item } and 𝛼 𝜏 (peek ) = ∅, so the return value of peek and the first parameter of push are semantic-unit consistent for the class Stack .Finally, we observe that semantic descriptions characterize how API values interact with memory. By leveraging these informal descriptions, we can systematically identify the underlying memory operations required to infer precise data-flow and aliasing specifications. To formalize this mapping, we define the concept of memory operation abstraction as follows: 
+
+Definition 6. (Memory Operation Abstraction) A memory operation abstraction 𝛼 𝑜 maps a semantic description 𝑠 to 𝛼 𝑜 (𝑠 ) ⊆ 𝑀 , where 𝑀 = {I, D, R, W}. The elements in 𝑀 indicate the insertion (I), deletion (D), read (R), and write (W) operations on the memory. Notably, we classify common memory operations into four categories due to two major reasons. First, the write operation contains several sub-kinds, such as deletion and insertion. If we only categorize memory operations into read and write, we can not distinguish the APIs conducting the deletion and insertion, such as pop and add for java.util.Stack , which may yield wrong API aliasing specifications. For example, the APIs pop and peek of java.util.Stack would be wrongly identified to form a store-load pair and thus induce an incorrect API aliasing specification. Second, objects can be organized in various structural manners. When adding an object to a container-typed field, such as java.util.Stack and java.util.HashMap , the operation is an insertion. When storing an object 11 
+
+in a non-container-typed field, the API writes a specific value to the field. The above operations are often described differently in natural language, so we formulate the memory operation abstraction in a fine-grained manner. 
+
+Example 8. According to Figure 1, we have 𝛼 𝑜 (𝑠 1) = {I, W}, 𝛼 𝑜 (𝑠 2) = {W} and 𝛼 𝑜 (𝑠 3) = 𝛼 𝑜 (𝑠 4) =
+
+{R} for Intent . For Stack , we have 𝛼 𝑜 (𝑠 7) = {I, W}, 𝛼 𝑜 (𝑠 8) = {R}, and 𝛼 𝑜 (𝑠 9) = {R, D, W}.To sum up, the above two label abstractions interpret the informal semantic descriptions with the sets of semantic units and memory operations, based on which we can refine potential aliasing relations indicated by the edges of the API value graph and identify store-load API pairs. In § 5.2, we will demonstrate how to instantiate the two abstractions to support the specification inference. 
+
+4.3 Problem Reduction 
+
+Based on the two label abstractions, we can interpret the high-level semantics of API values and the memory operations conducted by the APIs. According to our problem statement in § 3.3, we need to identify the store-load API pairs and find as many aliased parameters as possible, which determine a strong precondition of the aliasing relation between loaded and stored values. Hence, we reduce the specification inference to an optimization problem over the API value graph as follows. 
+
+Definition 7. (Optimization Problem) Given a semantic unit abstraction 𝛼 𝜏 and a memory operation abstraction 𝛼 𝑜 upon an API value graph 𝐺 = (𝑉 , 𝐸, ℓ 𝑛 , ℓ 𝑑 ), find an edge set 𝐸 ∗ ⊆ 𝐸 with a maximal size |𝐸 ∗ | satisfying the following constraints: 
+
+• (Degree constraint) For each 𝑣 ∈ 𝑉 , the in-degree and out-degree of 𝑣 are not greater than 1. 
+
+• (Validity constraint) If (𝑣 1, 𝑣 2) ∈ 𝐸 ∗, where 𝑣 1 and 𝑣 2 indicate parameters, there exist 𝑢 1, 𝑢 2 ∈ 𝑉 
+
+such that (𝑢 1, 𝑢 2) ∈ 𝐸 ∗. where 𝑢 1 and 𝑢 2 indicate a parameter and a return value, respectively. 
+
+• (Semantic unit constraint) For any (𝑣 1, 𝑣 2) ∈ 𝐸 ∗, where 𝑣 1 = (𝑐, 𝑚 1, 𝑖 1) and 𝑣 2 = (𝑐, 𝑚 2, 𝑖 2), the semantic unit abstraction of the names of 𝑣 1 and 𝑣 2 should satisfy 
+
+– (S1) If 𝑖 2 ≠ −1, 𝑣 1 and 𝑣 2 are semantic-unit consistent. 
+
+– (S2) If 𝑖 2 = −1, 𝑣 1 or 𝑣 ′ 
+
+> 1
+
+is semantic-unit consistent with 𝑣 2, where 𝑣 ′ 
+
+> 1
+
+= (𝑐, 𝑚 1, −1).
+
+• (Memory operation constraint) For any (𝑣 1, 𝑣 2) ∈ 𝐸 ∗, the following two conditions are satisfied: 
+
+– (M1) 𝑣 1 satisfies I ∈ 𝛼 𝑜 (ℓ𝑑 (𝑣 1)) ∨ ( W ∈ 𝛼 𝑜 (ℓ𝑑 (𝑣 1)) ∧ D ∉ 𝛼 𝑜 (ℓ𝑑 (𝑣 1)) 
+
+– (M2) 𝑣 2 satisfies that R ∈ 𝛼 𝑜 (ℓ𝑑 (𝑣 2)) 
+
+Definition 7 aims to maximize |𝐸 ∗ | to discover all the aliased parameters of each store-load API pair, which corresponds to maximizing |𝑃 | in original problem statement in § 3.3. The four kinds of constraints are imposed upon the selected edges. Specifically, the degree and validity constraints ensure that the edges induce the API aliasing specification defined in Definition 2. Besides, the parameters of the APIs 𝑚 1 and 𝑚 2 should be semantic-unit consistent if they are connected by a selected edge (S1). If a selected edge connects the parameter of 𝑚 1 and the return value of 𝑚 2, then the parameter of 𝑚 1 should be semantic-unit consistent with the return value of 𝑚 2 (S2). Lastly, the memory operation constraint ensures that the APIs 𝑚 1 and 𝑚 2 should form a store-load API pair (M1 and M2). Finally, we can obtain the specifications based on the optimal solution as follows. Given the optimal solution 𝐸 ∗ of the optimization problem defined in Definition 7, we can obtain the API aliasing specification (𝑚 1, 𝑚 2, 𝑃, 𝑡 ) ∈ 𝑆 AS , where 
+
+• 𝑃 = {( 𝑖 1, 𝑖 2) | (( 𝑐, 𝑚 1, 𝑖 1), (𝑐, 𝑚 2, 𝑖 2)) ∈ 𝐸 ∗, 𝑖 2 ≠ −1}• 𝑡 satisfies (( 𝑐, 𝑚 1, 𝑡 ), (𝑐, 𝑚 2, −1)) ∈ 𝐸 ∗
+
+Example 9. Figure 4 shows the optimal solution to the optimization problem over the API value graph in Figure 3, where the sets shown in the two boxes demonstrate the extracted semantic 12 Maryam Masoudian, Anshunkang Zhou, Chengpeng Wang, and Charles Zhang (Intent, 𝑚 ! , -1)                                         
+
+> (Intent, 𝑚 ",0) (Intent, 𝑚 #,0)
+> (Intent, 𝑚 $,0)
+> {identifier} {R}
+> {identifier} {W}
+> {name} {R}
+> (Stack, 𝑚 %,0) (Stack, 𝑚 %,-1)
+> (Stack, 𝑚 &,-1) (Stack, 𝑚 ',-1)
+> (Intent, 𝑚 #,1)
+> (Intent, 𝑚 $,-1)
+> {value} {W}
+> {string, array, list, extra} {R}
+> {name} {W} {item} {I, W}
+> {} {R}
+> {} {I, W}
+> {} {R, D, W}
+
+Fig. 4. An optimal solution to the problem instance over the API value graph shown in Figure 3 
+
+units and the identified memory operations under the label abstractions in Examples 7 and 8. We discover six possible aliasing relations. Notably, although the semantic units of (Intent , 𝑚 4, −1) are different from (Intent , 𝑚 1, 1), they are exactly the same as the ones of (Intent , 𝑚 1, −1), indicating that the second parameter of 𝑚 1 can have the same semantics as the return value of 𝑚 4. The optimal solution finally induces the API aliasing specifications in Example 4. By reducing the original problem to the optimization problem in Definition 7, we only need to tackle two sub-problems for the specification inference. First, we have to instantiate two label abstractions to precisely interpret the semantic meanings of names and the kind of memory operations. Second, we need to design an efficient optimization algorithm to solve the optimization problem. In § 5, we will provide the technical details of addressing the two sub-problems. 
+
+5 SPECIFICATION INFERENCE VIA NEUROSYMBOLIC OPTIMIZATION 
+
+This section presents the technical details of our algorithm DAInfer+ . Specifically, we demonstrate the overall algorithm in § 5.1 and detail the label abstraction instantiation in § 5.2. Besides, we present the neurosymbolic optimization in § 5.3 to instantiate and solve the optimization problem given in Definition 7. Lastly, we summarize our approach and highlight its advantages in § 5.4. 
+
+5.1 Overall Algorithm 
+
+Algorithm 1: Inference Algorithm 
+
+Input: L: Documentation model; 
+
+Output: 𝑆 AS : API aliasing specifications;  
+
+> 1
+
+𝐺 ← constructAVG (L); 
+
+> 2
+
+𝛼 𝜏 ← getSemanticUnitAbs () ; 
+
+> 3
+
+𝛼 𝑜 ← getMemoryOperationAbs () ; 
+
+> 4
+
+P ← ( L, 𝐺, 𝛼 𝜏 , 𝛼 𝑜 ); 
+
+> 5
+
+𝐸 ∗ ← neuroSymOpt (P) ; 
+
+> 6
+
+𝑆 AS ← convert (𝐸 ∗); 
+
+> 7
+
+return 𝑆 AS ;
+
+As demonstrated in § 4.3, we can reduce the API aliasing specification inference problem to an instance of the optimization problem given in Definition 7. Technically, we propose and formulate our specification algorithm in Algo-rithm 1, which takes as input a documentation model L and generates a set of API aliasing spec-ifications 𝑆 AS as output. First, we derive the API value graph 𝐺 from the documentation model 
+
+L based on Definition 3 (Line 1). Second, we in-stantiate two label abstractions, i.e., 𝛼 𝜏 and 𝛼 𝑜 ,and further construct an instance of the optimization problem P defined in Definition 7 (Lines 2–3). Third, we propose the neurosymbolic optimization to solve the instance of the optimization problem 
+
+P (Lines 4–5), and finally convert the optimal solution 𝐸 ∗ to a set of API aliasing specifications 𝑆 AS 
+
+(Line 6). Particularly, Definition 3 has demonstrated how to construct the API value graph, and converting the optimal solution to the specification is also explicitly formulated at the end of § 4.3. In the rest of this section, we will provide more details on the label abstraction instantiation (§ 5.2) and the neurosymbolic optimization algorithm (§ 5.3), which finalize the functions getSemanticUnitAbs ,
+
+getMemoryOperationAbs , and neuroSymOpt in Algorithm 1, respectively. 13 
+
+5.2 Label Abstraction Instantiation 
+
+According to Definitions 4 and 6, the semantic unit abstraction requires attaching the grammatical tags, while the memory operation abstraction demands identifying how an API manipulates memory. In what follows, we will detail how to instantiate them with two different NLP models, respectively. 
+
+5.2.1 Instantiating Semantic Unit Abstraction. According to common programming practices, the developers of libraries tend to follow typical naming conventions [ 14 ], such as camel case, pas-cal case, and snake case. For example, userAccount is a parameter name using camel case, and 
+
+get_account_balance is an API name using snake case. Notably, the sub-words are often separated with an underscore or begin with an uppercase letter. Hence, we can easily decompose each name 
+
+𝑠 into the concatenation of several sub-words and further determine the tag of each sub-word. However, the names of APIs or their parameters can hardly be valid phrases or sentences. Simply applying the part-of-speech (POS) tagging would tag almost all the words as nouns. Also, the POS tagging targets tagging sentences, while the names of parameters and APIs are only the concatenation of words in phrases. To obtain more precise tagging results, we leverage an existing probability model trained in Brown Corpus [ 34 ], which can return all the possible grammatical tags of each word along with the occurrences. This enables us to determine whether a word is more likely to be a noun according to the existing probability model, which does not depend on the usage context of the word. Formally, we instantiate the semantic unit abstraction as follows. 
+
+Definition 8. (Instantiation of Semantic Unit Abstraction) Assume that 𝑔 𝜏 maps a word 𝑤 to a set of tag-occurrence pairs {( 𝜏 𝑗 , 𝑘 𝑗 )} . Given a sub-word 𝑤 in a parameter/API name 𝑠 , 𝑤 ∈ 𝛼 𝜏 (𝑠 ) if and only if (NOUN , 𝑘 ∗) ∈ 𝑔 𝜏 (𝑤 ) and 𝑘 ∗ is the largest occurrence in 𝑔 𝜏 (𝑤 ).
+
+Example 10. Consider the API setIdentifier in Figure 1. After splitting the API name into two sub-words, namely “set ” and “identifier ” , we discover that “set ” is more likely to be a verb than a noun, while “identifier ” is very likely to be a noun. Hence, our instantiated semantic unit abstraction 
+
+𝛼 𝜏 maps setIdentifier to {identifier }, identifying identifier as the semantic unit of the API. 
+
+5.2.2 Instantiating Memory Operation Abstraction. NLP models are particularly effective at dis-tilling program semantics from natural language descriptors, enabling the autonomous inference of API specifications - such as taint specifications [ 22 , 49 , 66 ] and alias specifications [ 69 ] - from unstructured documentation. Human-written API descriptions serve as high-level functional speci-fications, providing valuable semantic information regarding a method’s behavioral intent. To instantiate an effective memory abstraction, we leverage two common programming practices: (1) developers typically summarize API functionality using full sentences or verb-object phrases as semantic descriptions, and (2) the verbs within these descriptions intuitively depict the underlying memory operations performed by the API. However, extracting these operations is hindered by the vocabulary mismatch problem; for example, the verbs “ put ”, “ insert ”, and “ push ” may all denote a single memory insertion primitive. The diverse choices of the verbs describing a specific memory operation would make the inference suffer low recall if we just adopted a grep-like approach based on string matching. Initially, we are inspired by recent progress in the NLP community. Hence, we realize that the latest advances in the LLMs may provide new opportunities for resolving this issue [ 13 , 54 , 56 ]. Specifically, the LLMs have excellent abilities in text understanding, especially under the guidance of a few-shot examples or descriptions of rules. We designed a two-staged prompting solution that infers the memory operation kind, considering the best practices followed by developers in selecting the name for an API method, given the API description. While using LLMs to reason over descriptions helps, they are prone to hallucinations, occasionally misclassifying intent or inventing non-existent operations in linguistic structures. For instance, the description “ Removes 14 Maryam Masoudian, Anshunkang Zhou, Chengpeng Wang, and Charles Zhang As an experienced programmer, you are good at 
+
+choosing API names and writing documentation.                                     
+
+> You are developing four APIs m1, m2, m3, and m4 to
+> implement the following four memory operations :
+> Here are the verbs for each API .
+> Please choose proper verbs for each API. The verbs can be used in
+> API name sand semantic description of the documentation.
+> Separate the verbs by commas and sort them based on preference.
+> -m1: reads the value of a class field and returns it
+> -m2: stores its parameter to a class field
+> -m3: inserts its parameter to a class field
+> -m4: removes a value from a class field
+> -m1: get , retrieve, fetch, obtain, acquire, read, access
+> -m2: set , assign, store, save, initialize, update, record
+> -m3: insert , add, put, store, set, update, record
+> -m4: remove , delete, erase, clear, eliminate, exclude
+
+As an experienced programmer, you are good at understanding 
+
+API semantics according to its semantic description .                       
+
+> Here are four memory operations, namely read, write, insertion, and
+> deletion . Given a semantic description of an API, determine whether the API
+> conducts the read, write, insertion, and deletion based on the following rules:
+> -If the description contains [xxx] or its synonyms, it conducts the read.
+> Please provide the API semantic description.
+> -If the description contains [xxx] or its synonyms, it conducts the write.
+> -If the description contains [xxx] or its synonyms, it conducts the insertion.
+> -If the description contains [xxx] or its synonyms, it conducts the deletion.
+> The semantic description of getParcelableArrayListExtra in the class Intent
+> is “Retrieve extended data from this Intent ”.Please determine its memory
+> operations and answer Yes/No. Here is an example output: No, No, No, No
+> Yes, No, No, No
+
+Select 
+
+Top 1 
+
+(a) Retrieve typical verbs via prompting (b) Instantiate the memory operation abstraction via prompting 
+
+Fig. 5. The prompt templates of two-staged prompting 
+
+the object at the top of this stack and returns that object as the value of this function ”for API method “ pop() ” consists of two simple sentences connected with the connecting word “and ”. The verb “ remove ” implies a modification on the memory while the verb “ return ” shows a memory read operation afterwards. Although the prompt shown in Fig. 5 requests LLM to choose all the relevant semantic descriptions, it is possible that it is biased by one part of the complex sentence, not producing the desired output. In this extended version, we propose a more robust solution using embedding models. By mapping API descriptions and formal verb-phrases describing memory primitives into a shared high-dimensional vector space, we can perform semantic similarity comparison. This determin-istic approach resolves vocabulary variance while providing a grounded safeguard against the hallucinations inherent in purely generative models. 
+
+Memory Abstraction with LLMs: To instantiate the memory operation abstraction, we propose two-stage prompting, of which the prompt template is shown in Figure 5. 
+
+• First, we design the prompt in Figure 5 (a) to retrieve the verbs describing each memory operation and enforce the LLMs sort them based on the preference. Although the verb lists may overlap, the top-1 verbs are representative enough to distinguish different memory operations. 
+
+• Second, we select the top-1 verbs recommended in the first stage and then construct the prompt describing the rules for the memory operation abstraction, which is shown in Figure 5(b). Finally, we obtain an LLM response containing four “Yes”/“No” separated by commas. It is worth noting that we identify memory operation kinds via a two-stage prompting instead of a one-stage prompting. If we manually specify the typical verbs describing memory operations, the second prompt may rely on our manual setting, which demands expert knowledge. If we do not offer typical words as hints, the result is not as interpretable as the current one. Our design actually utilizes the ability of LLMs to predict method names for coding tasks, self-promoting the memory operation identification with generated typical verbs. Note that the first stage is only conducted once. The typical verbs are shared when analyzing library APIs. Hence, the extra cost introduced by the first stage is negligible. Based on the above prompting process, we can obtain an instantiation of the memory operation abstraction, which is formally formulated as follows. 
+
+Definition 9. (Instantiation of Memory Operation Abstraction) 𝑔 𝑜 is the function induced by the LLM via two-staged prompting in Figure 5. Then the memory operation abstraction 𝛼 𝑜 satisfies that op ∈ 𝛼 𝑜 (𝑠 ) if and only if the corresponding answer of op in 𝑔 𝑜 (𝑠 ) is “Yes”, where op ∈ 𝑀 .15 
+
+Example 11. In Figure 5(b), the output of the LLM is “Yes, No, No, No ” , indicating that In-tent.getStringArrayListExtra only conducts the memory read. Hence, we have 𝛼 𝑜 (𝑠 4) = {R}, where 
+
+𝑠 4 is the semantic description of the API Intent.getStringArrayListExtra . Similarly, for the API 
+
+Intent.normalizeMineType , the verb “normalize ” in its semantic description 𝑠 5 is not the synonym of four typical verbs, so 𝛼 𝑜 (𝑠 5) = ∅, indicating that it does not contribute to any load-store match. 
+
+Memory Abstraction with Embedding Models: By representing both API descriptions and memory operation descriptions as vectors, we can quantify their semantic similarity and identify the most likely memory behaviors (e.g., read, write, insert, or remove operations) without relying on rigid keyword matching. A semantic description 𝑠 is an informal description of an API method’s functionality through a set of sentences. To reliably infer the memory operation from a semantic de-scription, it is essential to consider the overall semantics of all the sentences. However, interpreting the connection between the sentences when they are not simple is not straightforward. A sentence can have three different structures according to linguistic resources [ 8 ] shown in Figure 6. A simple sentence is only an independent clause consisting of a verb phrase and a subject. A compound sentence consists of two or more independent clauses joined by a coordinating conjunction (FANBOYS: For, And, Nor, But, Or, Yet, So) or a semicolon. A complex sentence includes one independent clause with at least one dependent clause (starts with a subordinating conjunction like when, because, or although). While a simple sentence typically implies a direct functional objective, the latter two structures often provide additional context or conditions regarding the API’s behavior. Simple Sentence (S) Verb Phrase (VP) Verb Sets Noun Phrase (NP) an identifier Compound Sentence (S) Independent Clause ( 𝑠𝑒𝑛𝑡 1)VP Remove the object ... Coordinator and Independent Clause ( 𝑠𝑒𝑛𝑡 2)VP Return the object Complex Sentence (S) Main Clause VP Tests Dependent Clause ( 𝑠𝑒𝑛𝑡 dep )Subordinator if Clause NP this stack VP is empty (a) Simple (b) Compound (c) Complex 
+
+Fig. 6. Visual representation of sentence structures: (a) Simple, (b) Compound, and (c) Complex. 
+
+In a compound sentence, coordinating conjunctions link multiple independent clauses, typically representing a sequence or a set of distinct actions performed by the API. In contrast, in a complex sentence, the independent clause generally denotes the primary action, while the dependent clause specifies the conditions, constraints, or consequences. Consequently, we design a solution that identifies the sentence structure of an API description and employs an induction approach to isolate and infer abstract memory operations by focusing exclusively on the described primary action. This process follows three steps: 
+
+• Step 1: Semantic Structural Decomposition. We first analyze the semantic description. If it is either a compound or complex sentence, we decompose it into a set of constituent simple sentences {𝑠𝑒𝑛𝑡 1, . . . , 𝑠𝑒𝑛𝑡 𝑛 }.
+
+• Step 2: Memory Operation Abstraction Inference via Semantic Similarity. For each extracted sentence 𝑠𝑒𝑛𝑡 𝑖 , we determine the most likely abstract memory operation 𝑜𝑝 ∗ 
+
+> 𝑖
+
+∈ 𝑀 
+
+by computing the semantic similarity between its vector representation and the embeddings of our predefined memory operation descriptions. We then select the operation that yields the highest similarity score. 16 Maryam Masoudian, Anshunkang Zhou, Chengpeng Wang, and Charles Zhang 
+
+• Step 3: Memory Operation Abstraction Aggregation. Finally, we aggregate the inferred operations according to the original sentence structure to finalize the set of abstract memory operations 𝑂𝑃 ∗ that characterize the data-flow behavior of the API method. 
+
+Definition 10. Sentence Structure: For a given semantic description 𝑠 , we define a typing function called as T ( 𝑠 ) ∈ { Simple, Compound, Complex } that maps the description to its primary linguistic structure based on the connectivity of its constituent clauses. 
+
+Definition 11. Semantic Structural Decomposition: A semantic description 𝑠 is formally repre-sented as the union of 𝑛 simple sentences {𝑠𝑒𝑛𝑡 1, . . . , 𝑠𝑒𝑛𝑡 𝑛 }, where 𝑛 > 0. Each 𝑠𝑒𝑛𝑡 𝑖 represents a fundamental unit of the API method’s functionality. 
+
+Example 12. The API documentation for the method Stack.pop() describes it as: “ Removes the object at the top of this stack and returns that object as the value of this function .” This description uses a compound sentence structure joined by the conjunction “and.” We decompose this into two simple sentences: 
+
+• 𝑠𝑒𝑛𝑡 1: “ Removes the object at the top of this stack. ”
+
+• 𝑠𝑒𝑛𝑡 2: “ Returns that object as the value of this function. ”
+
+Definition 12. Abstract Memory Operation Descriptions: The abstraction 𝛽 maps each memory operation 𝑜𝑝 ∈ 𝑀 = {𝑅,𝑊 , 𝐼, 𝐷 } to a natural language semantic descriptor 𝑑 ∈ 𝐷𝑒𝑠𝑐 . The mapping is defined as: 
+
+• 𝛽 (𝑅 ): Gets value of something. 
+
+• 𝛽 (𝑊 ): Sets value of something. 
+
+• 𝛽 (𝐼 ): Inserts something into a collection. 
+
+• 𝛽 (𝐷 ): Removes something from a collection. 
+
+Definition 13. Sentence Similarity Function: The similarity function 𝑓 : 𝑆𝑒𝑛𝑡 × 𝐷𝑒𝑠𝑐 → [ 0, 1]
+
+evaluates the semantic alignment between the vector representation of a sentence 𝑠𝑒𝑛𝑡 𝑖 and the vector representation of an operation description 𝛽 (𝑜𝑝 ):
+
+𝑠𝑐𝑜𝑟𝑒 = 𝑓 (𝑠𝑒𝑛𝑡 𝑖 , 𝛽 (𝑜𝑝 )) , 𝑜𝑝 ∈ 𝑀 
+
+For each simple sentence, the underlying memory operation is assumed to be encoded within its verb phrases. We map these linguistic units to the set of operations 𝑀 = {𝐼, 𝐷, 𝑅,𝑊 } by identifying the operation 𝑜𝑝 ∈ 𝑀 whose description 𝛽 (𝑜𝑝 ) most closely resembles the action of the sentence. Formally, for 𝑠𝑒𝑛𝑡 𝑖 , we select 𝑜𝑝 ∗ 
+
+> 𝑖
+
+so that it maximizes the similarity score 𝑓 .
+
+Definition 14. Sentence-level Memory Operation Abstraction: The inferred operation 𝑜𝑝 ∗ 
+
+> 𝑖
+
+for 
+
+𝑠𝑒𝑛𝑡 𝑖 is defined as the operation that maximizes the similarity score: 
+
+𝑜𝑝 ∗ 
+
+> 𝑖
+
+= 𝑎𝑟𝑔 𝑚𝑎𝑥 𝑜𝑝 ∈𝑀 𝑓 (𝑠𝑒𝑛𝑡 𝑖 , 𝛽 (𝑜𝑝 )) 
+
+Once the memory operation abstraction is retrieved for each simple sentence, we attempt to infer the memory operation for the semantic description 𝑠 provided for an API method. 
+
+Example 13. Using a sentence embedding model (e.g., SBERT-MPNet ), we calculate the cosine similarity scores between the simple sentence 𝑠𝑒𝑛𝑡 1 “Removes the object at the top of this stack ”and each of the four memory abstraction descriptions as bellow: 
+
+• 𝑠𝑐𝑜𝑟𝑒 𝑟 = 𝑓 (𝑠𝑒𝑛𝑡 1, 𝛽 (𝑅 )) = 0.31 
+
+• 𝑠𝑐𝑜𝑟𝑒 𝑤 = 𝑓 (𝑠𝑒𝑛𝑡 1, 𝛽 (𝑊 )) = 0.24 
+
+• 𝑠𝑐𝑜𝑟𝑒 𝑖 = 𝑓 (𝑠𝑒𝑛𝑡 1, 𝛽 (𝐼 )) = 0.29 
+
+• 𝑠𝑐𝑜𝑟𝑒 𝑑 = 𝑓 (𝑠𝑒𝑛𝑡 1, 𝛽 (𝐷 )) = 0.59 17 
+
+The optimal operation 𝑜𝑝 ∗ 
+
+> 1
+
+is determined by selecting the abstraction with the highest similarity score: 
+
+𝑜𝑝 ∗ 
+
+> 1
+
+= arg max 𝑘 ∈ { 𝑅,𝑊 ,𝐼,𝐷 } (𝑠𝑐𝑜𝑟𝑒 𝑘 ) = 𝐷 
+
+Definition 15. Instantiation of Memory Abstraction Operation: Let a semantic description 𝑠 be a sentence composed of 𝑛 constituent simple sentences {𝑠𝑒𝑛𝑡 1, . . . , 𝑠𝑒𝑛𝑡 𝑛 }. The Induction Function 
+
+G aggregates the individual operation abstractions 𝑜𝑝 ∗ 
+
+> 𝑖
+
+into a global operation 𝑂𝑃 ∗ based on the sentence structure T ( 𝑠 ) as follows: 
+
+𝑂𝑃 ∗ = G( 𝑠, {𝑜𝑝 ∗ 
+
+> 𝑖
+
+}𝑛 𝑖 =1) =
+
+
+
+{𝑜𝑝 ∗ 
+
+> 1
+
+} if T ( 𝑠 ) = Simple 
+
+Ð𝑛 𝑖 =1 {𝑜𝑝 ∗ 
+
+> 𝑖
+
+} if T ( 𝑠 ) = Compound 
+
+{𝑜𝑝 ∗ 
+
+> independent
+
+} if T ( 𝑠 ) = Complex Based on the sentence structure of this description, we interpret the memory operation differently with the induction function G as stated below: 
+
+• Simple Sentence: For 𝑛 = 1, the global operation is directly mapped from the single con-stituent sentence. 
+
+• Compound Sentence: The global operation is the union of operations from all clauses, representing a sequence or concurrent set of actions. 
+
+• Complex Sentence: The global operation is inherited exclusively from the independent clause, which identifies the primary functional intent, while dependent clauses (providing conditions or constraints) are disregarded. By applying G, we transform unstructured natural language into a structured set of abstract memory operations that can be directly mapped to the nodes of the API value graph. Notably, our intuition of the label abstraction upon the API value graph is applicable for general libraries in real-world production. Typically, the developers of libraries are often in well-organized communities and cooperatives, following good naming conventions and using proper verbs in semantic descriptions. That is, they are unlikely to use different nouns to indicate the objects with the same usage intention or describe memory operations conducted by the APIs with wrong verbs. Their good development habits permit us to correctly interpret the informal semantic properties of library APIs with the NLP models, which can yield satisfactory precision and recall in the wild. Our evaluation also demonstrates the effectiveness of the label abstraction upon benchmarks used in existing studies [ 6 , 9 , 29 ]. Furthermore, such well-structured natural language descriptions, including documentation and comments, have been utilized in various software engineering tasks, such as API name recommendation [ 1 , 19 , 73 , 76 ], API misuse detection [ 60 , 84 ]and unit test generation [ 11 ]. These approaches, which share similar assumptions about natural language descriptions as ours, have demonstrated their practical impacts in understanding code semantics and benefiting downstream clients. We will provide a detailed discussion of these approaches in § 8. 
+
+5.3 Neurosymbolic Optimization 
+
+As shown in § 5.2, our two label abstractions are achieved with different overheads. Specifically, the semantic unit abstraction only relies on the tagging model that can be applied efficiently. For the memory operation abstraction, we utilize embedding models—a significant optimization over the full LLM inference used in previous iterations—as they offer a better balance between semantic accuracy and computational cost. To achieve high efficiency, we propose a solving technique, named neurosymbolic optimization , for the optimization problem defined in Definition 7. For each API pair, we first check the satisfiability of degree constraint 𝜙 𝑑 and the validity constraint 𝜙 𝑣 (Lines 2–5). If both of them are satisfied, we apply the tagging model to derive 18 Maryam Masoudian, Anshunkang Zhou, Chengpeng Wang, and Charles Zhang 
+
+the semantic unit constraint 𝜙 𝑠 (Line 6) and examine the satisfiability of the conjunction of the three constraints (Line 7). If it is satisfiable, we invoke the embedding models to achieve the memory operation abstraction, and derive the memory operation constraint (Line 9). Based on OMT solving [ 10 ], we select the maximal number of edges connecting the API values (Line 10) and append them to the set 𝐸 ∗ (Line 11), which is returned as the solution to the optimization problem.                                                      
+
+> Algorithm 2: Neurosymbolic optimization
+> Input: P: An optimization problem;
+> Output: 𝐸 ∗: The optimal solution;
+> 1foreach (𝑐, 𝑚 1),(𝑐, 𝑚 2)do
+> 2𝜙 𝑑 ←deriveDegreeConstraints (P) ;
+> 3𝜙 𝑣 ←deriveValidityConstraints (P) ;
+> 4if SMTSolve (𝜙 𝑑 ∧𝜙 𝑣 )= UNSAT then
+> 5continue ;
+> 6𝜙 𝑠 ←deriveSUConstraints (P) ;
+> 7if SMTSolve (𝜙 𝑑 ∧𝜙 𝑣 ∧𝜙 𝑠 )= UNSAT then
+> 8continue ;
+> 9𝜙 𝑜 ←deriveMOConstraints (P) ;
+> 10 𝐸 ′←Solve (obj (P) , 𝜙 𝑑 ∧𝜙 𝑣 ∧𝜙 𝑠 ∧𝜙 0);
+> 11 𝐸 ∗←𝐸 ∗∪𝐸 ′;
+> 12 return 𝐸 ∗;
+
+Notably, the degree constraint and validity constraint do not depend on any NLP models and are instantiated symbolically , while the se-mantic unit constraint and memory operation constraint rely on the outputs of the tagging model and the embedding models, respectively, being instantiated in a neural manner. By de-coupling the symbolic constraints from neural ones , DAInfer+ applies NLP models with a lazy strategy. Note that in our previous attempt, LLM inference consumed much more time than SMT solving [ 69 ]. Our new design with embedding models can significantly reduce the time over-head and the hardware cost. 
+
+Example 14. Consider the APIs of Intent in Fig-ure 1(a). When processing the APIs Intent.fillIn 
+
+and Intent.getIdentifier , the validity constraint is not satisfied as there are no type-consistent parameters or return values. Hence, we do not apply the tagging model or the embedding model. For the APIs Intent.setIdentifier and Intent.normalizeMimeType , we find that their parameters and return values are not semantic-unit consistent, so we do not invoke the embedding model with their semantic descriptions. When we designed the label abstraction instantiation, we also considered directly prompting LLMs to validate semantic unit consistency. However, pairwise examining the names of an API and its parameters introduces a large number of LLM inferences, which increases time and token costs. We add more discussions on the possibility of utilizing LLMs to improve DAInfer+ in this task in § 7.6. 
+
+5.4 Summary 
+
+DAInfer+ is the first trial of inferring API specifications from documentation. It demonstrates the promising potential of utilizing new advances in the community of natural language processing, especially embedding models, to solve traditional static analysis problems. Similar to traditional pointer analyses upon source code, such as Andersen-style pointer analysis [ 3 ], DAInfer+ estab-lishes a constraint system over library documentation to pose restrictions upon pointer facts. To precisely understand the natural language, it utilizes the NLP models as documentation interpreters to abstract informal semantic information, which supports instantiating an optimization problem for the specification inference. Our insight into utilizing NLP models for documentation interpretation can be generalized in other tasks, such as program synthesis [80] and test case generation [52]. 
+
+6 IMPLEMENTATION 
+
+We implement the approach DAInfer+ as a prototype and release the source code online [ 25 ]. Specifically, we implement the documentation parser by using the BeautifulSoup Python package. For each documentation page describing the API semantics, we can extract four kinds of information, 19 
+
+including class hierarchy relations, API type information, naming information, and API semantic descriptions. Since library documentation pages almost have a uniform format, we do not have to make major changes to the implementation of the parser to adapt to libraries. To instantiate the semantic unit abstraction, we utilize the conditional frequency distributions tool with the Brown Corpus provided by the Natural Language Toolkit [ 53 ]. This allows us to determine whether a word is most likely to be a noun. Finally, we leverage an advanced NLP library called spaCy 
+
+[ 38 ] to construct the dependency trees, enabling the extraction of clausal structures from simple, compound, and complex sentences. We utilize the conditional frequency distributions tool with the Brown Corpus provided by the Natural Language Toolkit [ 53 ] to determine whether a word is most likely to be a noun. Finally, we leverage an advanced NLP library called spaCy [38 ] to construct the dependency trees, enabling the extraction of clausal structures from simple, compound, and complex sentences. To instantiate the memory operation abstraction as in our previous research using LLMs [ 69 ], we adopt the gpt-3.5-turbo model with the chat completions API to interpret the API semantic descriptions [ 55 ]. Specifically, we invoke the ChatCompletion.create interface to feed the constructed prompts to the LLM and fetch its response. In our implementation, we set the temperatures for the two stages of prompting to 0.7. To extract memory operation abstractions using embedding models, we employed the pre-trained models from the Sentence-BERT (SBERT)[ 59 ] and E5 [ 71 ] frameworks. SBERT [ 59 ] is a modification of the BERT [ 28 ] architecture that uses Siamese and triplet network structures to generate semanti-cally meaningful sentence embeddings. The fixed-size vectors in SBERT allow for highly efficient comparison. As a retrieval-first architecture, E5 [ 71 ] excels at resolving asymmetric semantic simi-larity. This capability stems from its extensive pre-training on large-scale web corpora. We used these models to compute the embedding vectors for each simple sentence. Independently, we also computed the vectors for the four memory operation descriptions. The semantic correspondence between a sentence and each operation was quantified using cosine similarity. This approach allows us to align the linguistic functionality of the API methods with formal memory operations based on their shared semantic space. We implement the neurosymbolic optimization based on Z3 solver [ 10 , 26 ]. For any pair of APIs, we introduce (𝑛 1 + 1) · ( 𝑛 2 + 1) boolean variables to indicate whether the two API values are aliased, where 𝑛 1 and 𝑛 2 are the numbers of the API parameters. We directly encode the degree constraint and validity constraint symbolically, while the semantic unit constraint and memory operation constraint are constructed and solved on demand, relying on the outputs of our desired NLP models. We count the number of boolean variables assigned to True and set them as the objective function. For better performance, we parallelize the invocations of the LLM in eight threads, and introduce the memorization technique to store the tagging result and the result of memory operation abstraction upon each semantic description. If a word or an API semantic description has been processed before, we directly reuse the previous result. 
+
+7 EVALUATION 
+
+We evaluate DAInfer+ by investigating the following research questions: 
+
+• RQ1: How accurately and efficiently does DAInfer+ generate data-flow and aliasing specifica-tions? 
+
+• RQ2: How does DAInfer+ benefit library-aware static analysis clients? 
+
+• RQ3: How does DAInfer+ compare against other approaches? 20 Maryam Masoudian, Anshunkang Zhou, Chengpeng Wang, and Charles Zhang 
+
+> Fig. 7. The zero and few-shot prompt templates for inferring data-flow specifications for an API method.
+
+7.1 Experimental Setup 
+
+All the experiments in DAInfer [69 ] are performed on a 64-bit machine with 40 Intel(R) Xeon(R) CPU E5-2698 v4 @ 2.20 GHz and 512 GB of physical memory. For DAInfer+ , we used a machine with the same CPU setup, 251 GB of physical memory, and an NVIDIA RTX 3090 GPU for hosting LLMs and embedding models. We invoke the Z3 SMT solver with its default options. 
+
+Subjects. To show the superiority of DAInfer+ in producing alias specifications, we evaluate 
+
+Atlas [ 9], USpec [29 ], and DAInfer+ upon the same set of Java classes. Specifically, the Java classes are collected from: (1) The classes of which the specifications are manually specified in 
+
+FlowDroid [ 6 ]; (2) The classes appearing in the inference results of USpec [29 ]. Since the dataset of Atlas [9 ] is not publicly available, we cannot conduct experiments on it. In total, our benchmark contains 167 Java classes offering 8,342 APIs, which range from general-purpose libraries, including Android framework and Java Collections Framework, to specific-usage libraries, such as Gson .Without ambiguity, we call the first and the second kinds of classes from FlowDroid benchmark and USpec benchmark, respectively. To evaluate the effectiveness of our memory operation abstraction module in inferring data-flow facts for constructing specifications, we evaluated DAInfer+ across a diverse suite of state-of-the-art LLMs trained on both general-purpose and programming-specific datasets. Our selection includes deepseek-V2 [ 27 ], gpt-4o-mini [56 ], qwen2.5-coder [39 ], and deepseek-coder-V2 [ 36 ]. We employed the zero-shot and few-shot prompting strategies (illustrated in Figure 7) to task these models with inferring data-flow specifications. For each API method, the models were provided with the method signature, its containing class, and the corresponding documentation. To facilitate a rigorous comparison, we leveraged the same 167 Java classes originally specified in the FlowDroid framework, comparing the specifications generated by our tool against those generated by the LLMs. 
+
+7.2 Data-Flow Specification Inference 
+
+Effectiveness. To assess the effectiveness of our approach, we use the manually curated dataset of data-flow specifications from FlowDroid [ 6 ] as our ground truth. Due to the extensive number 21 
+
+of specifications in the original dataset, we randomly selected 141 classes comprising 1,094 API methods. Among these, 1,064 methods provide semantic descriptions within their documentation. After excluding 19 deprecated methods, our final evaluation set consisted of 1,045 methods. To ensure the accuracy of the ground truth and address potential flaws in the original collection, two researchers independently re-labeled the dataset by analyzing the source code and documentation of each API method to verify the corresponding data-flow specifications. As demonstrated in Table 1, DAInfer+ achieves its maximum effectiveness when utilizing embedding models rather than LLMs. General-purpose LLMs, such as gpt-4o-mini and deepseek-v2 , achieve relatively high precision but lower overall recall, even with few-shot prompting. This indicates a tendency toward under-approximation; these models are often too conserva-tive, failing to identify valid data-flows described in the documentation. However, when they do predict flows, they are still prone to spurious over-approximation in specific cases. While few-shot prompting techniques improve their recall, these models remain prone to generating spurious flows. For instance, “ gpt-4o-mini ” infers a data-flow from the first parameter of the API method android.os.Bundle.getStringArrayList(string) to “ this ” (the “ Bundle ” object). In addition, code-specialized LLMs achieve higher precision ( > 80% ), but they still struggle to reach high recall. For example, qwen2.5-coder incorrectly infers a data-flow from the first parameter of an-droid.content.Intent.getStringArrayExtra(string) to “ this ” (the “ Intent ” object). The lower false positive rate in code-specialized models is due to their training on structural code patterns; however, they remain limited by under-approximation. By being overly conservative in predicting flows, these models frequently fail to identify valid data-flows, thereby increasing their false negative rates. Embedding models demonstrate superior performance in both recall and precision compared to LLMs. As shown in Table 1, these models consistently achieve higher recall and precision scores exceeding 82% and 88%, respectively, indicating higher reliability for specialized data-flow specification inference. This success is primarily due to the semantic alignment between the verbs used in API method descriptions and the definitions of memory operations. The heatmaps in Figure 8 prove this claim by illustrating the similarity scores between various verbs found in API documentation with our memory operation descriptions using two popular models of SBERT .Notably, these figures reveal that most descriptive verbs align closely with the correct memory operations.                                                      
+
+> Table 1. Accuracy (Acc.), Recall (Rec.), Precision (Pre.), and F1-score for data-flow specification retrieval.
+> Type Model Acc. Rec. Pre. F1-score zero-shot prompting
+> deepseek-v2 23.83 24.69 87.29 0.38 gpt-4o-mini 61.83 72.25 81.09 0.76 qwen2.5-coder 60.49 65.56 87.66 0.75 deepseek-coder-v2 47.51 54.74 78.23 0.64
+> few-shot prompting
+> deepseek-v2 49.26 64.95 67.09 0.66 gpt-4o-mini 69.30 76.46 87.09 0.81 qwen2.5-coder 72.05 75.08 94.68 0.83 deepseek-coder-v2 50.74 58.05 80.11 0.67
+> embedding models
+> SBERT-Mini 74.93 82.36 87.25 0.86
+> SBERT-MPNet 75.6 83.9 89.42 0.86
+> E5-Base 73.32 83.95 85.37 0.85
+> E5-Large 76.34 84.69 87.5 0.87
+
+Efficiency. To evaluate the efficiency of embedding models relative to LLMs, we utilize two primary metrics: (1) inference time, and (2) cost. As indicated in Table 2, the selected LLMs require 22 Maryam Masoudian, Anshunkang Zhou, Chengpeng Wang, and Charles Zhang     
+
+> (a) SBERT-MPNet embedding model.
+> (b) SBERT-Mini embedding model. Fig. 8. Cosine similarity scores for various verbs in API method descriptions with verbs used in our designated memory operation descriptions with different models of SBERT.
+
+significantly longer durations to infer data-flow specifications compared to their embedding coun-terparts. Even in the best-case scenario, where deepseek-coder-v2 achieves its peak performance, its analysis time remains orders of magnitude higher than that of the embedding models. Furthermore, the throughput of embedding models (e.g., SBERT-MPNet and E5-base ) significantly exceeds that of LLMs like qwen2.5-coder in few-shot mode. Here, throughput is defined as the volume of data processed per second (measured in tokens for LLMs and vectors for embedding models). On average, the LLMs processed 8,389 prompts to achieve inference, whereas the embedding models extracted and encoded 1,147 simple sentences. This empirical evidence confirms that for high-volume data-flow inference, the “ Encoder-only ” architecture provides a superior efficiency-to-performance ratio compared to the “ Decoder-only ” autoregressive approach, which is fundamentally bottlenecked by sequential, token-by-token generation. To quantify the total cost, we monitored resource utilization across an array of NVIDIA RTX 3090 GPUs. Our findings reveal a significant disparity in VRAM overhead. Even when utilizing 4-bit quantization to minimize memory requirements, the local LLM suite ( qwen2.5-coder-32B 
+
+and deepSeek-coder-v2 ) requires approximately 20-30 GB of VRAM just to host these models. Comparatively, the embedding models occupy at most 2GB of the memory. Furthermore, we analyzed the operational costs considering the rental of a cloud service with the same setup with our environment. In addition, gpt-4o-mini consumed 4M output and 73K input tokens for retrieving 23 
+
+the data-flow specifications of the entire dataset, totaling $2.41 USD. While this API-based approach is economically viable for one-off inferences, the total time required for LLM-based inference is several orders of magnitude higher than our embedding-based approach, which processes the entire dataset in less than a few seconds. Even when utilizing the same hardware environment, the embedding models ( E5 , SBERT ) demonstrate a massive advantage in computational efficiency. 
+
+> Table 2. Comparative analysis of resource intensity between embedding models and LLMs with few-shot prompting.
+
+Model Parameters Throughput Cost Time Cost (Items/sec.) (per 1M items) (sec.) 
+
+deepseek-v2 16B 1.62 $0.11 * 3,358.2 
+
+qwen2.5-coder 32B 2.26 $0.08 * 2,344 
+
+gpt-4o-mini proprietary 5.73 $0 .15 − $0 .6+ 927 
+
+deepseek-coder-v2 7B 2.26 $0.03 * 900 
+
+SBERT-Mini 22M 6966.66 $ 0.0 † 0.15 
+
+SBERT-MPNet 110M 2223.40 $ 0.0 † 0.47 
+
+E5-base 110M 460.35 $0.0 † 2.27 
+
+E5-large 335M 176.55 $0.0 † 5.19    
+
+> *Estimated based on a market rental rate of USD $0.56/hr for equivalent hardware (RTX 3090, 215GB RAM).
+> †Embedding models incur negligible costs on standard hardware and values are rounded to the nearest cent.
+> +Based on OpenAI official API pricing for input/output token blends.
+
+7.3 Alias Specification Inference 
+
+Effectiveness. Although USpec offers the raw data and the source code of Atlas is available, the ground truth used in the two previous studies is not published. Also, the specifications offered by FlowDroid are manually specified by the developers, and thus, may contain several flaws and miss several correct ones. Hence, we have to label the specifications of the benchmarks manually. Meanwhile, investigating all the classes demands tremendous manual effort. Following the recent study [ 29 ], we randomly select 60 classes that offer 2,771 APIs in total. For each API, we examine whether it forms store-load API pairs with other APIs offered by the same class, of which the number can reach 50 on average. To make the manual examination more reliable, we invite five experienced engineers from the industry as volunteers to specify the specifications independently. Specifically, they refer to the specifications specified by the developers of FlowDroid and inferred by existing works (i.e., USpec and Atlas ), and meanwhile, investigate the library documentation and implementation simultaneously. In the end, we merge the specifications specified by the five volunteers and resolve the inconsistent parts following the principle of max voting, eventually obtaining 988 API aliasing specifications as the ground truth. According to our investigation, we find that DAInfer+ achieves high precision and recall upon the experimental subjects. In total, it successfully infers 2,680 API aliasing specifications. For the randomly selected 60 classes, DAInfer [69 ] infers 1,019 API aliasing specifications, 813 of which are correct, achieving a precision of 79.78%. we discover that DAInfer misses specifications, achieving a recall of 82.29%. In our latest study, DAInfer+ achieves 79% precision and 88% recall when using SBERT-MPNet . By systematically decomposing complex descriptions and inferring abstract memory operations based on sentence structure , DAInfer+ effectively filters out non-functional linguistic noise. This structural approach significantly reduces false positives, as it 24 Maryam Masoudian, Anshunkang Zhou, Chengpeng Wang, and Charles Zhang                                 
+
+> Table 3. Efficiency of DAInfer and its ablations. # Input represents vectors for embedding models and prompts for LLMs.
+> Tool # Tagging # Inputs # Tokens Time Cost (sec)
+> DAInfer+ (SBERT-Mini )32,325 3,597 NA 87.86
+> DAInfer+ (SBERT-MPNet )32,325 3,597 NA 88.88
+> DAInfer [69] 32,325 2,950 726,425 892.93
+> DAInfer-Type [69] 32,325 5,164 1,276,254 1,734.63
+> DAInfer-Exhaustive [69] 58,846 8,090 1,994,017 2,844.26
+
+isolates the primary action from the surrounding constraints and conditions that frequently mislead general-purpose LLMs. After examining all the APIs of the selected classes, Interestingly, we collect the specifications where the API names contain “ get ” or “ set ” , and discover that such specifications only take up 33.49% of all the inferred ones. It shows that DAInfer can understand how APIs operate upon the memory even if diverse verbs are used. We also compare our results with the specifications in the FlowDroid and USpec benchmarks. It is shown that DAInfer+ infers 170 out of the total 210 specifications in FlowDroid benchmark and 65 out of the total 82 specifications inferred by 
+
+USpec , achieving 81.0% and 79.3% recall upon the two benchmarks, respectively. The above results show that DAInfer , and DAInfer+ , the latest update of it with embedding models, can effectively infer the API aliasing specifications from documentation. 
+
+Efficiency. We quantify the efficiency of DAInfer and DAInfer+ with four metrics, including the number of times the tagging model is applied, the input count (representing LLM prompts or vector calculations), the token cost, and the time cost. As shown in Table 3. DAInfer [ 69 ]applies the tagging model 32,325 times and interacts with the LLM 2,950 times using 726,425 tokens, and the overall time cost is 892.93 seconds (around 15 minutes). According to the OpenAI billing strategy, we only need to pay 1.09 USD in total. We also conduct the ablation study to demonstrate the benefit of the neurosymbolic optimization algorithm. Specifically, the ablation 
+
+DAInfer-Exhaustive applies the two NLP models to all the APIs, while the ablation DAInfer-Type 
+
+applies the NLP models to the APIs satisfying the degree constraint and the validity constraint. As shown in Table 3, DAInfer-Type invokes the LLM 5,164 times with 1,276,254 tokens in total and finishes analyzing all subjects in 1,734.63 seconds. Besides, DAInfer-Exhaustive has to apply the tagging models 58,846 times and invoke the LLM 8,090 times using 1,994,017 tokens, of which the whole process finishes in 2,844.26 seconds. The key reason for the differences between the ablations is that the solving steps at Lines 4 and 7 in Algorithm 2 can effectively reduce the number of times the tagging model and the LLM are applied, respectively. Compared to DAInfer-Type 
+
+and DAInfer-Exhaustive , DAInfer achieves the inference with 1.94 × and 3.19 × speed-ups when relying on two-staged prompting with LLMs. By utilizing DAInfer+ with embedding models and an optimized tagging-based inference ap-proach, the specification retrieval process is significantly accelerated. From the original data, we extract a total of 3,597 simple sentences averaging 87.4 seconds. The subsequent memory opera-tion abstraction using embedding models requires at most 2 seconds, specifically 0.48 seconds for 
+
+SBERT-Mini and 1.48 seconds for SBERT-MPNet . Consequently, the overall speed-up is enhanced by 10 .16 × and 10 .04 × for SBERT-Mini and SBERT-MPNet respectively, compared to using DAIn-fer with LLMs. Hence, our neurosymbolic optimization can efficiently support the specification inference. 25 
+
+7.4 Effects on Client Analysis 
+
+Following existing studies [9, 29], we choose alias analysis and taint analysis as two fundamental clients of DAInfer+ to quantify its effects. 
+
+Effect on Alias Analysis. We conduct the field and context-sensitive alias analysis by running a static analyzer Pinpoint [63 , 77 ] upon 15 Java projects in two settings. In the setting Alias-Empty , we provide empty specifications of library APIs, i.e., discarding all the possible alias facts introduced by library API calls. In the setting Alias-Infer , we apply the inferred correct API aliasing specifications to the pointer analysis. For each given pointer, Pinpoint computes its alias facts in a sound manner. We quantify the alias set sizes of the return values of library APIs and compute  
+
+> 𝑠𝑖𝑧𝑒 infer
+> 𝑠𝑖𝑧𝑒 empty
+
+for each library API invocation, where size infer and size empty are the alias set sizes of the return value under the settings Alias-Infer and Alias-Empty , respectively. Figure 9 is the histogram showing the distribution of the ratios of alias set sizes. According to the ratios of alias set sizes, we can discover that the average increase ratio reaches 80.05% with the benefit of our inferred specifications. Except for the intervals (1, 1.2] and (1.2, 1.4], the size increase ratio is larger than 40% as the ratio is larger than 1.4. The proportion of such library API invocations reaches 96.25%. Because our pointer analysis is sound and we investigate the same set of return values of library API calls, the increases in the alias set sizes demonstrate that DAInfer+ promotes the alias analysis in discovering more alias facts in the applications using libraries. Distribution of Ratio of Alias Set Size 
+
+> Proportion
+> Fig. 9. The results of pointer analysis
+
+Effect on Taint Analysis. We choose three differ-ent settings of specifications for FlowDroid to con-duct the taint analysis, namely Taint-Empty , Taint-Manual , and Taint-Infer . Here, Taint-Empty and 
+
+Taint-Infer are similar to the two settings in the pointer analysis, and the sources and sinks are spec-ified based on the default taint specification offered by FlowDroid . Under the setting Taint-Manual , we apply the manual specifications provided by Flow-Droid directly. We select 23 popular Android appli-cations in F-Droid [ 30 ], which cover different pro-gram domains, including navigation, security, and messaging applications. Application ID 
+
+> # Taint  Flows
+> Fig. 10. The results of taint analysis
+
+Figure 10 shows the number of taint flows dis-covered under the three settings. Specifically, Flow-Droid discovers 225 taint flows under Taint-Empty ,while it finds 304 taint flows under Taint-Manual .Notably, 79 out of 304 taint flows are induced by the aliasing relations among API parameters and returns. When we run FlowDroid under Taint-Infer , it discovers 310 taint flows, 85 of which are discovered based on the correct API aliasing speci-fications inferred by DAInfer+ . There are six taint flows in three apps not discovered by FlowDroid 
+
+under the setting Taint-Infer due to false negatives of our inference algorithm. However, 12 taint flows discovered under Taint-Infer are not discovered under Taint-Manual . The results demonstrate that DAInfer+ promotes the taint analysis in discovering more taint flows. We do not seek the confirmations of taint flows, which may depend on the developers’ subjective intentions and the choices of taint specifications. However, the ability to discover more taint flows has shown the 26 Maryam Masoudian, Anshunkang Zhou, Chengpeng Wang, and Charles Zhang 
+
+practical impact of DAInfer+ in detecting potential taint-style vulnerabilities. This evaluation principle is also applied in many existing studies [9, 29, 64]. 
+
+7.5 Comparison with Existing Techniques 
+
+We initially compare DAInfer+ with StubDroid [ 5 ] on constructing the data-flow specifications. Next, we compare DAInfer+ with the two most recent studies on API aliasing specification inference, i.e., Atlas [ 9 ] and USpec [ 29 ]. Besides, we construct another baseline, LLM-Alias , which feeds the documentation to ChatGPT and generates API aliasing specifications via in-context learning. 
+
+Comparison with StubDroid. To evaluate the semantic richness of DAInfer+ , we compare the automated generation of data-flow specifications of StubDroid [5] with our solution. While 
+
+StubDroid produces generic, method-level summary rules, DAInfer+ infers high-level memory primitives—specifically write , read , insert , and remove —for each API method. By translating these primitives into data-flow gen and kill operations, DAInfer+ provides the semantic context necessary for precision in collection-heavy applications. Specifically, while StubDroid often leads to over-approximation by failing to identify when a taint should be invalidated, DAInfer+ utilizes the 
+
+remove primitive to trigger strong updates (kills). This allows the engine to remove specific data-flow facts from the analysis state, thereby significantly reducing false positives. In addition, StubDroid 
+
+fails to extract the data-flow specifications for abstract interfaces such as java.util.List . Hence, our assessments reveal that StubDroid achieves 46% recall and 51% precision in extracting the data-flow specifications for the selected classes we used earlier in section 7.2. Comparatively, DAInfer+ with 
+
+SBERT-MPNet achieves the recall of 82% and the precision of 88%. Furthermore, StubDroid require an average of 394.84 seconds to generate a specification for a single class (ranging from minimum of 0.36 to maximum of 10,242.88 seconds). Conversely, DAInfer+ infers these specifications from documentation in just a few seconds, as shown in Table 2 Unlike StubDroid , which relies on heavyweight bytecode analysis to discover flows, DAInfer+ infers memory operation abstractions, and then translates them directly into FlowDroid -compatible XML summaries in an efficient manner. 
+
+Comparison with Atlas . We run Atlas [7] upon the total 167 classes and finish the inference in 74.48 minutes. Note that the output of Atlas is the library implementation derived from unit test executions. Automatically converting it into the specifications defined in Definition 2 requires static analysis techniques. Hence, we analyze the library implementation generated by Atlas 
+
+with a field-sensitive pointer analysis, which matches the store-load operations upon the same fields, and eventually convert the output of Atlas to the API aliasing specifications defined in Definition 2. For the classes labeled with ground truth in § 7.3, Atlas infers 546 specifications and 454 correct ones, achieving 83.15% precision and 45.95% recall. After investigating the results, we find that Atlas fails to generate the specifications for 111 classes in the experimental subjects, such as android.os.Intent and android.os.Configuration . The root cause is that Atlas fails to infer the specifications when the creation of library function parameters is non-trivial, or the unit test execution demands a specific environment, such as an Android emulator. In contrast, DAInfer+ can derive the API aliasing specifications for such classes. Also, the aliasing specifications generated by DAInfer+ only depict the potential aliasing relations between parameters and return values, while they all miss the preconditions under which such aliasing relations hold. For example, Atlas 
+
+only obtains that the return value of HashMap.get can be aliased with the second parameter of 
+
+HashMap.put , missing the precondition over their first parameter. The restrictive templates used in the inference introduce the imprecision, which is also reported in the prior study [29]. 
+
+Comparison with USpec . USpec is not open-sourced due to its commercial use [ 29 ]. To make the comparison, we asked the authors for the raw data of their evaluation. According to their results, 27 
+
+USpecs successfully obtains 124 API aliasing specifications upon 62 classes. Unfortunately, the precision of USpec only reaches 66.1% (82/124). For instance, USpec generates the incorrect aliasing specification (HashMap.put , HashMap.get , {( 0, 1)} , 0) for the class java.util.HashMap . The root cause is that USpec infers possible aliasing relations according to the usage events, while the keys and values of HashMap objects may have the same type, making the inference algorithm unable to distinguish them. However, DAInfer+ successfully infers the specification via neurosymbolic optimization. We also quantify USpec ’s recall based on our labeled specifications in § 7.3. It is shown that USpec misses 370 API aliasing specifications. The recall of inferring API aliasing specifications is only 18.14%. The root cause of its low recall is that USpec can only generate the aliasing specifications for the APIs used in the applications’ code. 
+
+Comparison with LLM-Alias . We compare DAInfer+ with LLM-Alias , which directly queries 
+
+ChatGPT with the documentation. The response ChatGPT generates is a natural language sentence with an API aliasing specification. Due to laborious effort, we only examine the inference results for 60 classes that we randomly selected in § 7.3. The results show that LLM-Alias generates 801 API aliasing specifications for examined classes, only 113 of which are correct, yielding a precision of 14.11% and a recall of 11.44%. Among 688 incorrect specifications, 60 specifications indicate the correct aliasing relations between parameters and return values, while they do not pose any restrictions on API parameters as the preconditions. The results show that vanilla LLMs without special designs have poor performance in understanding the concept of the aliasing relation. In contrast, DAInfer+ achieves quite satisfactory precision and recall, which benefits from our insightful problem reduction and efficient neurosymbolic optimization. Application ID    
+
+> # Newly  Discovered  Taint  Flows
+> Fig. 11. The results of taint analysis assisted with At-las ,USpec , and LLM-Alias
+
+Comparison upon Client Analyses. We also compare the effects of baselines on client analyses with the same settings as the ones in § 7.4. Specifically, Atlas introduces a 43.26% increase in the alias set sizes on aver-age, which is lower than the one introduced by DAInfer+ . USpec and LLM-Alias intro-duce 14.52% and 12.17% increase in the alias set sizes on average, respectively. Although 
+
+LLM-Alias infers slightly more API aliasing specifications than USpec , the specifications inferred by USpec contribute more to the aliasing facts, which might be caused by more frequent usage of the involved library APIs in the application code. DAInfer+ can introduce the highest average increase ratio in alias sets among different approaches. Similarly, we find that Atlas , USpec , and LLM-Alias discover fewer taint flows than DAInfer , which is shown by Figure 11. Specifically, DAInfer newly discovers 85 taint flows, while Atlas , USpec , and LLM-Alias detect 60, 29, and 35 taint flows in total, respectively. Therefore, DAInfer+ has overwhelming superiority over existing techniques in assisting client analyses, including alias analysis and taint analysis. 
+
+7.6 Limitations and Future Work 
+
+Our approach has several drawbacks that demand further improvements. First, DAInfer+ can not determine whether an API creates a new object. When the developers create any new ob-jects, our inferred specifications can only depict data-flow facts instead of aliasing relations. For example, DAInfer+ infers an API aliasing specification for java.util.Map that the return value of Map.computeIfPresent can be aliased with the second parameter of Map.put when their first 28 Maryam Masoudian, Anshunkang Zhou, Chengpeng Wang, and Charles Zhang 
+
+parameters are aliased. This is a wrong specification as computeIfPresent returns null value or a newly computed value instead of any existing values stored in the fields. Second, the semantic unit consistency requires two strings to be equal. In our evaluation, however, we notice that sev-eral semantic units are not the same strings while they indicate the same concept in several rare cases. For example, the first parameters of SparseArray.set and SparseArray.valueAt in the class 
+
+android.util.SparseArray are key and index , respectively. The two different strings are actually the indicators of the same semantic concept. Hence, DAInfer+ can not infer the correct specification for the two APIs. Although there are several traditional ways to extract synonyms for natural lan-guages, such as WordNet [ 51 ] and word embedding [ 81 ], they may fail to identify similar semantic units in programming languages, for example, the similarity between key and index is measured to be even smaller than 0.1 by WordNet. Even if we utilize several code models, such as code2vec [ 2 ]and CodeBERT [ 33 ], they can still lead a false negative/positive when the similarity of the names in a correct/wrong specification is below/above the preset threshold. Furthermore, while relying on embedding models to infer memory operations and data-flow specifications enhances efficiency, these models are susceptible to false positives when API docu-mentation is incomplete. For instance, developers often use cross-references—such as " Please use writeBundle(Bundle) instead ”"—rather than providing redundant descriptions for similar methods or omitting return descriptions for state-updating API methods like java.io.IntBuffer.put(string) . To mitigate this, we refined the description analysis by manually augmenting missing contextual in-formation. Additionally, certain verbs such as “ copy ” initially yielded low similarity scores for their corresponding memory operations. In addition, the dependency parser occasionally struggled with complex structures. Specifically, it erroneously classified “ Set the point’s x and also the sentence y coordinates ” as a compound sentence, leading to misleading results. To further improve DAInfer+ , we can explore several directions in the future. First, we can leverage domain-specific LLMs or embedding models for code, which allow local deployment, to validate the semantic unit consistency. If the inference of general-purpose LLMs, such as GPT-4, becomes much more efficient and cheaper in the future, we can also prompt them directly without introducing significant overhead. The above models can hopefully support us in identifying the semantic units indicating the same concept, even if they are not the same string. Second, DAInfer+ 
+
+requires a manually specified parser for documentation. Since LLM latency remains a factor, developing more robust dependency parsers tailored for technical documentation will be critical for accurate verb identification and relationship mapping. Third, domain-specific fine-tuning of the embedding models would enhance the identification of memory-manipulation verbs, bridging the semantic gap between general-purpose language and API specifications. These general models are trained on broad corpora like Wikipedia , causing a semantic gap when interpreting specialized API documentation. For instance, a general model may not distinguish the subtle operational difference between “ Transmitting an array ” and ‘ Copying an array ” yet these imply fundamentally different data-flow facts. For instance, pre-trained models like CodeBERT [33 ] offer bimodal understanding of code and text; however, they often struggle to distinguish specific memory actions in a zero-shot setting. Targeted training on technical corpora would allow embedding models to capture the precise memory semantics that general-purpose embeddings currently fail to resolve. 
+
+8 RELATED WORK 
+
+Library Specification Inference. The inference of library function specifications has always been a central topic in program analysis. Typically, IFDS/IDE-based approaches summarize the data-flow facts of libraries as their semantic abstractions [ 5, 61 ], which can be reused across various clients of data-flow analysis. Established upon a symbolic memory model, shape analysis computes the memory state for each statement of a library function as invariants, and derives the 29 
+
+preconditions/postconditions of each library function as its specification [ 15 , 42 , 62 ]. While the inferred specification accurately depicts the semantics of the library function, the analysis suffers from scalability problems, especially in the presence of complex program structures [16]. To mitigate these limitations, mining-based approaches leverage the program facts derived from applications to infer specific forms of specifications, e.g., points-to [ 9 ], aliasing [ 29 ], taint [ 20 ], and commutativity specifications [ 35 ], which support specific static analysis clients, e.g., taint analysis [ 6] and Andersen-style pointer analysis [ 32 ]. Another mining-based approach AutoISES 
+
+automatically infers security specifications from high-quality application code and then guides the detection of security policy violations [ 65 ]. Recent advancements, such as the CSS framework 
+
+[ 46 ], extend these capabilities by generating caller-sensitive specifications for native code via iterative static analysis. Other efforts, including ModelGen [ 23 ] and Spectre [ 47 ], utilize dynamic analysis to identify data-flow and alias specifications at runtime; however, these techniques remain inherently constrained by input dependency and incomplete code coverage. Our work concentrates on the data-flow and aliasing specification inference, which shares the same motivation as the existing studies [ 9 , 29 ] while introducing a novel paradigm. Rather than relying on elusive code artifacts or limited execution traces, we leverage natural language documentation to unlock broader applicability. By employing embedding models, our method captures the latent data-flow intent within API descriptions. By synthesizing these semantic insights with named entity and type information, our framework employs optimization techniques to retrieve precise alias specifications independently of code analysis, thereby bypassing the visibility and scalability issues that hinder the state-of-the-art static and dynamic analyzers. 
+
+Natural Language Specification Understanding. Natural language specifications, such as comments and documentation, are widely utilized in various software engineering tasks, including test case generation [ 11 , 52 , 82 ], bug detection [ 60 , 66 , 82 , 84 ], and code search [ 57 , 76 ]. Typically, 
+
+C2S [82 ] employs semantic parsing to derive formal specifications from comments, which aids in test case generation and taint bug detection. Similarly, Jdoctor [ 11 ] and Swami [ 52 ] translate natural language specifications to formal ones to facilitate the generation of test cases covering exceptional behavior and boundary conditions, while they only focus on specific patterns, such as exceptions and numeric relations. In the realm of specification mining, SuSi [ 58 ] introduced supervised machine learning to classify sources and sinks for the information flow analysis. However, it relies heavily on manually engineered features, including both syntactic and semantic patterns in the API methods and their descriptions. Doc2Spec utilizes keywords, such as nouns and verbs indicating resource names and actions, respectively, to infer the resource specifications, which promote the resource misuse detection [ 84 ]. PreMA [ 76 ] extends this context to verb phrases to enhance the precision of detection of similar APIs. More closely related to our work, DocFlow [ 66 ] uses contrastive learning to map resource names to sensitive categories (sources or sinks), and Fluffy [ 22 ] leverages a pre-trained embedding model (VarCLR [ 18 ]) to validate the taint flows based on API naming conventions. Despite this progress, these solutions typically require intensive supervised training and suffer from high false-positive rates in the absence of large, annotated datasets [41]. Although DAInfer+ shares similarities with existing works [ 57 , 84 ] in terms of technical choices, such as named-entity recognition [ 21 ], our effort explores a new paradigm of deriving data-flow facts and aliasing relations from documentation, which can be generalized for other static analysis problems. A key innovation of our framework is employing a zero-shot embedding model to infer data-flow relations. Unlike traditional specifications mining solutions [ 22 , 58 , 66 ], our approach eliminates the need for large-scale manual labeling, offering a lightweight, scalable solution that remains effective in dynamic environments. Furthermore, by utilizing specialized embedding models 30 Maryam Masoudian, Anshunkang Zhou, Chengpeng Wang, and Charles Zhang 
+
+rather than generative LLMs, we reduce the computational overhead while maintaining robust semantic inference. 
+
+Large Language Models. The Large Language Models (LLMs) [ 54 , 56 ], based on the decoder-only transformer architecture [ 68 ], are typically pre-trained on massive text corpora containing trillions of tokens. They exhibit exceptional zero/few-shot performance in a wide range of highly specific downstream tasks, including complex text generation [ 17 ], interactive decision making/planning [ 78 ,85 ], and tool utilization [ 79 ]. Among various downstream tasks, reasoning task has traditionally been regarded as a typical challenge for LLMs [ 24 ], which has attracted significant research interests. Specifically, there has been a line of literature exploring the use of LLMs in automated theorem proving within formal logic. Pioneering studies [ 43 , 44 , 75 ] have focused on employing LLMs to generate proofs for theorems expressed in formal logic. Several recent efforts aimed to integrate advanced LLMs that have demonstrated impressive zero/few-shot performance in code completion tasks into formal logic reasoning tasks [ 48 , 74 ]. Inspired by these advancements, our previous research [ 69 ] leveraged LLMs to interpret memory operation kinds, a sub-problem addressed within our current approach. Modern LLMs, particularly those fine-tuned on code such as DeepSeek-Coder [36 ] and Qwen2.5-Coder [39 ], have shown impressive zero-shot reasoning in code completion and formal logic tasks. However, for rigorous static analysis, directly applying generative LLMs presents significant risks of hallucination and computational latency at scale. While LLMs offer powerful reasoning, our framework strategically balances their use with embedding models to optimize for both analytical depth and practical efficiency. 
+
+9 CONCLUSION 
+
+We proposed a new approach DAInfer+ to infer API aliasing specifications from documentation. 
+
+DAInfer+ adopts the tagging and NLP models to interpret informal semantic information in documentation. It reduces the inference problem to an optimization problem that can be efficiently solved by our neurosymbolic optimization algorithm. The inferred specifications are further fed to static analysis clients for analyzing the applications using libraries. Our evaluation demonstrates that DAInfer+ achieves high precision and recall with significant gains in efficiency, particularly when leveraging embedding models for semantic interpretation. Furthermore, the results highlight the practical impact of our approach in enhancing library-aware pointer analysis and taint analysis. By bridging the gap between informal documentation and formal analysis, DAInfer+ provides a robust and scalable solution for understanding library semantics. 
+
+REFERENCES           
+
+> [1] Waseem Akram, Yanjie Jiang, Yuxia Zhang, Haris Ali Khan, and Hui Liu. 2025. LLM-Based Method Name Suggestion with Automatically Generated Context-Rich Prompts. 2, FSE, Article FSE036 (June 2025), 22 pages. https://doi.org/10. 1145/3715753 [2] Uri Alon, Meital Zilberstein, Omer Levy, and Eran Yahav. 2019. code2vec: learning distributed representations of code.
+> Proc. ACM Program. Lang. 3, POPL, Article 40 (jan 2019), 29 pages. https://doi.org/10.1145/3290353 [3] Lars Ole Andersen. 1994. Program analysis and specialization for the C programming language. (1994). [4] Anastasios Antoniadis, Nikos Filippakis, Paddy Krishnan, Raghavendra Ramesh, Nicholas Allen, and Yannis Smarag-dakis. 2020. Static analysis of Java enterprise applications: frameworks and caches, the elephants in the room. In
+> Proceedings of the 41st ACM SIGPLAN International Conference on Programming Language Design and Implemen-tation, PLDI 2020, London, UK, June 15-20, 2020 , Alastair F. Donaldson and Emina Torlak (Eds.). ACM, 794–807. https://doi.org/10.1145/3385412.3386026 [5] Steven Arzt and Eric Bodden. 2016. StubDroid: automatic inference of precise data-flow summaries for the android framework. In Proceedings of the 38th International Conference on Software Engineering, ICSE 2016, Austin, TX, USA, May 14-22, 2016 , Laura K. Dillon, Willem Visser, and Laurie A. Williams (Eds.). ACM, 725–735. https://doi.org/10. 1145/2884781.2884816
+
+31 
+
+[6] Steven Arzt, Siegfried Rasthofer, Christian Fritz, Eric Bodden, Alexandre Bartel, Jacques Klein, Yves Le Traon, Damien Octeau, and Patrick D. McDaniel. 2014. FlowDroid: precise context, flow, field, object-sensitive and lifecycle-aware taint analysis for Android apps. In ACM SIGPLAN Conference on Programming Language Design and Implementation, PLDI ’14, Edinburgh, United Kingdom - June 09 - 11, 2014 , Michael F. P. O’Boyle and Keshav Pingali (Eds.). ACM, 259–269. https://doi.org/10.1145/2594291.2594299 [7] ATLAS. 2023. Soure code of ATLAS. https://github.com/obastani/atlas. [Online; accessed 13-Sept-2023]. [8] Brian Backman. 2004. Building Sentence Skills: Tools for Writing the Amazing English Sentence . Teacher Created Resources. [9] Osbert Bastani, Rahul Sharma, Alex Aiken, and Percy Liang. 2018. Active learning of points-to specifications. In Proceedings of the 39th ACM SIGPLAN Conference on Programming Language Design and Implementation, PLDI 2018, Philadelphia, PA, USA, June 18-22, 2018 , Jeffrey S. Foster and Dan Grossman (Eds.). ACM, 678–692. https: //doi.org/10.1145/3192366.3192383 [10] Nikolaj S. Bjørner, Anh-Dung Phan, and Lars Fleckenstein. 2015. 𝜈 Z - An Optimizing SMT Solver. In Tools and Algorithms for the Construction and Analysis of Systems - 21st International Conference, TACAS 2015, Held as Part of the European Joint Conferences on Theory and Practice of Software, ETAPS 2015, London, UK, April 11-18, 2015. Proceedings (Lecture Notes in Computer Science, Vol. 9035) , Christel Baier and Cesare Tinelli (Eds.). Springer, 194–199. https://doi.org/10.1007/978-3-662-46681-0_14 [11] Arianna Blasi, Alberto Goffi, Konstantin Kuznetsov, Alessandra Gorla, Michael D. Ernst, Mauro Pezzè, and Sergio Del-gado Castellanos. 2018. Translating code comments to procedure specifications. In Proceedings of the 27th ACM SIGSOFT International Symposium on Software Testing and Analysis, ISSTA 2018, Amsterdam, The Netherlands, July 16-21, 2018 , Frank Tip and Eric Bodden (Eds.). ACM, 242–253. https://doi.org/10.1145/3213846.3213872 [12] Islem Bouzenia, Premkumar Devanbu, and Michael Pradel. 2025. RepairAgent: An Autonomous, LLM-Based Agent for Program Repair. In Proceedings of the IEEE/ACM 47th International Conference on Software Engineering (Ottawa, Ontario, Canada) (ICSE ’25) . IEEE Press, 2188–2200. https://doi.org/10.1109/ICSE55347.2025.00157 [13] Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, Sandhini Agarwal, Ariel Herbert-Voss, Gretchen Krueger, Tom Henighan, Rewon Child, Aditya Ramesh, Daniel M. Ziegler, Jeffrey Wu, Clemens Winter, Christopher Hesse, Mark Chen, Eric Sigler, Mateusz Litwin, Scott Gray, Benjamin Chess, Jack Clark, Christopher Berner, Sam McCandlish, Alec Radford, Ilya Sutskever, and Dario Amodei. 2020. Language Models are Few-Shot Learners. In Advances in Neural Information Processing Systems 33: Annual Conference on Neural Information Processing Systems 2020, NeurIPS 2020, December 6-12, 2020, virtual , Hugo Larochelle, Marc’Aurelio Ranzato, Raia Hadsell, Maria-Florina Balcan, and Hsuan-Tien Lin (Eds.). https://proceedings.neurips.cc/paper/2020/hash/1457c0d6bfcb4967418bfb8ac142f64a-Abstract.html [14] Simon Butler, Michel Wermelinger, and Yijun Yu. 2015. A survey of the forms of Java reference names. In Proceedings of the 2015 IEEE 23rd International Conference on Program Comprehension, ICPC 2015, Florence/Firenze, Italy, May 16-24, 2015 , Andrea De Lucia, Christian Bird, and Rocco Oliveto (Eds.). IEEE Computer Society, 196–206. https: //doi.org/10.1109/ICPC.2015.30 [15] Cristiano Calcagno, Dino Distefano, Peter W. O’Hearn, and Hongseok Yang. 2011. Compositional Shape Analysis by Means of Bi-Abduction. J. ACM 58, 6 (2011), 26:1–26:66. https://doi.org/10.1145/2049697.2049700 [16] Bor-Yuh Evan Chang, Cezara Dragoi, Roman Manevich, Noam Rinetzky, and Xavier Rival. 2020. Shape Analysis. 
+
+Found. Trends Program. Lang. 6, 1-2 (2020), 1–158. https://doi.org/10.1561/2500000037 [17] Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Pondé de Oliveira Pinto, Jared Kaplan, Harrison Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, Alex Ray, Raul Puri, Gretchen Krueger, Michael Petrov, Heidy Khlaaf, Girish Sastry, Pamela Mishkin, Brooke Chan, Scott Gray, Nick Ryder, Mikhail Pavlov, Alethea Power, Lukasz Kaiser, Mohammad Bavarian, Clemens Winter, Philippe Tillet, Felipe Petroski Such, Dave Cummings, Matthias Plappert, Fotios Chantzis, Elizabeth Barnes, Ariel Herbert-Voss, William Hebgen Guss, Alex Nichol, Alex Paino, Nikolas Tezak, Jie Tang, Igor Babuschkin, Suchir Balaji, Shantanu Jain, William Saunders, Christopher Hesse, Andrew N. Carr, Jan Leike, Joshua Achiam, Vedant Misra, Evan Morikawa, Alec Radford, Matthew Knight, Miles Brundage, Mira Murati, Katie Mayer, Peter Welinder, Bob McGrew, Dario Amodei, Sam McCandlish, Ilya Sutskever, and Wojciech Zaremba. 2021. Evaluating Large Language Models Trained on Code. CoRR abs/2107.03374 (2021). arXiv:2107.03374 https://arxiv.org/abs/2107.03374 [18] Qibin Chen, Jeremy Lacomis, Edward J. Schwartz, Graham Neubig, Bogdan Vasilescu, and Claire Le Goues. 2022. VarCLR: variable semantic representation pre-training via contrastive learning (ICSE ’22) . Association for Computing Machinery, New York, NY, USA, 2327–2339. https://doi.org/10.1145/3510003.3510162 [19] Yujia Chen, Cuiyun Gao, Muyijie Zhu, Qing Liao, Yong Wang, and Guoai Xu. 2024. APIGen: Generative API Method Recommendation. In 2024 IEEE International Conference on Software Analysis, Evolution and Reengineering (SANER) .171–182. https://doi.org/10.1109/SANER60148.2024.00025 32 Maryam Masoudian, Anshunkang Zhou, Chengpeng Wang, and Charles Zhang 
+
+[20] Victor Chibotaru, Benjamin Bichsel, Veselin Raychev, and Martin T. Vechev. 2019. Scalable taint specification inference with big code. In Proceedings of the 40th ACM SIGPLAN Conference on Programming Language Design and Implementation, PLDI 2019, Phoenix, AZ, USA, June 22-26, 2019 , Kathryn S. McKinley and Kathleen Fisher (Eds.). ACM, 760–774. https://doi.org/10.1145/3314221.3314648 [21] Nancy Chinchor. 1998. Appendix E: MUC-7 Named Entity Task Definition (version 3.5). In Seventh Message Under-standing Conference: Proceedings of a Conference Held in Fairfax, Virginia, USA, MUC 1998, April 29 - May 1, 1998 . ACL. https://aclanthology.org/M98-1028/ [22] Yiu Wai Chow, Max Schäfer, and Michael Pradel. 2023. Beware of the Unexpected: Bimodal Taint Analysis. In Proceedings of the 32nd ACM SIGSOFT International Symposium on Software Testing and Analysis (Seattle, WA, USA) (ISSTA 2023) .Association for Computing Machinery, New York, NY, USA, 211–222. https://doi.org/10.1145/3597926.3598050 [23] Lazaro Clapp, Saswat Anand, and Alex Aiken. 2015. Modelgen: mining explicit information flow specifications from concrete executions (ISSTA 2015) . Association for Computing Machinery, New York, NY, USA, 129–140. https: //doi.org/10.1145/2771783.2771810 [24] Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, Christopher Hesse, and John Schulman. 2021. Training Verifiers to Solve Math Word Problems. CoRR abs/2110.14168 (2021). arXiv:2110.14168 https://arxiv.org/abs/2110.14168 [25] DAInferPlus. 2026. Implementation of DAInfer. https://github.com/maryammsd/DAInfer. [Online; accessed 14-Feb-2026]. [26] Leonardo Mendonça de Moura and Nikolaj Bjørner. 2008. Z3: An Efficient SMT Solver. In Tools and Algorithms for the Construction and Analysis of Systems, 14th International Conference, TACAS 2008, Held as Part of the Joint European Conferences on Theory and Practice of Software, ETAPS 2008, Budapest, Hungary, March 29-April 6, 2008. Proceedings (Lecture Notes in Computer Science, Vol. 4963) , C. R. Ramakrishnan and Jakob Rehof (Eds.). Springer, 337–340. https://doi.org/10.1007/978-3-540-78800-3_24 [27] DeepSeek-AI, Aixin Liu, Bei Feng, Bin Wang, Bingxuan Wang, Bo Liu, Chenggang Zhao, Chengqi Dengr, Chong Ruan, Damai Dai, Daya Guo, Dejian Yang, Deli Chen, Dongjie Ji, Erhang Li, Fangyun Lin, Fuli Luo, Guangbo Hao, Guanting Chen, Guowei Li, H. Zhang, Hanwei Xu, Hao Yang, Haowei Zhang, Honghui Ding, Huajian Xin, Huazuo Gao, Hui Li, Hui Qu, J. L. Cai, Jian Liang, Jianzhong Guo, Jiaqi Ni, Jiashi Li, Jin Chen, Jingyang Yuan, Junjie Qiu, Junxiao Song, Kai Dong, Kaige Gao, Kang Guan, Lean Wang, Lecong Zhang, Lei Xu, Leyi Xia, Liang Zhao, Liyue Zhang, Meng Li, Miaojun Wang, Mingchuan Zhang, Minghua Zhang, Minghui Tang, Mingming Li, Ning Tian, Panpan Huang, Peiyi Wang, Peng Zhang, Qihao Zhu, Qinyu Chen, Qiushi Du, R. J. Chen, R. L. Jin, Ruiqi Ge, Ruizhe Pan, Runxin Xu, Ruyi Chen, S. S. Li, Shanghao Lu, Shangyan Zhou, Shanhuang Chen, Shaoqing Wu, Shengfeng Ye, Shirong Ma, Shiyu Wang, Shuang Zhou, Shuiping Yu, Shunfeng Zhou, Size Zheng, T. Wang, Tian Pei, Tian Yuan, Tianyu Sun, W. L. Xiao, Wangding Zeng, Wei An, Wen Liu, Wenfeng Liang, Wenjun Gao, Wentao Zhang, X. Q. Li, Xiangyue Jin, Xianzu Wang, Xiao Bi, Xiaodong Liu, Xiaohan Wang, Xiaojin Shen, Xiaokang Chen, Xiaosha Chen, Xiaotao Nie, Xiaowen Sun, Xiaoxiang Wang, Xin Liu, Xin Xie, Xingkai Yu, Xinnan Song, Xinyi Zhou, Xinyu Yang, Xuan Lu, Xuecheng Su, Y. Wu, Y. K. Li, Y. X. Wei, Y. X. Zhu, Yanhong Xu, Yanping Huang, Yao Li, Yao Zhao, Yaofeng Sun, Yaohui Li, Yaohui Wang, Yi Zheng, Yichao Zhang, Yiliang Xiong, Yilong Zhao, Ying He, Ying Tang, Yishi Piao, Yixin Dong, Yixuan Tan, Yiyuan Liu, Yongji Wang, Yongqiang Guo, Yuchen Zhu, Yuduan Wang, Yuheng Zou, Yukun Zha, Yunxian Ma, Yuting Yan, Yuxiang You, Yuxuan Liu, Z. Z. Ren, Zehui Ren, Zhangli Sha, Zhe Fu, Zhen Huang, Zhen Zhang, Zhenda Xie, Zhewen Hao, Zhihong Shao, Zhiniu Wen, Zhipeng Xu, Zhongyu Zhang, Zhuoshu Li, Zihan Wang, Zihui Gu, Zilin Li, and Ziwei Xie. 2024. DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model. arXiv:2405.04434 [cs.CL] https://arxiv.org/abs/2405.04434 [28] Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. 2019. BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding. In Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers) ,Jill Burstein, Christy Doran, and Thamar Solorio (Eds.). Association for Computational Linguistics, Minneapolis, Minnesota, 4171–4186. https://doi.org/10.18653/v1/N19-1423 [29] Jan Eberhardt, Samuel Steffen, Veselin Raychev, and Martin T. Vechev. 2019. Unsupervised learning of API alias specifications. In Proceedings of the 40th ACM SIGPLAN Conference on Programming Language Design and Implementa-tion, PLDI 2019, Phoenix, AZ, USA, June 22-26, 2019 , Kathryn S. McKinley and Kathleen Fisher (Eds.). ACM, 745–759. https://doi.org/10.1145/3314221.3314640 [30] F-Droid. 2023. F-Droid. https://f-droid.org/. [Online; accessed 1-Sept-2023]. [31] Chongzhou Fang, Ning Miao, Shaurya Srivastav, Jialin Liu, Ruoyu Zhang, Ruijie Fang, Asmita, Ryan Tsang, Najmeh Nazari, Han Wang, and Houman Homayoun. 2024. Large Language Models for Code Analysis: Do LLMs Really Do Their Job?. In 33rd USENIX Security Symposium (USENIX Security 24) . USENIX Association, Philadelphia, PA, 829–846. https://www.usenix.org/conference/usenixsecurity24/presentation/fang 33 
+
+[32] Pratik Fegade and Christian Wimmer. 2020. Scalable pointer analysis of data structures using semantic models. In 
+
+CC ’20: 29th International Conference on Compiler Construction, San Diego, CA, USA, February 22-23, 2020 , Louis-Noël Pouchet and Alexandra Jimborean (Eds.). ACM, 39–50. https://doi.org/10.1145/3377555.3377885 [33] Zhangyin Feng, Daya Guo, Duyu Tang, Nan Duan, Xiaocheng Feng, Ming Gong, Linjun Shou, Bing Qin, Ting Liu, Daxin Jiang, and Ming Zhou. 2020. CodeBERT: A Pre-Trained Model for Programming and Natural Languages. In 
+
+Findings of the Association for Computational Linguistics: EMNLP 2020 , Trevor Cohn, Yulan He, and Yang Liu (Eds.). Association for Computational Linguistics, Online, 1536–1547. https://doi.org/10.18653/v1/2020.findings-emnlp.139 [34] W Nelson Francis and Henry Kucera. 1967. Computational analysis of present-day American English. Providence, RI: Brown University Press. Kuperman, V., Estes, Z., Brysbaert, M., & Warriner, AB (2014). Emotion and language: Valence and arousal affect word recognition. Journal of Experimental Psychology: General 143 (1967), 1065–1081. [35] Timon Gehr, Dimitar K. Dimitrov, and Martin T. Vechev. 2015. Learning Commutativity Specifications. In Computer Aided Verification - 27th International Conference, CAV 2015, San Francisco, CA, USA, July 18-24, 2015, Proceedings, Part I (Lecture Notes in Computer Science, Vol. 9206) , Daniel Kroening and Corina S. Pasareanu (Eds.). Springer, 307–323. https://doi.org/10.1007/978-3-319-21690-4_18 [36] Daya Guo, Qihao Zhu, Dejian Yang, Zhenda Xie, Kai Dong, Wentao Zhang, Guanting Chen, Xiao Bi, Y. Wu, Y. K. Li, Fuli Luo, Yingfei Xiong, and Wenfeng Liang. 2024. DeepSeek-Coder: When the Large Language Model Meets Programming – The Rise of Code Intelligence. https://arxiv.org/abs/2401.14196 [37] Jinyao* Guo, Chengpeng* Wang, Xiangzhe Xu, Zian Su, and Xiangyu Zhang. 2025. RepoAudit: An Autonomous LLM-Agent for Repository-Level Code Auditing. In Proceedings of the 42nd International Conference on Machine Learning . *Equal contribution. [38] Matthew Honnibal, Ines Montani, Sofie Van Landeghem, and Adriane Boyd. 2020. spaCy: Industrial-strength Natural Language Processing in Python. (2020). https://doi.org/10.5281/zenodo.1212303 [39] Binyuan Hui, Jian Yang, Zeyu Cui, Jiaxi Yang, Dayiheng Liu, Lei Zhang, Tianyu Liu, Jiajun Zhang, Bowen Yu, Keming Lu, Kai Dang, Yang Fan, Yichang Zhang, An Yang, Rui Men, Fei Huang, Bo Zheng, Yibo Miao, Shanghaoran Quan, Yunlong Feng, Xingzhang Ren, Xuancheng Ren, Jingren Zhou, and Junyang Lin. 2024. Qwen2.5-Coder Technical Report. arXiv:2409.12186 [cs.CL] https://arxiv.org/abs/2409.12186 [40] Hamel Husain, Ho-Hsiang Wu, Tiferet Gazit, Miltiadis Allamanis, and Marc Brockschmidt. 2020. CodeSearchNet Challenge: Evaluating the State of Semantic Code Search. arXiv:1909.09436 [cs.LG] https://arxiv.org/abs/1909.09436 [41] Hiroki Inayoshi, Shoichi Saito, and Akito Monden. 2025. Evaluating Taint Specification Generators for Identifying Taint Sources in Relation to Data Safety Section. In 2025 IEEE/ACM 12th International Conference on Mobile Software Engineering and Systems (MOBILESoft) . 44–54. https://doi.org/10.1109/MOBILESoft66462.2025.00012 [42] Bertrand Jeannet, Alexey Loginov, Thomas W. Reps, and Mooly Sagiv. 2010. A relational approach to interprocedural shape analysis. ACM Trans. Program. Lang. Syst. 32, 2 (2010), 5:1–5:52. https://doi.org/10.1145/1667048.1667050 [43] Albert Qiaochu Jiang, Wenda Li, Szymon Tworkowski, Konrad Czechowski, Tomasz Odrzygózdz, Piotr Milos, Yuhuai Wu, and Mateja Jamnik. 2022. Thor: Wielding Hammers to Integrate Language Models and Automated Theorem Provers. In NeurIPS . http://papers.nips.cc/paper_files/paper/2022/hash/377c25312668e48f2e531e2f2c422483-Abstract-Conference.html [44] Albert Qiaochu Jiang, Sean Welleck, Jin Peng Zhou, Timothée Lacroix, Jiacheng Liu, Wenda Li, Mateja Jamnik, Guillaume Lample, and Yuhuai Wu. 2023. Draft, Sketch, and Prove: Guiding Formal Theorem Provers with Informal Proofs. In The Eleventh International Conference on Learning Representations, ICLR 2023, Kigali, Rwanda, May 1-5, 2023 .OpenReview.net. https://openreview.net/pdf?id=SMa9EAovKMC [45] Juyong Jiang, Fan Wang, Jiasi Shen, Sungju Kim, and Sunghun Kim. 2025. A Survey on Large Language Models for Code Generation. ACM Trans. Softw. Eng. Methodol. (July 2025). https://doi.org/10.1145/3747588 Just Accepted. [46] Shuangxiang Kan, Yuhao Gao, Zexin Zhong, and Yulei Sui. 2024. Cross-Language Taint Analysis: Generating Caller-Sensitive Native Code Specification for Java. IEEE Transactions on Software Engineering 50, 6 (2024), 1518–1533. https://doi.org/10.1109/TSE.2024.3392254 [47] Shuangxiang Kan, Yuekang Li, Weigang He, Zhenchang Xing, Liming Zhu, and Yulei Sui. 2025. Spectre: Automated Aliasing Specifications Generation for Library APIs with Fuzzing. ACM Trans. Softw. Eng. Methodol. (June 2025). https://doi.org/10.1145/3725811 [48] Guillaume Lample, Timothée Lacroix, Marie-Anne Lachaux, Aurélien Rodriguez, Amaury Hayat, Thibaut Lavril, Gabriel Ebner, and Xavier Martinet. 2022. HyperTree Proof Search for Neural Theorem Proving. In NeurIPS . http: //papers.nips.cc/paper_files/paper/2022/hash/a8901c5e85fb8e1823bbf0f755053672-Abstract-Conference.html [49] Puzhuo Liu, Chengnian Sun, Yaowen Zheng, Xuan Feng, Chuan Qin, Yuncheng Wang, Zhenyang Xu, Zhi Li, Peng Di, Yu Jiang, and Limin Sun. 2025. LLM-Powered Static Binary Taint Analysis. ACM Trans. Softw. Eng. Methodol. 34, 3, Article 83 (Feb. 2025), 36 pages. https://doi.org/10.1145/3711816 [50] Michael R. Lyu, Baishakhi Ray, Abhik Roychoudhury, Shin Hwei Tan, and Patanamon Thongtanunam. 2025. Automatic Programming: Large Language Models and Beyond. 34, 5, Article 140 (May 2025), 33 pages. https://doi.org/10.1145/ 34 Maryam Masoudian, Anshunkang Zhou, Chengpeng Wang, and Charles Zhang 
+
+3708519 [51] George A. Miller. 1995. WordNet: a lexical database for English. Commun. ACM 38, 11 (nov 1995), 39–41. https: //doi.org/10.1145/219717.219748 [52] Manish Motwani and Yuriy Brun. 2019. Automatically generating precise Oracles from structured natural language specifications. In Proceedings of the 41st International Conference on Software Engineering, ICSE 2019, Montreal, QC, Canada, May 25-31, 2019 , Joanne M. Atlee, Tevfik Bultan, and Jon Whittle (Eds.). IEEE / ACM, 188–199. https: //doi.org/10.1109/ICSE.2019.00035 [53] NLTK. 2023. Natural Language Toolkit. https://www.nltk.org/index.html. [Online; accessed 7-Sep-2023]. [54] OpenAI. 2022. Introducing ChatGPT. (2022). https://openai.com/blog/chatgpt [55] OpenAI. 2023. GPT-3.5. https://platform.openai.com/docs/models/gpt-3-5. [Online; accessed 7-Sep-2023]. [56] OpenAI. 2023. GPT-4 Technical Report. arXiv:2303.08774 [cs.CL] [57] Rahul Pandita, Xusheng Xiao, Hao Zhong, Tao Xie, Stephen Oney, and Amit M. Paradkar. 2012. Inferring method specifications from natural language API descriptions. In 34th International Conference on Software Engineering, ICSE 2012, June 2-9, 2012, Zurich, Switzerland , Martin Glinz, Gail C. Murphy, and Mauro Pezzè (Eds.). IEEE Computer Society, 815–825. https://doi.org/10.1109/ICSE.2012.6227137 [58] Siegfried Rasthofer, Steven Arzt, and Eric Bodden. 2014. A Machine-learning Approach for Classifying and Categorizing Android Sources and Sinks. In Proceedings of the 21st Network and Distributed System Security Symposium (NDSS) ,Vol. 14. 23–26. [59] Nils Reimers and Iryna Gurevych. 2019. Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks. arXiv:1908.10084 [cs.CL] https://arxiv.org/abs/1908.10084 [60] Xiaoxue Ren, Xinyuan Ye, Zhenchang Xing, Xin Xia, Xiwei Xu, Liming Zhu, and Jianling Sun. 2020. API-Misuse Detection Driven by Fine-Grained API-Constraint Knowledge Graph. In 35th IEEE/ACM International Conference on Automated Software Engineering, ASE 2020, Melbourne, Australia, September 21-25, 2020 . IEEE, 461–472. https: //doi.org/10.1145/3324884.3416551 [61] Atanas Rountev, Mariana Sharp, and Guoqing Xu. 2008. IDE dataflow analysis in the presence of large object-oriented libraries. In International Conference on Compiler Construction . Springer, 53–68. [62] Shmuel Sagiv, Thomas W. Reps, and Reinhard Wilhelm. 2002. Parametric shape analysis via 3-valued logic. ACM Trans. Program. Lang. Syst. 24, 3 (2002), 217–298. https://doi.org/10.1145/514188.514190 [63] Qingkai Shi, Xiao Xiao, Rongxin Wu, Jinguo Zhou, Gang Fan, and Charles Zhang. 2018. Pinpoint: fast and precise sparse value flow analysis for million lines of code. In Proceedings of the 39th ACM SIGPLAN Conference on Programming Language Design and Implementation, PLDI 2018, Philadelphia, PA, USA, June 18-22, 2018 , Jeffrey S. Foster and Dan Grossman (Eds.). ACM, 693–706. https://doi.org/10.1145/3192366.3192418 [64] Johannes Späth, Lisa Nguyen Quang Do, Karim Ali, and Eric Bodden. 2016. Boomerang: Demand-Driven Flow-and Context-Sensitive Pointer Analysis for Java (Artifact). Dagstuhl Artifacts Ser. 2, 1 (2016), 12:1–12:2. https: //doi.org/10.4230/DARTS.2.1.12 [65] Lin Tan, Xiaolan Zhang, Xiao Ma, Weiwei Xiong, and Yuanyuan Zhou. 2008. AutoISES: Automatically Inferring Security Specification and Detecting Violations. In Proceedings of the 17th USENIX Security Symposium, July 28-August 1, 2008, San Jose, CA, USA , Paul C. van Oorschot (Ed.). USENIX Association, 379–394. http://www.usenix.org/events/ sec08/tech/full_papers/tan_l/tan_l.pdf [66] Marcos Tileria, Jorge Blasco, and Santanu Kumar Dash. 2024. DocFlow: Extracting Taint Specifications from Software Documentation (ICSE ’24) . Association for Computing Machinery, New York, NY, USA, Article 61, 12 pages. https: //doi.org/10.1145/3597503.3623312 [67] John Toman and Dan Grossman. 2017. Taming the Static Analysis Beast. In 2nd Summit on Advances in Programming Languages, SNAPL 2017, May 7-10, 2017, Asilomar, CA, USA (LIPIcs, Vol. 71) , Benjamin S. Lerner, Rastislav Bodík, and Shriram Krishnamurthi (Eds.). Schloss Dagstuhl - Leibniz-Zentrum für Informatik, 18:1–18:14. https://doi.org/10. 4230/LIPIcs.SNAPL.2017.18 [68] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, and Illia Polosukhin. 2017. Attention is All you Need. In Advances in Neural Information Processing Systems 30: Annual Conference on Neural Information Processing Systems 2017, December 4-9, 2017, Long Beach, CA, USA , Isabelle Guyon, Ulrike von Luxburg, Samy Bengio, Hanna M. Wallach, Rob Fergus, S. V. N. Vishwanathan, and Roman Garnett (Eds.). 5998–6008. https://proceedings.neurips.cc/paper/2017/hash/3f5ee243547dee91fbd053c1c4a845aa-Abstract.html [69] Chengpeng Wang, Jipeng Zhang, Rongxin Wu, and Charles Zhang. 2024. DAInfer: Inferring API Aliasing Specifications from Library Documentation via Neurosymbolic Optimization. In The Proceedings of the ACM on Software Engineering ,Vol. 1. https://doi.org/10.1145/3660816 [70] Chengpeng Wang, Wuqi Zhang, Zian Su, Xiangzhe Xu, Xiaoheng Xie, and Xiangyu Zhang. 2024. LLMDFA: analyzing dataflow in code with large language models. In Proceedings of the 38th International Conference on Neural Information Processing Systems (Vancouver, BC, Canada) (NIPS ’24) . Curran Associates Inc., Red Hook, NY, USA, Article 4181, 35 
+
+30 pages. [71] Liang Wang, Nan Yang, Xiaolong Huang, Linjun Yang, Rangan Majumder, and Furu Wei. 2024. Multilingual E5 Text Embeddings: A Technical Report. arXiv:2402.05672 [cs.CL] https://arxiv.org/abs/2402.05672 [72] Ying Wang, Ming Wen, Zhenwei Liu, Rongxin Wu, Rui Wang, Bo Yang, Hai Yu, Zhiliang Zhu, and Shing-Chi Cheung. 2018. Do the dependency conflicts in my project matter?. In Proceedings of the 2018 ACM Joint Meeting on European Software Engineering Conference and Symposium on the Foundations of Software Engineering, ESEC/SIGSOFT FSE 2018, Lake Buena Vista, FL, USA, November 04-09, 2018 , Gary T. Leavens, Alessandro Garcia, and Corina S. Pasareanu (Eds.). ACM, 319–330. https://doi.org/10.1145/3236024.3236056 [73] Moshi Wei, Nima Shiri Harzevili, Yuchao Huang, Junjie Wang, and Song Wang. 2022. CLEAR: <u>c</u>ontrastive <u>le</u>arning for <u>A</u>PI <u>r</u>ecommendation. In Proceedings of the 44th International Conference on Software Engineering (Pittsburgh, Pennsylvania) (ICSE ’22) . Association for Computing Machinery, New York, NY, USA, 376–387. https://doi.org/10.1145/3510003.3510159 [74] Sean Welleck, Jiacheng Liu, Ximing Lu, Hannaneh Hajishirzi, and Yejin Choi. 2022. NaturalProver: Grounded Mathematical Proof Generation with Language Models. In NeurIPS . http://papers.nips.cc/paper_files/paper/2022/ hash/1fc548a8243ad06616eee731e0572927-Abstract-Conference.html [75] Yuhuai Wu, Albert Qiaochu Jiang, Wenda Li, Markus N. Rabe, Charles Staats, Mateja Jamnik, and Christian Szegedy. 2022. Autoformalization with Large Language Models. In NeurIPS . http://papers.nips.cc/paper_files/paper/2022/hash/ d0c6bc641a56bebee9d985b937307367-Abstract-Conference.html [76] Wenkai Xie, Xin Peng, Mingwei Liu, Christoph Treude, Zhenchang Xing, Xiaoxin Zhang, and Wenyun Zhao. 2020. API method recommendation via explicit matching of functionality verb phrases. In Proceedings of the 28th ACM Joint Meeting on European Software Engineering Conference and Symposium on the Foundations of Software Engineering 
+
+(Virtual Event, USA) (ESEC/FSE 2020) . Association for Computing Machinery, New York, NY, USA, 1015–1026. https: //doi.org/10.1145/3368089.3409731 [77] Peisen Yao, Jinguo Zhou, Xiao Xiao, Qingkai Shi, Rongxin Wu, and Charles Zhang. 2021. Efficient Path-Sensitive Data-Dependence Analysis. CoRR abs/2109.07923 (2021). arXiv:2109.07923 https://arxiv.org/abs/2109.07923 [78] Shunyu Yao, Dian Yu, Jeffrey Zhao, Izhak Shafran, Thomas L. Griffiths, Yuan Cao, and Karthik Narasimhan. 2023. Tree of Thoughts: Deliberate Problem Solving with Large Language Models. CoRR abs/2305.10601 (2023). https: //doi.org/10.48550/arXiv.2305.10601 arXiv:2305.10601 [79] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R. Narasimhan, and Yuan Cao. 2023. ReAct: Syner-gizing Reasoning and Acting in Language Models. In The Eleventh International Conference on Learning Representations, ICLR 2023, Kigali, Rwanda, May 1-5, 2023 . OpenReview.net. https://openreview.net/pdf?id=WE_vluYUL-X [80] Jane Yen, Tamás Lévai, Qinyuan Ye, Xiang Ren, Ramesh Govindan, and Barath Raghavan. 2021. Semi-automated protocol disambiguation and code generation. In Proceedings of the 2021 ACM SIGCOMM 2021 Conference (Virtual Event, USA) (SIGCOMM ’21) . Association for Computing Machinery, New York, NY, USA, 272–286. https://doi.org/10. 1145/3452296.3472910 [81] Hamed Zamani and W Bruce Croft. 2017. Relevance-based word embedding. In Proceedings of the 40th International ACM SIGIR Conference on Research and Development in Information Retrieval . 505–514. [82] Juan Zhai, Yu Shi, Minxue Pan, Guian Zhou, Yongxiang Liu, Chunrong Fang, Shiqing Ma, Lin Tan, and Xiangyu Zhang. 2020. C2S: translating natural language comments to formal program specifications. In ESEC/FSE ’20: 28th ACM Joint European Software Engineering Conference and Symposium on the Foundations of Software Engineering, Virtual Event, USA, November 8-13, 2020 , Prem Devanbu, Myra B. Cohen, and Thomas Zimmermann (Eds.). ACM, 25–37. https://doi.org/10.1145/3368089.3409716 [83] Yuntong Zhang, Haifeng Ruan, Zhiyu Fan, and Abhik Roychoudhury. 2024. AutoCodeRover: Autonomous Program Improvement. In Proceedings of the 33rd ACM SIGSOFT International Symposium on Software Testing and Analysis 
+
+(Vienna, Austria) (ISSTA 2024) . Association for Computing Machinery, New York, NY, USA, 1592–1604. https: //doi.org/10.1145/3650212.3680384 [84] Hao Zhong, Lu Zhang, Tao Xie, and Hong Mei. 2009. Inferring Resource Specifications from Natural Language API Documentation. In ASE 2009, 24th IEEE/ACM International Conference on Automated Software Engineering, Auckland, New Zealand, November 16-20, 2009 . IEEE Computer Society, 307–318. https://doi.org/10.1109/ASE.2009.94 [85] Denny Zhou, Nathanael Schärli, Le Hou, Jason Wei, Nathan Scales, Xuezhi Wang, Dale Schuurmans, Claire Cui, Olivier Bousquet, Quoc V. Le, and Ed H. Chi. 2023. Least-to-Most Prompting Enables Complex Reasoning in Large Language Models. In The Eleventh International Conference on Learning Representations, ICLR 2023, Kigali, Rwanda, May 1-5, 2023 .OpenReview.net. https://openreview.net/pdf?id=WZH7099tgfM

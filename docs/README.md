@@ -6,79 +6,79 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-04-03
-- 运行时间：2026-04-03 19:42:45 UTC
+- 最新运行日期：2026-04-04
+- 运行时间：2026-04-04 20:04:51 UTC
 - 运行状态：成功
 - 本次总论文数：19
 - 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日深度解析 19 篇安全前沿论文，重点探讨 AI Agent 在模糊测试与 REST API 漏洞挖掘中的实战效能。
-核心结论强调生成器在 Agent 模糊测试中的关键作用，并为 REST API 的不稳定性检测提供了系统性方案。
-建议关注 AI Agent 框架的安全性分类及神经符号增强技术，以应对复杂的内存泄漏与策略验证挑战。
-- 详情：[/202604/03/README](/202604/03/README)
+今日深度研读 19 篇论文，聚焦 LLM 系统决策设计与智能体反谄媚机制的突破。
+核心结论指出，以决策为中心的设计与动态行为门控是提升模型独立性与系统效能的关键。
+建议关注结构化意图协议与安全防护技术，以应对多模型协作中的鲁棒性与安全性挑战。
+- 详情：[/202604/04/README](/202604/04/README)
 
 ### 精读区论文标签
-1. [Fuzzing with Agents? Generators Are All You Need](/202604/03/2604.01442v1-fuzzing-with-agents-generators-are-all-you-need)  
-   标签：评分：10.0/10、query:libfuz
-   evidence：LLM编程智能体自动合成特定目标的模糊测试生成器
-2. [Detecting and Mitigating Flakiness in REST API Fuzzing](/202604/03/2603.28452v1-detecting-and-mitigating-flakiness-in-rest-api-fuzzing)  
-   标签：评分：9.0/10、query:libfuz
-   evidence：检测和缓解REST API模糊测试中的不稳定性
-3. [Architecting Secure AI Agents: Perspectives on System-Level Defenses Against Indirect Prompt Injection Attacks](/202604/03/2603.30016v1-architecting-secure-ai-agents-perspectives-on-system-level-defenses-against-indirect-prompt-injection-attacks)  
+1. [Decision-Centric Design for LLM Systems](/202604/04/2604.00414v1-decision-centric-design-for-llm-systems)  
    标签：评分：9.0/10、query:agsec
-   evidence：针对提示注入的系统级防御和安全策略更新
-4. [SelfGrader: Stable Jailbreak Detection for Large Language Models using Token-Level Logits](/202604/03/2604.01473v1-selfgrader-stable-jailbreak-detection-for-large-language-models-using-token-level-logits)  
+   evidence：将决策信号与策略分离，构建显式控制层
+2. [The Silicon Mirror: Dynamic Behavioral Gating for Anti-Sycophancy in LLM Agents](/202604/04/2604.00478v1-the-silicon-mirror-dynamic-behavioral-gating-for-anti-sycophancy-in-llm-agents)  
    标签：评分：9.0/10、query:agsec
-   evidence：利用Token级Logits作为内部安全信号进行越狱检测
-5. [Contextualizing Sink Knowledge for Java Vulnerability Discovery](/202604/03/2604.01645v1-contextualizing-sink-knowledge-for-java-vulnerability-discovery)  
-   标签：评分：9.0/10、query:libfuz
-   evidence：利用汇点API语义进行针对性漏洞发现的模糊测试框架
-6. [Fuzzing REST APIs in Industry: Necessary Features and Open Problems](/202604/03/2604.01759v1-fuzzing-rest-apis-in-industry-necessary-features-and-open-problems)  
-   标签：评分：9.0/10、query:libfuz
-   evidence：在工业界使用EvoMaster进行REST API自动化模糊测试
-7. ["Elementary, My Dear Watson." Detecting Malicious Skills via Neuro-Symbolic Reasoning across Heterogeneous Artifacts](/202604/03/2603.27204v1-elementary-my-dear-watson-detecting-malicious-skills-via-neuro-symbolic-reasoning-across-heterogeneous-artifacts)  
+   evidence：用于LLM智能体安全的行为访问控制和动态行为门控。
+3. [Automated Framework to Evaluate and Harden LLM System Instructions against Encoding Attacks](/202604/04/2604.01039v1-automated-framework-to-evaluate-and-harden-llm-system-instructions-against-encoding-attacks)  
+   标签：评分：9.0/10、query:agsec
+   evidence：评估和加固LLM系统指令以对抗攻击的自动化框架
+4. [ATBench: A Diverse and Realistic Trajectory Benchmark for Long-Horizon Agent Safety](/202604/04/2604.02022v1-atbench-a-diverse-and-realistic-trajectory-benchmark-for-long-horizon-agent-safety)  
+   标签：评分：9.0/10、query:agsec
+   evidence：用于智能体安全结构化评估的轨迹级基准测试
+5. ["What Did It Actually Do?": Understanding Risk Awareness and Traceability for Computer-Use Agents](/202604/04/2603.28551v1-what-did-it-actually-do-understanding-risk-awareness-and-traceability-for-computer-use-agents)  
    标签：评分：8.0/10、query:agsec
-   evidence：通过神经符号推理检测大模型智能体中的恶意技能
+   evidence：计算机使用代理的风险理解与事后审计
+6. [Distributed Predictive Control Barrier Functions: Towards Scalable Safety Certification in Modular Multi-Agent Systems](/202604/04/2603.29560v1-distributed-predictive-control-barrier-functions-towards-scalable-safety-certification-in-modular-multi-agent-systems)  
+   标签：评分：8.0/10、query:agsec
+   evidence：多智能体系统的安全认证与控制屏障函数
+7. [Do Phone-Use Agents Respect Your Privacy?](/202604/04/2604.00986v1-do-phone-use-agents-respect-your-privacy)  
+   标签：评分：8.0/10、query:agsec
+   evidence：移动智能体隐私行为的可验证评估框架
 
 ### 速读区论文标签
-1. [Finding Memory Leaks in C/C++ Programs via Neuro-Symbolic Augmented Static Analysis](/202604/03/2603.27224v2-finding-memory-leaks-in-cc-programs-via-neuro-symbolic-augmented-static-analysis)  
-   标签：评分：8.0/10、query:libfuz
-   evidence：用于内存管理函数的神经符号增强静态分析
-2. [From Inference Routing to Agent Orchestration: Declarative Policy Compilation with Cross-Layer Verification](/202604/03/2603.27299v1-from-inference-routing-to-agent-orchestration-declarative-policy-compilation-with-cross-layer-verification)  
+1. [Safeguarding LLMs Against Misuse and AI-Driven Malware Using Steganographic Canaries](/202604/04/2603.28655v1-safeguarding-llms-against-misuse-and-ai-driven-malware-using-steganographic-canaries)  
    标签：评分：8.0/10、query:agsec
-   evidence：具有跨层验证的智能体编排声明式策略编译
-3. [A Systematic Taxonomy of Security Vulnerabilities in the OpenClaw AI Agent Framework](/202604/03/2603.27517v1-a-systematic-taxonomy-of-security-vulnerabilities-in-the-openclaw-ai-agent-framework)  
+   evidence：使用预摄入过滤器保护LLM免受滥用和恶意软件侵害
+2. [Structured Intent as a Protocol-Like Communication Layer: Cross-Model Robustness, Framework Comparison, and the Weak-Model Compensation Effect](/202604/04/2603.29953v1-structured-intent-as-a-protocol-like-communication-layer-cross-model-robustness-framework-comparison-and-the-weak-model-compensation-effect)  
    标签：评分：8.0/10、query:agsec
-   evidence：AI代理框架安全漏洞的系统分类
-4. [DAInfer+: Neurosymbolic Inference of API Specifications from Documentation via Embedding Models](/202604/03/2603.28060v1-dainfer-neurosymbolic-inference-of-api-specifications-from-documentation-via-embedding-models)  
-   标签：评分：8.0/10、query:libfuz
-   evidence：从文档中推断API规范以用于静态分析
-5. [SABER: A Stealthy Agentic Black-Box Attack Framework for Vision-Language-Action Models](/202604/03/2603.24935v1-saber-a-stealthy-agentic-black-box-attack-framework-for-vision-language-action-models)  
+   evidence：结构化意图表示以在不同模型间保留用户目标
+3. [A Safety-Aware Role-Orchestrated Multi-Agent LLM Framework for Behavioral Health Communication Simulation](/202604/04/2604.00249v1-a-safety-aware-role-orchestrated-multi-agent-llm-framework-for-behavioral-health-communication-simulation)  
+   标签：评分：8.0/10、query:agsec
+   evidence：具备持续安全审计的安全感知角色编排框架
+4. [Asymmetric Actor-Critic for Multi-turn LLM Agents](/202604/04/2604.00304v1-asymmetric-actor-critic-for-multi-turn-llm-agents)  
+   标签：评分：8.0/10、query:agsec
+   evidence：对Actor行为进行运行时监督和监控以确保可靠行为
+5. [Squish and Release: Exposing Hidden Hallucinations by Making Them Surface as Safety Signals](/202604/04/2603.26829v1-squish-and-release-exposing-hidden-hallucinations-by-making-them-surface-as-safety-signals)  
    标签：评分：7.0/10、query:agsec
-   evidence：针对VLA模型的对抗性指令编辑和以Agent为中心的安全性评估
-6. [Cross-Model Disagreement as a Label-Free Correctness Signal](/202604/03/2603.25450v1-cross-model-disagreement-as-a-label-free-correctness-signal)  
+   evidence：用于局部安全评估电路的激活修补架构
+6. [Red-MIRROR: Agentic LLM-based Autonomous Penetration Testing with Reflective Verification and Knowledge-augmented Interaction](/202604/04/2603.27127v1-red-mirror-agentic-llm-based-autonomous-penetration-testing-with-reflective-verification-and-knowledge-augmented-interaction)  
    标签：评分：7.0/10、query:agsec
-   evidence：跨模型分歧作为安全部署的正确性指标
-7. [Protecting User Prompts Via Character-Level Differential Privacy](/202604/03/2603.26032v1-protecting-user-prompts-via-character-level-differential-privacy)  
+   evidence：智能体自主渗透测试与攻击载荷验证
+7. [Unsafe by Reciprocity: How Generation-Understanding Coupling Undermines Safety in Unified Multimodal Models](/202604/04/2603.27332v1-unsafe-by-reciprocity-how-generation-understanding-coupling-undermines-safety-in-unified-multimodal-models)  
    标签：评分：7.0/10、query:agsec
-   evidence：通过差分隐私进行提示词安全预处理
-8. [Clawed and Dangerous: Can We Trust Open Agentic Systems?](/202604/03/2603.26221v1-clawed-and-dangerous-can-we-trust-open-agentic-systems)  
+   evidence：多模态模型中理解与生成紧密耦合的安全影响
+8. [The Geometry of Harmful Intent: Training-Free Anomaly Detection via Angular Deviation in LLM Residual Streams](/202604/04/2603.27412v1-the-geometry-of-harmful-intent-training-free-anomaly-detection-via-angular-deviation-in-llm-residual-streams)  
    标签：评分：7.0/10、query:agsec
-   evidence：开放代理系统的安全挑战与概率控制流
-9. [Context-Mediated Domain Adaptation in Multi-Agent Sensemaking Systems](/202604/03/2603.24858v1-context-mediated-domain-adaptation-in-multi-agent-sensemaking-systems)  
+   evidence：通过残差流激活检测有害提示词
+9. [Search-Induced Issues in Web-Augmented LLM Code Generation: Detecting and Repairing Error-Inducing Pages](/202604/04/2603.26091v1-search-induced-issues-in-web-augmented-llm-code-generation-detecting-and-repairing-error-inducing-pages)  
    标签：评分：6.0/10、query:agsec
-   evidence：隐式领域规范重塑多智能体推理行为
-10. [On the Foundations of Trustworthy Artificial Intelligence](/202604/03/2603.24904v1-on-the-foundations-of-trustworthy-artificial-intelligence)  
+   evidence：检测 Web 增强代码生成中的恶意内容
+10. [Deception and Communication in Autonomous Multi-Agent Systems: An Experimental Study with Among Us](/202604/04/2603.26635v1-deception-and-communication-in-autonomous-multi-agent-systems-an-experimental-study-with-among-us)  
    标签：评分：6.0/10、query:agsec
-   evidence：用于确定性和可信AI执行的纯整数推理引擎
-11. [ElephantBroker: A Knowledge-Grounded Cognitive Runtime for Trustworthy AI Agents](/202604/03/2603.25097v1-elephantbroker-a-knowledge-grounded-cognitive-runtime-for-trustworthy-ai-agents)  
-   标签：评分：6.0/10、query:agsec
-   evidence：具有保护机制的可信AI代理认知运行时
-12. [The Competence Shadow: Theory and Bounds of AI Assistance in Safety Engineering](/202604/03/2603.25197v1-the-competence-shadow-theory-and-bounds-of-ai-assistance-in-safety-engineering)  
-   标签：评分：6.0/10、query:agsec
-   evidence：AI辅助的安全工程框架
+   evidence：多智能体系统中的安全与策略性欺骗
+11. [Etna: An Evaluation Platform for Property-Based Testing](/202604/04/2603.27002v1-etna-an-evaluation-platform-for-property-based-testing)  
+   标签：评分：6.0/10、query:libfuz
+   evidence：用于测试技术实证评估和比较的平台
+12. [Finding Memory Leaks in C/C++ Programs via Neuro-Symbolic Augmented Static Analysis](/202604/04/2603.27224v1-finding-memory-leaks-in-cc-programs-via-neuro-symbolic-augmented-static-analysis)  
+   标签：评分：6.0/10、query:libfuz
+   evidence：利用基于LLM的语义理解对内存管理函数进行静态分析
 
 
 <div class="dpr-home-promo-card">

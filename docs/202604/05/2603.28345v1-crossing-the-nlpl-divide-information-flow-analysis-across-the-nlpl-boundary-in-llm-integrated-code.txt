@@ -1,0 +1,522 @@
+Title: Crossing the NL/PL Divide: Information Flow Analysis Across the NL/PL Boundary in LLM-Integrated Code
+
+URL Source: https://arxiv.org/pdf/2603.28345v1
+
+Published Time: Tue, 31 Mar 2026 02:28:01 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# Crossing the NL/PL Divide: Information Flow Analysis Across the NL/PL Boundary in LLM-Integrated Code 
+
+# Zihao Xu 
+
+University of New South Wales Sydney, Australia zihao.xu2@unsw.edu.au 
+
+# Xiao Cheng 
+
+Macquarie University Sydney, Australia jumormt@gmail.com 
+
+# Ruijie Meng 
+
+National University of Singapore Singapore, Singapore ruijie_meng@u.nus.edu 
+
+# Yuekang Li 
+
+University of New South Wales Sydney, Australia yuekang.li@unsw.edu.au 
+
+## Abstract 
+
+LLM API calls are becoming a ubiquitous program construct, yet they create a boundary that no existing program analysis can cross: runtime values enter a natural-language prompt, undergo opaque processing inside the LLM, and re-emerge as code, SQL, JSON, or text that the program consumes. Every analysis that tracks data across function boundaries, including taint analysis, program slic-ing, dependency analysis, and change-impact analysis, relies on dataflow summaries of callee behavior. LLM calls have no such summaries, breaking all of these analyses at what we call the NL/PL boundary. We present the first information flow method to bridge this boundary. Grounded in quantitative information flow theory, our taxonomy defines 24 labels along two orthogonal dimensions: in-formation preservation level (from lexically preserved to fully blocked) and output modality (natural language, structured for-mat, executable artifact). We label 9,083 placeholder-output pairs from 4,154 real-world Python files and validate reliability with Co-hen’s 𝜅 = 0.82 and near-complete coverage (0.01% unclassifiable). We demonstrate the taxonomy’s utility on two downstream ap-plications: (1) a two-stage taint propagation pipeline combining taxonomy-based filtering with LLM verification achieves 𝐹 1 = 0.923 
+
+on 353 expert-annotated pairs, with cross-language validation on six real-world OpenClaw prompt injection cases further confirm-ing effectiveness; (2) taxonomy-informed backward slicing reduces slice size by a mean of 15% in files containing non-propagating placeholders. Per-label analysis reveals that four blocked labels account for nearly all non-propagating cases, providing actionable filtering criteria for tool builders. 
+
+## CCS Concepts 
+
+• Security and privacy → Software security engineering ; Soft-ware and application security ; • Software and its engineering 
+
+→ Software verification and validation .
+
+## Keywords 
+
+LLM-integrated applications, information flow, taint analysis, pro-gram slicing, NL/PL boundary, taxonomy 
+
+## 1 Introduction 
+
+LLM API calls are becoming a ubiquitous program construct. Au-tonomous agents such as AutoGPT [ 43 ], frameworks such as LangChain [ 11 ], and AI-native coding assistants embed LLM calls as first-class components [ 51 , 52 ]. In these programs, runtime val-ues (which we term placeholders ) are injected into natural-language prompts. The LLM processes the prompt and returns output that the program consumes as code, SQL, JSON, shell commands, or plain text. This pattern creates a fundamentally new kind of pro-gram boundary: the NL/PL boundary , where data crosses from the programming-language domain into natural language and back (see Figure 1). For instance, a variable table may enter a prompt as NL (“Write a SQL query on {table} ”) and return as PL (executable SQL fed to a database). This unanalyzed boundary is already causing real-world harm. A 2026 audit of OpenClaw, a widely adopted open-source AI agent framework, uncovered 512 vulnerabilities, eight rated critical [ 19 ]: CVE-2026-32060 exploits LLM-generated file paths for sandbox escape via path traversal [ 3 ], and CVE-2026-22171 flows unsan-itized media keys through the LLM pipeline to enable arbitrary file writes [ 1]. Code injection, SQL injection, command injection, SSRF, and unsafe deserialization, the classical OWASP vulnerability classes, are all re-emerging through the same pattern: untrusted content enters a prompt, the LLM output carries attacker-influenced content, and that output flows to a dangerous sink [15, 21]. The same opacity breaks program analyses that have nothing to do with security. “Find all references” to a variable stops at the LLM call: if a placeholder’s value shapes the LLM’s generated SQL, no IDE can trace that dependency. Change-impact analysis cannot determine which downstream tests are affected by editing a prompt template. Program slicing cannot isolate the code responsible for a particular LLM-generated output: a backward slice from an LLM call’s arguments naively includes all upstream code, including def-initions of system prompts and configuration variables that the LLM ignores entirely. Dead-code elimination cannot remove code that computes a placeholder the LLM does not use. In short, every program analysis that tracks data across function boundaries, in-cluding taint analysis [ 24 , 33 ], program slicing [ 46 , 50 ], dependency analysis [ 18 , 37 ], and change-impact analysis [ 6 , 36 ], breaks at the NL/PL boundary. The root cause is that these analyses all rely on dataflow sum-maries that describe how a callee’s inputs relate to its outputs. 
+
+> arXiv:2603.28345v1 [cs.SE] 30 Mar 2026 Zihao Xu, Xiao Cheng, Ruijie Meng, and Yuekang Li
+
+For example, TAJ [ 47 ] models HTTP request/response boundaries, FlowDroid [ 7] and IccTA [ 27 ] model Android lifecycle and inter-component boundaries, TaintDroid [ 17 ] handles JNI boundaries, and PolyCruise [ 28 ] bridges cross-language boundaries in polyglot software. Each of these APIs has a fixed schema: the structure of in-puts and outputs is known, and the transformation is deterministic. An LLM call has none of these properties. First, the LLM’s internal token-level processing is entirely unobservable, so no analysis can inspect how the model transforms input placeholders into output to-kens ( C1 : black-box opacity ). Second, the same placeholder may be copied verbatim, paraphrased, compressed into a summary, reduced to a yes/no decision, translated, transformed into executable code, or completely ignored, far exceeding the binary “preserved or lost” model of traditional dataflow analysis ( C2 : extreme output diversity ). Third, LLM output can be natural-language text, JSON, SQL, Python code, or a shell command, and the downstream program semantics of the same propagation event depend entirely on the output modal-ity: a paraphrased sentence is benign, but a paraphrased SQL query is a potential injection ( C3 : cross-modal transformation ). Finally, the same placeholder exhibits different information-flow behavior in different prompt templates, requiring per-callsite analysis rather than global rules ( C4 : context dependence ). No existing dataflow summary framework can express such a transformation. Traditional taint analysis tools such as CodeQL [ 8], Semgrep[ 41 ], and FlowDroid [ 7] do not recognize LLM API return values as taint sources. A naïve fix is to treat every return as tainted, but this floods downstream analysis with false positives: not all placeholder con-tent appears in the LLM output (system prompts may be ignored, format instructions may not influence content, and inputs may be compressed to a boolean). Research on LLM security has focused on prompt injection attacks [ 21 , 32 , 39 ] but does not model infor-mation flow across the boundary. Recent work explores adjacent problems: IRIS [ 29 ] uses LLMs to infer taint specs for traditional code, Fides [ 15 ] proposes runtime information-flow control for agent planners, and AgentFuzz [ 30 ] fuzzes LLM agents. However, none of them characterizes how placeholders relate to LLM output. 
+
+The fundamental gap: no systematic model of information flow exists across the NL/PL boundary at LLM API calls. 
+
+We propose the first systematic model of information flow across the NL/PL boundary. Drawing on information flow theory [ 16 , 38 ]and grounding theory [ 13 ], we design a taxonomy along two or-thogonal dimensions: information preservation level (five levels from fully blocked to lexically preserved) and output modality (nat-ural language, structured format, executable artifact). Rather than requiring access to the LLM’s internals, the taxonomy characterizes the observable input-output relationship from outside the black box (C1 ). Through a hybrid theory-driven and data-driven construction process, we derive 24 labels organized into 8 groups that capture placeholder-output relationships ranging from verbatim copying to complete blocking ( C2 ). The output modality dimension encodes whether the LLM produces natural language, structured data, or executable code, so downstream analyses can distinguish benign prose from injectable SQL ( C3 ). Labels are assigned per callsite, so the same placeholder receives different labels in different prompt contexts ( C4 ). We validate the information flow analysis at scale on 9,083 placeholder-output pairs from 4,154 real-world Python files, achiev-ing inter-annotator agreement of 𝜅 = 0.82 and near-complete cov-erage (only 1 of 9,083 pairs unclassifiable). We apply this informa-tion flow analysis to two downstream tasks. For security-relevant taint propagation, a two-stage pipeline combining information-flow-based filtering with LLM verification achieves 𝐹 1 = 92 .3% on 353 expert-annotated pairs from 62 sink-containing files. Cross-language validation on 6 real-world OpenClaw CVEs in TypeScript confirms generalization. Per-label analysis reveals that four blocked flow categories account for nearly all non-propagating cases, pro-viding actionable filtering criteria for tool builders. Beyond security, information-flow-informed backward slicing reduces slice size by a mean of 15% in files with non-propagating placeholders. In summary, we make the following contributions: 
+
+• We propose the first information flow analysis method for the NL/PL boundary at LLM API calls, grounded in a 24-label tax-onomy. The taxonomy is empirically validated on 9,083 place-holder–output pairs extracted from 4,154 real-world Python files (§3, §4.1). 
+
+• We instantiate the taxonomy in a taint propagation prediction pipeline—a two-stage design combining taxonomy-based filter-ing with LLM verification—achieving 𝐹 1 = 92 .3% on 353 expert-annotated pairs and confirming its practical relevance on 6 real-world OpenClaw CVEs in TypeScript (§4.2). 
+
+• We illustrate the broader applicability of the taxonomy beyond taint analysis by applying it to backward slicing as a case study, where non-propagating labels reduce slice size by a mean of 15% in files with non-propagating placeholder dependencies, suggesting that information flow characterization at the NL/PL boundary can benefit a wider range of program analyses (§4.3). 
+
+## 2 Background 2.1 Taint Analysis Fundamentals 
+
+Taint analysis tracks the flow of untrusted data through a program from sources (points where external input enters) through trans-formations to sinks (security-sensitive operations) [ 16 , 38 ]. A key design decision is the propagation rule : when data flows through a transformation, does the taint label survive? For deterministic operations (string concatenation, variable assignment, function re-turn), the answer is typically yes. For opaque API calls, the analysis requires a domain-specific model of how the API transforms its inputs—without such a model, the analysis must either conserva-tively propagate all taint (risking false positives) or drop it (risking false negatives). The LLM API boundary is uniquely challenging because its semantics are non-deterministic, context-dependent, and span the divide between natural language and code. 
+
+## 2.2 LLM API Call Patterns 
+
+In LLM-integrated applications, programs construct prompts by inserting runtime values into templates via f-strings, .format() ,template engines, or framework abstractions (e.g., LangChain’s 
+
+PromptTemplate ). We call these runtime values placeholders —they represent the program state that enters the LLM boundary. After the LLM processes the prompt, its output is consumed by the program: parsed as JSON, passed to exec() , interpolated into SQL, etc. Crossing the NL/PL Divide: Information Flow Analysis Across the NL/PL Boundary in LLM-Integrated Code 
+
+Listing 1 shows a representative vulnerable pattern from our dataset: a text-to-SQL agent where the user’s natural-language question (placeholder) is sent to the LLM, which generates a SQL query that is then passed directly to cursor.execute() .The diversity of placeholder-output relationships is the crux of the problem. Consider a placeholder user_query in three different prompt templates: (1) “Translate to French: {user_query}” preserves the content semantically; (2) “Rate the sentiment of: {user_query}. Reply 1–5.” compresses the content to a single number; (3) “Write Python code to answer: {user_query}” transforms the content into executable code. A taint analysis tool needs different propagation decisions for each case. 
+
+## 2.3 The NL/PL Boundary: A Two-Layer Gap 
+
+The central difficulty in analyzing LLM-integrated code is that the NL/PL boundary is opaque: no existing analysis can determine how placeholder content relates to LLM output. We evaluate two analyses that face this opacity—taint analysis (§4.2) and backward slicing (§4.3). 
+
+Taint Analysis. For taint analysis, the gap decomposes into two orthogonal layers, illustrated in Figure 1: 
+
+Layer 1 — Propagation Decision: Does the placeholder’s content propagate through the LLM to its output? If the LLM ignores the placeholder (e.g., a system prompt that has no observable effect), taint should not propagate. If the LLM echoes, paraphrases, or transforms the placeholder’s content into its output, taint should propagate. This is the layer our taxonomy addresses. 
+
+Layer 2 — Taint Engine Capability: Even knowing that the LLM output is tainted, can the static analysis tool track taint from the output variable to the sink through downstream code? This de-pends on the tool’s ability to handle attribute chains, framework abstractions, async patterns, and cross-file flows. Both layers are necessary; neither is sufficient alone. Our work focuses on Layer 1: providing a principled propagation decision model at the NL/PL boundary. 
+
+Backward Slicing. The same opacity affects program slicing. A backward slice from a program point 𝑝 is the set of all statements that can affect 𝑝 ’s value through data or control dependencies [ 50 ]. When 𝑝 is an LLM call’s input argument, a traditional slicer includes 
+
+all upstream code for every placeholder—even those the LLM ig-nores. If the taxonomy identifies a placeholder as non-propagating, its upstream can be safely excluded from the slice. 
+
+## 3 Taxonomy Construction 
+
+Figure 2 shows the overall approach: starting from raw source files, we reconstruct LLM callsites and generate outputs (Phase 1, §3.1), design and apply the taxonomy (Phase 2, §3.2–§3.4), and then evaluate on downstream applications (Phase 3, §4). 
+
+## 3.1 Data Collection Pipeline 
+
+We build on the dataset of Mao et al. [ 34 ], which collected GitHub Python files containing confirmed LLM API calls across major providers (OpenAI [ 35 ], Anthropic [ 5 ], LangChain [ 26 ], etc). We augment this dataset by reconstructing fully rendered prompts and generating actual LLM outputs for each callsite, producing the placeholder–prompt–output triples that our taxonomy requires. 
+
+3.1.1 Callsite Reconstruction. For each file, we use an LLM (GPT-5.2 Thinking) as a program-analysis agent to reconstruct all LLM callsites. The agent receives the full source code and is instructed to: (1) locate all LLM callsites, including both direct API calls ( client.chat.completions.create() ) and framework-wrapped calls (LangChain LLMChain.run() ); (2) identify all dy-namic placeholders—runtime expressions injected into prompts via f-strings, .format() , string concatenation, or template engines; (3) infer a concrete, plausible runtime value for each placeholder based on code context and data flow (e.g., if user_query is read from input() , guess a realistic query string); (4) reconstruct the fully rendered prompt. The prompt instructs the agent to output a structured JSON record for each callsite: 
+
+> Prompt Reconstruction — Output Format
+> {“prompt”: “<fully rendered prompt text>”, “placeholders”: [ {“original_expression”: “user_query”, “guessed_value”: “What is the GDP of France?”}] }
+
+In effect, the reconstruction replaces each dynamic placeholder with its inferred concrete value while keeping the rest of the prompt verbatim. 
+
+3.1.2 Output Generation. Each reconstructed prompt is sent to an LLM (GPT-5.2) to obtain an actual LLM output, simulating what the application would receive at runtime. This yields the complete observable triple for each callsite: placeholder (name + value) →
+
+rendered prompt → LLM output . Processing is performed asyn-chronously with a checkpoint-based resume to handle API rate lim-its. After deduplication (removing files under multiple repository paths) and cleaning (filtering malformed extractions), it produces 
+
+4,154 unique files with 9,083 placeholder-output pairs .
+
+## 3.2 Theory-Driven Taxonomy Design 
+
+Inspired by Wang et al. [ 48 ], who partition the unbounded space of LLM code-generation errors into discrete semantic and syntactic categories, we adopt a categorical approach: the space of possible placeholder-output transformations is infinitely combinatorial, so we discretize it into levels with distinct analytical consequences. Given triples, we design a taxonomy to characterize the information-flow relationship between each placeholder and the LLM output. We derive our taxonomy from two orthogonal dimensions grounded in quantitative information flow (QIF) theory [4, 16, 38, 45]. 
+
+3.2.1 Dimension 1: Information Preservation Level. Classical infor-mation flow analysis is binary—data either propagates or it does not [ 16 ]. QIF extends this to a spectrum: an LLM API call can be modeled as a channel whose capacity ranges from zero (constant channel, no input information reaches the output) to full (identity channel, input fully preserved) [ 4 , 45 ]. We discretize this continuum into five levels, each yielding distinct taint propagation semantics, and validate the boundaries empirically against paraphrase trans-formation typologies [ 9]: complete absence (L0), reduction to an abstract property such as a boolean or score (L1), lossy compression Zihao Xu, Xiao Cheng, Ruijie Meng, and Yuekang Li PL Domain 
+
+(Programming Language) 
+
+PL Domain 
+
+(Programming Language) 
+
+Placeholder 
+
+e.g., user_query 
+
+(variable) 
+
+Prompt 
+
+Template 
+
+e.g., f"... 
+
+{user_query}..." 
+
+LLM API Call 
+
+(Black Box) 
+
+NL Domain 
+
+(Natural Language 
+
+Processing) 
+
+LLM Output 
+
+e.g., generated 
+
+code, SQL, text 
+
+Downstream 
+
+Code 
+
+e.g., parsing, 
+
+assignment, 
+
+function calls 
+
+Sink 
+
+e.g., exec(), 
+
+eval() 
+
+(dangerous 
+
+operation) 
+
+> PL → NL
+> Boundary
+> NL → PL
+> Boundary
+> Layer 1: Propagation Decision (This Paper)
+> Solves propagation through the NL/PL boundary
+> Layer 2: Taint Engine (Existing Tools, e.g., CodeQL)
+> Handles traditional taint analysis from LLM output to sink
+
+Figure 1: The Natural Language/Programming Language (NL/PL) Boundary and Two-Layer Gap in LLM-Integrated Systems. Listing 1: A vulnerable text-to-SQL pattern. The placeholder 
+
+question enters the prompt; the LLM generates SQL; the SQL is executed without sanitization.                    
+
+> def answer ( question : str )-> str :prompt =f" Write ␣a␣ SQL ␣ query ␣ for :␣{ question }" resp =client . chat . completions . create ( model =" gpt -4 " , messages =[ {" role ": " user " , " content ": prompt }]) sql =resp . choices [0]. message . content cursor . execute ( sql ) #sink return cursor . fetchall () Data Collection( § 3.1)
+> Github Python Files
+> Callsite
+> Reconstruction
+> Output Generation
+> Taxonomy (§3.2-§3.4)
+> Theory Driven
+> Design
+> Data Driven
+> Refinement
+> Automated Labeling
+> Applications(§4.2-§4.3)
+> Taint Propagation
+> Prediction
+> Program Slice
+> Thining
+> ...
+
+Figure 2: End-to-end pipeline from raw source code to taxon-omy to downstream applications, illustrated in three phases. Table 1: Information preservation levels with examples from our dataset. Each level reflects a different degree of place-holder content retention in the LLM output.      
+
+> Level Name Example
+> L4 Lexical Preserva-tion Placeholder: "GDP of France"
+
+→ Output con-tains: "The GDP of France is $2.78T" (exact phrase preserved) L3 Semantic Preser-vation Placeholder: "fix the login bug" → Out-put: "Resolve the authentication issue"    
+
+> (meaning preserved, words changed) L2 Compressed Placeholder: a 500-word document
+
+→ Output: a 2-sentence summary retaining key points L1 Signal Extraction Placeholder: a product review → Output: "4"          
+
+> (numeric sentiment score) L0 Blocked / Absent Placeholder: "You are ahelpful assistant" (system prompt)
+
+→ Output shows no trace of this text 
+
+that retains key content but discards detail (L2), semantic equiva-lence where meaning is preserved but surface form changes (L3, the classic paraphrase boundary [ 9]), and lexical identity where both form and meaning are retained (L4). Table 1 provides definitions and concrete examples from our data. 
+
+3.2.2 Dimension 2: Output Modality. The form of the output de-termines its security implications: natural language (prose, lists, dialogue), structured format (JSON, XML, tables), and executable artifact (code, SQL, shell commands). A placeholder preserved at L3 (semantic) in natural language output is typically benign, but the same L3 preservation in SQL output (e.g., paraphrasing a query intent into a different SELECT statement) constitutes a potential injection vector. Two authors independently proposed category schemes along these dimensions and then merged them into 15 initial labels .
+
+## 3.3 Data-Driven Refinement 
+
+The 15 principle-driven labels provide initial coverage but may miss patterns that only emerge from real data. To assess complete-ness, two authors independently reviewed 200 randomly sampled placeholder–output pairs against the initial label set. This process yielded nine additional labels capturing recurring patterns not adequately represented by the initial 15 labels. A second iteration of the same review procedure produced no new labels, suggesting saturation. We evaluate saturation in §4.1 on the full dataset: only 0.01% of 9,083 pairs fall into the Unclassifiable category, indicating the taxonomy has reached practical completeness. The final tax-onomy comprises 24 labels organized into 8 groups , shown in Table 2. Groups A–C map directly to decreasing preservation: ver-batim copying (L4), semantic rewriting (L3), and lossy compression (L2). Group E captures signal-extraction patterns at L1, where the LLM reduces placeholder content to a decision, score, or category. Groups G and H cover L0, where placeholder content is either ac-tively blocked (missing context, missing capabilities, policy refusal) or passively absent (ignored, common-knowledge-dominated). Two groups cut across preservation levels: Format labels (Group D) co-occur with any level because output encoding is orthogonal to content preservation, and Generation labels (Group F) span L1–L4 because the LLM can produce new content while fully preserving, partially preserving, or merely extracting a signal from the input. 
+
+## 3.4 Automated Labeling 
+
+We use an LLM (GPT-5.2 Thinking) to label all 9,083 pairs. Impor-tantly, the choice of labeling model is secondary to the human val-idation that establishes ground truth: two authors independently achieve 𝜅 = 0.79 , confirming the taxonomy is clear enough for humans to apply consistently, and the GPT-generated labels are val-idated against this consensus ( 𝜅 = 0.82 ). The taxonomy’s reliability therefore rests on human agreement, not on any particular model; Crossing the NL/PL Divide: Information Flow Analysis Across the NL/PL Boundary in LLM-Integrated Code 
+
+Table 2: The 24-label taxonomy of placeholder-output information flow across NL/PL boundaries. 
+
+Group Pres. Level Label Description 
+
+A: Verbatim L4 (Lexical) Fragment Copy Entire phrases/sentences copied verbatim from input Template Slotting Input inserted into specific slots in a template-structured output Keyword Echo Key terms/entities preserved; surrounding text reorganized B: Rewrite L3 (Semantic) Paraphrase Rewrite Same meaning, different wording (formal/informal/clearer) Persona Rewriting Same facts rewritten in a different persona or tone Translation Cross-language transfer preserving meaning Standalone Question Rewrite Follow-up rewritten as self-contained question (RAG/dialogue) C: Compression L2 (Compressed) General Summarization Unrestricted condensation of input content Evidence-Construction Summary Summary restricted to provided context only (RAG) D: Format L1-L4 JSON-Only Template Output constrained to JSON schema Non-JSON Template Output constrained to other structured formats (XML, CSV, etc.) E: Decision L1 (Signal) Binary Decision Yes/no, true/false, or similar binary output Computed Number Numeric score, rating, or count Category Label Classification into predefined categories Ranking Ordered selection or prioritization F: Generation L1–L4 Content Expansion New content generated based on input direction/constraints Code Snippet Executable program code generated from input specification CLI Commands Terminal/shell commands generated from input G: Gating L0 (Blocked) Missing Context LLM lacks required information to use placeholder Missing Capabilities LLM lacks required tools/abilities Policy Refusal LLM refuses due to safety/policy constraints H: Weak/None L0 (Absent) Mostly Common Knowledge Output relies on general knowledge; input influence is weak Ignored Placeholder present but no observable effect on output Unclassifiable Does not fit any of the above category 
+
+we chose GPT-5.2 Thinking for its strong instruction-following abil-ity, but any model achieving comparable agreement would serve equally well. The labeling prompt is structured in two parts: 
+
+System prompt. Contains the complete taxonomy definition: all 24 labels with their names, descriptions, inclusion criteria, exclusion criteria, and distinguishing examples. The model is instructed to assign all applicable labels (multi-label) and provide evidence for each assignment. 
+
+User prompt. Provides three sections per callsite: 
+
+Taxonomy Labeling—User Prompt 
+
+> [PLACEHOLDERS]
+> {placeholders_json}
+> [RENDERED PROMPT]
+> {rendered_prompt}
+> [MODEL OUTPUT]
+> {model_output}
+
+Output format. The model returns structured JSON where each placeholder receives its assigned labels with evidence: 
+
+Taxonomy Labeling—Required Output Format 
+
+> {“labels”: [ {“original_expression”: {ph_name}, “guessed_value”: {ph_value}, “assigned_labels”: [{label_1}, {label_2}, ...], “evidence”: [ {“label”: {label_1}, “quote”: {output_excerpt}, “why”: {justification}}, ...]}, ...]}
+
+Each label assignment is traceable to a specific output excerpt, enabling post-hoc auditing. Labeling quality is validated in RQ1. 
+
+## 4 Evaluation 
+
+We evaluate the taxonomy on three research questions, progressing from intrinsic validation to downstream application examples: 
+
+• RQ1: Is the taxonomy reliable, complete, and informative? (§4.1) 
+
+• RQ2: Can the taxonomy improve security-relevant taint propa-gation prediction? (§4.2) 
+
+• RQ3: Can the taxonomy reduce backward slices at LLM call boundaries? (§4.3) 
+
+## 4.1 RQ1: Reliability, Completeness, and Distribution 
+
+4.1.1 Reliability. Following Sim and Wright’s sample size guide-lines for kappa reliability studies [ 44 ], we randomly sampled 200 placeholder-output pairs for human labeling, which exceeds the minimum required to detect substantial agreement ( 𝜅 ≥ 0.60 ) with 80% power. Two authors independently labeled all 200 pairs using Cohen’s 𝜅 [ 14 ], achieving 𝜅 1 = 0.79 (substantial agreement [ 25 ]). After discussion to reach consensus, we compared the human con-sensus labels against the GPT-generated labels, yielding 𝜅 2 = 0.82 
+
+(almost perfect agreement). This validates both the taxonomy’s clar-ity (humans agree on how to apply it) and the automated labeling’s fidelity (GPT labels match human consensus). 
+
+4.1.2 Completeness. Of 9,083 pairs, exactly 1 pair (0.01%) was as-signed the Unclassifiable catch-all label. The taxonomy’s two orthog-onal dimensions—preservation level and output modality—jointly cover the space of observable placeholder-output relationships with near-complete coverage. 
+
+4.1.3 Distribution. Table 3 reports the label distribution across all 9,083 pairs. The most frequent labels are Keyword Echo (41.2%) and 
+
+Content Expansion (38.2%), reflecting that most LLM calls either echo key terms from the input or generate new content guided by the input. Ignored accounts for 13.2%, indicating that a substantial minority of placeholders have no observable effect on the output. The blocked group (L0: Ignored, Missing Context, Missing Capabil-ities, Policy Refusal) covers 15.4% of all pairs. Zihao Xu, Xiao Cheng, Ruijie Meng, and Yuekang Li 
+
+Table 3: Label distribution across 9,083 placeholder-output pairs. Percentages exceed 100% due to multi-labeling (45.5%). Label Count % Label Count %                                                            
+
+> Keyword Echo 3,742 41.2 Translation 192 2.1 Content Expansion 3,468 38.2 JSON-Only Template 189 2.1 Paraphrase Rewrite 1,307 14.4 Fragment Copy 143 1.6 Ignored 1,202 13.2 Missing Context 132 1.5 Template Slotting 903 9.9 Ranking 88 1.0 Computed Number 526 5.8 Evid.-Constrained Sum. 88 1.0 General Summarization 456 5.0 Missing Capabilities 36 0.4 Category Label 424 4.7 CLI Commands 28 0.3 Non-JSON Template 353 3.9 Standalone Q. Rewrite 22 0.2 Binary Decision 348 3.8 Policy Refusal 22 0.2 Code Snippet 348 3.8 Mostly Common Know. 14 0.2 Persona Rewriting 213 2.3 Unclassifiable 1<0.1
+
+Notably, 45.5% of placeholders receive multiple labels (14,245 total label assignments), confirming that information flow across the LLM boundary is often multi-faceted: a placeholder may be simultaneously echoed as a keyword and used as a constraint for content expansion. 
+
+Answer to RQ1: The taxonomy achieves high agreement (𝜅 = 0.82 ) and near-complete coverage (0.01% unclassifiable). Its 24 labels are informative: 45.5% of placeholders receive multi-ple labels, and the five preservation levels reveal a non-trivial split—85% of placeholders have content preserved (L1–L4) while 15% are fully blocked (L0)—confirming that neither a blanket "propagate everything" nor "block everything" assumption holds at this boundary. 
+
+## 4.2 RQ2: Security-Relevant Propagation Predicting 
+
+Having established the taxonomy’s reliability and coverage, we now evaluate its utility for a concrete downstream task: predicting whether placeholder content propagates through the LLM to a dangerous sink. 
+
+4.2.1 Setup. We evaluate propagation prediction on a randomly sampled subset of the full dataset. Specifically, we draw 500 files 
+
+uniformly at random from the 4,154-file corpus and identify among them 62 Python files that contain sink patterns —i.e., files in which at least one dangerous sink ( exec , eval , subprocess , SQL 
+
+execute , requests.get for SSRF, yaml.unsafe_load ) is present. Of these 62 files, 22 are manually confirmed vulnerable (attacker-controlled content actually reaches the sink) and 40 are not (the sink exists but is not reachable from the LLM output). This design is more rigorous than evaluating on all files: because every file contains a sink, the test is whether the LLM output actually reaches 
+
+the sink, not whether a sink exists. The ground truth consists of 353 (placeholder × sink) pairs :110 labeled YES (placeholder content propagates through the LLM and reaches the sink) and 243 labeled NO. Table 4 summarizes the vulnerability types in the 22 confirmed-vulnerable files. 
+
+Ground truth annotation. Three independent reviewers anno-tated all (placeholder × sink) pairs from the 62 files. For each pair, reviewers received the source code, prompt template, LLM output, 
+
+Table 4: Vulnerability types in the 22 confirmed-vulnerable files (110 YES pairs total across all placeholder × sink combi-nations). Vulnerability Type CWE Files YES Pairs Typical Sink 
+
+Code injection CWE-94 7 21 exec() , eval() 
+
+SQL injection CWE-89 7 36 cursor.execute() 
+
+Command injection CWE-78 5 44 subprocess.Popen() 
+
+SSRF CWE-918 2 6 requests.get() 
+
+Unsafe deserialization CWE-502 1 3 yaml.unsafe_load() 
+
+Total 22 110 Table 5: Information visibility for each method. ✓ = available; — = not available. Information A: Prop. All B: Code-Only C: Tax. Only B+: Code+Tax. C+: Tax.+Verif.                          
+
+> Source code —✓—✓✓
+> Prompt template —✓—✓—LLM output —✓—✓—Sink information —✓—✓✓
+> Taxonomy labels ——✓✓✓
+
+placeholder name/value, and sink location. The annotation stan-dard was: “If an attacker fully controls this placeholder’s value, can attacker-influenced content propagate through the LLM’s response and ultimately reach this specific sink?” . Taxonomy labels were not 
+
+provided to reviewers to avoid circular reasoning. Final verdicts were determined by majority vote among three annotators, achiev-ing Fleiss’ 𝜅 = 0.765 .
+
+4.2.2 Method Comparison. We compare five methods with pro-gressively richer information, summarized in Table 5. 
+
+A: Propagate All (baseline): Predict YES for every pair. Due to the NL/PL boundary, we have no basis for distinguishing tainted from untainted returns; the only uninformed choices are to propagate all or propagate none—i.e., to treat every LLM return as either tainted or clean. This baseline adopts the conservative strategy of universal propagation. No LLM or taxonomy is required. 
+
+B: LLM Code-Only : Claude Opus 4.6 (a different SOTA model from the GPT-5.2 labeler, to avoid circular evaluation) predicts from source code, prompt template, LLM output, and sink information, 
+
+without taxonomy labels. 
+
+Method B—Code-Only Prediction Prompt                             
+
+> You are asecurity researcher. Given the following Python source code, the prompt template used to call an LLM, and the actual LLM output, determine whether the placeholder can be exploited.
+> [SOURCE CODE] {file_contents} [PROMPT TEMPLATE] {prompt_template}
+> [LLM OUTPUT] {output} [PLACEHOLDER] {ph_name} = {ph_value}
+> [DANGEROUS SINK] Line {sink_line}: {sink_code} (type: {vuln_type}) Question: If an attacker fully controls “{ph_name}”, can attacker-influenced content propagate through the LLM’s response and reach the dangerous sink at line {sink_line}? Consider: Does the LLM output flow to THIS SPECIFIC sink? Answer with ONLY “yes” or “no”. Nothing else.
+
+C: Taxonomy Only : a deterministic rule using only taxonomy la-bels, without any code or LLM. Let L( 𝑝 ) denote the set of taxonomy labels assigned to placeholder 𝑝 , and let N = {Ignored, Missing Con-text, Missing Capabilities, Policy Refusal } be the non-propagating set. C predicts propagation if and only if the placeholder has any Crossing the NL/PL Divide: Information Flow Analysis Across the NL/PL Boundary in LLM-Integrated Code 
+
+Table 6: Propagation prediction on 353 pairs (110 YES / 243 NO) from 62 sink-containing files. 
+
+Method Prec. Rec. 𝐹 1 FP FN 
+
+A: Propagate All 31.2% 100% 47.5% 243 0B: LLM Code-Only 75.9% 80.0% 77.9% 28 22 C: Taxonomy Only 34.6% 98.2% 51.2% 204 2B+: LLM Code+Taxonomy 89.7% 70.9% 79.2% 9 32 
+
+C+: Taxonomy+Verification 98.0% 87.3% 92.3% 2 14 
+
+label outside N :C(𝑝, 𝑠 ) =
+
+(
+
+yes if L( 𝑝 ) ⊈ N
+
+no otherwise (1) 
+
+B+: LLM Code+Taxonomy : same prompt as B, but the taxonomy labels for each placeholder are prepended (e.g., “This placeholder has been classified as: Content Expansion, Keyword Echo ”), together with the full 24-label taxonomy definition. This gives the LLM both code-level context and taxonomy information in a single prompt. 
+
+C+: Taxonomy+Verification (two-stage pipeline): instead of mix-ing taxonomy and code in one prompt, this method separates the two concerns. Stage 1 applies the C taxonomy filter to cheaply block non-propagating pairs; Stage 2 sends only the remaining candidates to Claude Opus 4.6 with a focused verification prompt: 
+
+C+—Stage 2 Verification Prompt               
+
+> You are a security researcher. Analyze this Python source code.
+> [SOURCE CODE] {file_contents}
+> [DANGEROUS SINK] Line {sink_line} (type: {vuln_type}) Question: Can an attacker exploit the LLM API call’s output to hijack the dangerous operation at line {sink_line}? Answer with ONLY “yes” or “no”. Nothing else.
+
+Formally: C+ (𝑝, 𝑠 ) =
+
+(
+
+no if L( 𝑝 ) ⊆ N (Stage 1) LLM (𝑝, 𝑠 ) otherwise (Stage 2) (2) Stage 2 receives only source code and sink location—no prompt template, LLM output, or taxonomy labels—forcing the verifier to focus purely on code-level reachability. 
+
+4.2.3 Results. Table 6 summarizes the results, ordered from base-line through single-signal methods to combined approaches. 
+
+Baselines and single-signal methods. Propagate All (A) achieves perfect recall but only 31.2% precision—243 false positives make it unusable. The LLM alone (B) substantially improves precision to 75.9% by reasoning about code flow, but still misses 22 true positives (80.0% recall). Taxonomy alone (C) has near-perfect recall (98.2%, only 2 FN) but low precision (34.6%)—it identifies which inputs the LLM uses but cannot judge if the output reaches a specific sink. 
+
+Adding taxonomy to the LLM prompt (B+). Providing taxonomy labels directly in the LLM’s prompt improves precision from 75.9% to 89.7% (FP drops from 28 to 9), as the labels help the LLM dismiss non-propagating placeholders. However, recall drops from 80.0% to 70.9% (FN rises from 22 to 32): the taxonomy information makes the LLM overly conservative, causing it to second-guess its own code-level analysis and reject borderline cases. The net effect is a modest 𝐹 1 gain (77.9% →79.2%). 
+
+Table 7: Per-label propagation rates. Propagation rate = frac-tion of pairs with this label that are YES. Labels with <5occurrences in the security dataset are omitted for stability. Label Y N Rate Label Y N Rate                                           
+
+> Code Snippet 20 195.2% Content Expansion 49 91 35.0% JSON-Only Template 5271.4% Template Slotting 20 38 34.5% Non-JSON Template 14 960.9% Keyword Echo 55 117 32.0% Computed Number 7653.8% Paraphrase Rewrite 14 74 15.9% Category Label 11 10 52.4% Ignored 742 14.3% Binary Decision 4736.4% Gen. Summarization 142 2.3%
+
+Why C+ outperforms B+ despite using less information. C+ achieves the highest 𝐹 1 (92.3%) even though its Stage 2 prompt contains less information than B or B+ (no prompt template, no LLM output, no taxonomy labels). The reason is a clean separation of concerns: 
+
+• Stage 1 resolves a question that code analysis cannot answer— 
+
+does the LLM use this placeholder? —deterministically via taxon-omy labels, blocking 41 of 353 pairs with only 2 false negatives. 
+
+• Stage 2 resolves a question that the taxonomy cannot answer— 
+
+does the LLM output reach this sink? —by asking the verifier to trace data flow through code alone, with no need to reason about LLM behavior. B+ conflates both questions in a single prompt: the LLM must simultaneously interpret taxonomy labels, infer prompt semantics, and trace code-level reachability. The result is over-filtering—recall drops from 80.0% (B) to 70.9% (B+) as the model second-guesses its own code analysis when taxonomy labels suggest non-propagation. 
+
+4.2.4 Per-Label Security Analysis. Table 7 reports the propagation rate for each label—the fraction of pairs with that label that are in the YES class. The discriminative power of the taxonomy comes primarily from the L0 (blocked) group. When all of a placeholder’s labels fall in 
+
+N , the placeholder rarely propagates to a sink (propagation rate 4.9%, 2 of 41 blocked pairs). Labels associated with executable out-put modality—Code Snippet (95.2%), Non-JSON Template (60.9%), Computed Number (53.8%)—show the highest propagation rates, consistent with the intuition that placeholders influencing code or command generation pose the greatest security risk. 
+
+4.2.5 Error Analysis. C+ produces 14 false negatives and 2 false positives. Of these, 12 originate in Stage 2: the taxonomy correctly identifies these placeholders as propagating, but the LLM verifier fails to trace indirect data flow through framework abstractions, callback chains, or multi-step pipelines. The remaining 2 false nega-tives originate in Stage 1 as taxonomy labeling errors: the automated labeler assigned Ignored , but the placeholder does influence the out-put through indirect paths (e.g., a system prompt that subtly shapes code generation style). The 2 false positives arise when the Stage 2 verifier predicts propagation, but expert reviewers determined the sink is unreachable in practice. 
+
+4.2.6 Cross-Language Validation on Real-World CVEs. To validate whether the taxonomy generalizes beyond our Python dataset, we apply all five methods to real-world security vulnerabilities in OpenClaw, an open-source TypeScript LLM agent framework. We systematically reviewed all closed prompt-injection issues in Zihao Xu, Xiao Cheng, Ruijie Meng, and Yuekang Li 
+
+Table 8: Cross-language validation on 12 pairs from 6 real OpenClaw CVEs. 6 YES (before-fix) / 6 NO (after-fix).                               
+
+> Method Prec. Rec. 𝐹 1FP FN
+> A: Propagate All 50.0% 100% 66.7% 60B: Code-Only 80.0% 66.7% 72.7% 12C: Taxonomy Only 100% 100% 100% 00B+: Code+Taxonomy 100% 66.7% 80.0% 02
+> C+: Taxonomy+Verification 100% 100% 100% 00
+
+the OpenClaw repository and attempted to reproduce each one on Claude Sonnet 4.5 and Gemini 2.5 Flash. As of writing, 6 issues remain reproducible; the remainder have been mitigated by model-level safety training. For each reproducible case, we extract the vulnerable source code (before fix) and the patched source code (after fix) from the git history, yielding 12 (placeholder × sink) pairs: 6 YES (before-fix, vulnerable) and 6 NO (after-fix, fixed). The cases include CVE-2026-27001 (CWD path injection, CVSS 8.6), CVE-2026-22175 [ 2] (exec allowlist bypass, CVSS 7.1), and four additional prompt-injection issues involving marker spoofing, Unicode bypass, and wrapper-fragment escape. Table 8 reports the results. Both C and C+ achieve perfect 𝐹 1 on this dataset. The taxonomy labels precisely track the effect of each security fix: all 6 before-fix cases are labeled Content Expansion (the LLM uses injected content to generate actions), while after patching, 5 shift to Ignored and 1 to Policy Refusal —all non-propagating. The fix fundamentally changes how the LLM processes attacker-controlled input: sanitiza-tion, marker isolation, or path validation causes the LLM to ignore 
+
+the injection, which is exactly what the non-propagating labels capture. This result is consistent with the main experiment and confirms generalization across languages (Python → TypeScript) and vulnerability sources (curated dataset → real-world CVEs). 
+
+Answer to RQ2: C+ achieves 𝐹 1 = 92 .3% on 353 Python pairs, improving over both the uninformed baseline A ( 𝐹 1 = 47 .5% )and the strongest single-signal method B ( 𝐹 1 = 77 .9% ). On 6 real OpenClaw CVEs (12 TypeScript pairs), it achieves 𝐹 1 = 100% .The taxonomy contributes information previously unavailable to any analysis: non-propagating labels identify placeholders the LLM does not use (4.9% propagation rate when all labels fall in N ), while propagating labels tied to executable modalities (Code Snippet, Non-JSON Template, Computed Number) flag the highest-risk flows. 
+
+## 4.3 RQ3: Taxonomy-Informed Program Slicing 
+
+Motivation. RQ2 demonstrates the taxonomy’s value for security analysis, but the non-propagating labels encode a general-purpose fact— which inputs the LLM uses —useful beyond security. Program slicing, change-impact analysis, dead-code elimination, and depen-dency tracking all face the same opacity at LLM calls. To validate this broader applicability, we apply the taxonomy to backward slicing , where the goal is program understanding rather than vul-nerability detection. 
+
+4.3.1 Setup. A backward slice from an LLM call’s input argu-ments identifies all code lines (data and control dependencies) that influence the prompt sent to the LLM. Traditional slicers treat 
+
+Table 9: Backward slice reduction from taxonomy-informed barriers. Reduction = mean per-file ratio of lines removed.              
+
+> Scope Files Cut Lines Mean Reduction
+> All files 295 163 1.3% With barriers 51 163 7.6%
+> With >0 cut 26 163 15.0%
+
+the LLM call as opaque and include all upstream dependencies indiscriminately—even those feeding placeholders that the LLM ignores. The taxonomy provides the missing information: if a place-holder is labeled entirely with non-propagating labels ( L( 𝑝 ) ⊆ N ), its upstream code does not influence the LLM output and can be excluded from the slice. We implement this using CodeQL [ 8 ] on 295 Python files from our 500-file subdataset that contain LLM callsites—i.e., the unique files for which CodeQL successfully constructed an analysis. Cod-eQL handles both data-flow dependencies (via taint tracking) and control-flow dependencies (via getParentNode+() , which captures enclosing if /for /while conditions). For each file, we compute two slices from LLM call arguments: 
+
+• Full Slice : standard backward slice including all placeholders’ up-stream chains (data flow via CodeQL taint tracking + control flow via CodeQL’s getParentNode+() for enclosing if /for /while 
+
+conditions). 
+
+• Taxonomy-Informed Slice : same query, but with CodeQL 
+
+isBarrier predicates that block taint propagation through non-propagating placeholder variables. Barriers are per-file (variable, file) pairs: a variable is barriered in a given file only if it ap-pears exclusively in non-propagating placeholders and never in propagating ones within that file. From the 295 files, 51 contain at least one non-propagating place-holder variable, yielding 83 barrier variables total. 
+
+4.3.2 Results. Table 9 reports the slice reduction. The global mean reduction (1.3%) is modest because 83% of files (244/295) have only propagating placeholders—the taxonomy correctly identifies noth-ing to cut. Among the 51 files with at least one non-propagating variable, the mean rises to 7.6%. Focusing on the 26 files where the taxonomy actually removes lines, the mean per-file reduction is 15.0% , with peaks reaching 37.8% and 33.3% shown in Table 10. 
+
+4.3.3 Soundness Check. The taxonomy-informed slice removes lines, but does it remove lines that matter? We verify soundness against the human-annotated ground truth from RQ1 (§4.1). Barri-ers are placed only on variables whose placeholders are exclusively labeled as non-propagating. To confirm, we manually inspected all 163 cut lines across the 26 affected files and verified that none of them contribute content to the LLM output: every cut line belongs to the upstream chain of a placeholder that human annotators in-dependently labeled as non-propagating (e.g. unused configuration variables). The taxonomy-informed slice therefore achieves a 15% reduction without sacrificing any ground-truth dependency. Table 10 details the top cases. In these files, non-propagating placeholders—system prompt constants ( HUMAN_PROMPT ), configura-tion variables ( current_dir ), agent state ( executed_task_list )— have non-trivial upstream definition chains involving imports, Crossing the NL/PL Divide: Information Flow Analysis Across the NL/PL Boundary in LLM-Integrated Code 
+
+Table 10: Top files by slice reduction. Full = full-slice lines; 
+
+Prop = taxonomy-informed slice lines.                             
+
+> File (abbreviated) Full Prop Cut Reduction
+> BabyCommandAGI/babyagi.py 127 79 48 37.8% weaviate-podcast-search 15 10 533.3% swarms/autotemp.py 16 11 531.2% langroid/test_llm.py 13 9430.8% codeGPT/analysis_repo.py 30 21 930.0% spade_v3/check_subsumes.py 51 36 15 29.4%
+
+loop state, and file I/O that the traditional slicer unnecessar-ily includes. For example, in BabyCommandAGI, the four bar-riered variables ( current_dir , command , executed_task_list ,
+
+ExecutedTaskParser ) collectively contribute 48 upstream lines— including directory traversal logic, command history formatting, and task list serialization—none of which influences the LLM’s generated output. 
+
+4.3.4 Why Reduction Is Bounded. Three structural factors limit the achievable reduction: (1) Non-propagating and propagating placeholder variables frequently merge at the prompt construction site (e.g., prompt = f"{SYSTEM} {user_query}" ), so the merged line and shared downstream code cannot be cut. (2) Many non-propagating variables have only 1–2 upstream lines (a constant definition or import), limiting the per-variable savings. (3) In most LLM-integrated code, the majority of placeholders carry user con-tent and are propagating; files dominated by system prompts and configuration variables are the minority. Despite these limits, the taxonomy provides slicing tools with LLM-aware semantic information that was previously unavailable. No prior backward slicer can distinguish a placeholder the LLM uses from one it ignores. 
+
+Answer to RQ3: Taxonomy-informed backward slicing reduces slice size by a mean of 15.0% in files with non-propagating place-holders that have upstream dependencies. The non-propagating labels provide actionable information for any analysis that must reason across the NL/PL boundary, validating the taxonomy’s utility beyond taint analysis. 
+
+## 5 Discussion 
+
+The taxonomy as general-purpose NL/PL infrastructure. The two downstream applications—taint propagation prediction (RQ2) and backward slice thinning (RQ3)—exercise the taxonomy in funda-mentally different ways. In RQ2, the non-propagating labels serve as a pre-filter that removes irrelevant (placeholder, sink) pairs before LLM-based verification; in RQ3, the same labels serve as barriers 
+
+that prune irrelevant upstream code from backward slices. The mechanism differs (filtering pairs vs. pruning dataflow edges), but the underlying semantic primitive is identical: the taxonomy’s de-termination of whether the LLM uses a given placeholder’s content. This suggests that the taxonomy is not merely a taint-analysis arti-fact but a reusable information-flow model for the NL/PL boundary, applicable wherever a tool must decide how program state crosses into and out of an LLM call. 
+
+Filtering, not standalone prediction. Used alone (C, 𝐹 1 = 51 .2% ), tax-onomy labels are insufficient for accurate propagation prediction— they capture whether the LLM uses the placeholder’s content (Layer 1) but cannot assess whether that content reaches a spe-cific sink through code-level paths (Layer 2). The taxonomy’s value emerges in the two-stage C+ pipeline ( 𝐹 1 = 92 .3% ): Stage 1 cheaply filters 41 pairs with only 2 false negatives, letting Stage 2 focus on the harder code-level reachability task. This decomposition is key: each layer is handled by the method best suited for it. Notably, adding taxonomy labels directly to the LLM prompt (B+) improves precision (75.9% →89.7%) but hurts recall (80.0% →70.9%), yielding only a modest 𝐹 1 gain (0.779 →0.792). The taxonomy infor-mation makes the LLM overly conservative: it second-guesses its own code-level analysis when labels suggest low propagation like-lihood. The two-stage approach avoids this interference by using taxonomy and LLM for separate, sequential tasks. 
+
+Two-layer complementarity. C+ operationalizes the two-layer de-composition: taxonomy labels handle Layer 1 while the LLM verifier handles Layer 2. Layer 2 remains a bottleneck: 14 of 16 total errors are Stage 2 false negatives where the LLM fails to trace indirect data flow through framework abstractions or multi-step pipelines. Both layers require independent improvement; our taxonomy addresses Layer 1 and enables more focused Layer 2 analysis. 
+
+Worked example. Consider the text-to-SQL agent in Listing 1 with two placeholders: question (labeled Content Expansion, Keyword Echo ) and system_msg (labeled Ignored ). In C+, Stage 1 blocks the (system_msg , sink) pair because all its labels fall in N ; Stage 2 con-firms that question propagates to cursor.execute() —a “prop-agate all” baseline would flag both, producing a false positive. In the slicing application (RQ3), the same Ignored label prunes 
+
+system_msg ’s upstream definition chain from the backward slice, reducing it to only code that computes question .
+
+Implications for tool builders. Our results yield four actionable take-aways. First, the C+ pipeline provides a practical blueprint: use tax-onomy labels as a fast, deterministic pre-filter , then invoke an LLM for focused code-level verification. Second, the non-propagating set 
+
+N serves as an allowlist for filtering false alarms—Stage 1 blocked 41 of 353 pairs (11.6%) with only 2 false negatives. Third, per-label propagation rates enable risk scoring : pairs involving Code Snippet (95.2%) or Non-JSON Template (60.9%) labels warrant higher prior-ity. Fourth, the same non-propagating labels translate directly into CodeQL predicates (RQ3), demonstrating integration into existing tool infrastructure with minimal effort. 
+
+Limitations. We identify three limitations. First, the taxonomy pre-dicts LLM behavior, not code flow; 14 of 16 errors in C+ stem from Stage 2 verification failures on indirect code paths. Second, the main dataset is Python; the OpenClaw validation (§4.2) provides initial cross-language evidence on TypeScript, but broader gener-alization remains untested. Third, slicing reduction is bounded by the structural prevalence of non-propagating placeholders: in LLM-integrated code, the majority of placeholders carry user content. Zihao Xu, Xiao Cheng, Ruijie Meng, and Yuekang Li 
+
+## 6 Threats to Validity 
+
+Internal validity. We validate automated labeling against hu-man consensus ( 𝜅 = 0.82 ) and establish the security ground truth through three independent reviewers (Fleiss’ 𝜅 = 0.765 , substantial agreement). Using an LLM for both output generation and label-ing may introduce bias; we mitigate this by treating the human agreement score ( 𝜅 1 = 0.79 ) as the primary reliability measure. 
+
+External validity. Our dataset covers Python files from open-source GitHub repositories, predominantly using OpenAI and LangChain APIs. Results may differ for other languages, closed-source applications, or alternative LLM providers. The OpenClaw cross-validation (§4.2) provides initial TypeScript evidence but cov-ers only 6 CVEs; broader validation remains future work. Neverthe-less, Python and TypeScript are the two most common languages for LLM-integrated applications. 
+
+## 7 Related Work 
+
+Taint analysis across API boundaries. Several techniques address taint analysis across opaque boundaries. TAJ [ 47 ] tracks taint across HTTP request/response boundaries; FlowDroid [ 7 ] models An-droid lifecycle callbacks; IccTA [ 27 ] extends FlowDroid to propa-gate taint across Android inter-component communication chan-nels; TaintDroid [ 17 ] provides runtime tracking through JNI and IPC; PolyCruise [ 28 ] addresses cross-language information flow in polyglot programs by bridging heterogeneous language runtimes; FlowDist [ 20 ] uses multi-staged refinement for dynamic informa-tion flow analysis in distributed systems; and Livshits and Lam [ 33 ]analyze Java web applications with user-specified source/sink de-scriptors. Each encodes domain-specific propagation semantics for a specific opaque boundary—whether inter-component, cross-language, or cross-process. Our work addresses the NL/PL bound-ary at LLM API calls—the first to model natural-language-mediated 
+
+information flow rather than purely programmatic transformations. 
+
+LLM security. Prompt injection—both direct and indirect—has been extensively studied [ 21 , 32 , 39 ], and jailbreaking research explores circumvention of safety training [ 49 ]. Böhme et al. [ 10 ] identify the security implications of AI-generated code and opaque model boundaries as a key open challenge for the next decade of soft-ware security research. On the detection side, information flow fuzzing [ 22 ] and hybrid analysis approaches combining static anal-ysis with machine learning [ 42 ] have been proposed to detect in-formation leaks and predict vulnerabilities, respectively. However, these efforts characterize attack vectors or detect leaks in traditional code, but do not model the information flow between prompt in-puts and LLM outputs. Our taxonomy fills this gap: it characterizes 
+
+how placeholder content is transformed by the LLM, determining whether an injection can propagate to a downstream sink. 
+
+LLM agent security analysis. Recent work explores security analysis of LLM-integrated systems from several angles. Fides [ 15 ] tracks confidentiality and integrity labels at runtime in LLM agent plan-ners. AgentFuzz [ 30 ] fuzzes LLM agents to discover taint-style vulnerabilities. IRIS [ 29 ] uses LLMs to infer taint specifications for traditional static analysis, and LATTE [ 31 ] automates binary taint analysis with LLM-identified sources and sinks. Concurrently, TaintP2X [ 23 ] models LLM-generated outputs as taint sources and tracks their propagation to sensitive sinks via static analysis with LLM-assisted false-positive pruning. These works either analyze 
+
+traditional code with LLM assistance, track information flow around 
+
+the LLM boundary, or treat the LLM as a monolithic taint source without characterizing how placeholder content is transformed. Our taxonomy fills a complementary gap: it models the information flow across the NL/PL boundary, characterizing which placeholders propagate and how, enabling finer-grained filtering than a binary tainted/untainted model. 
+
+Program slicing. Backward slicing identifies statements affecting a given program point [ 50 ]; modern implementations in CodeQL [ 8 ]and Joern support barrier predicates to prune irrelevant flows. Re-cent advances use graph simplification with multi-point slicing to accelerate path-sensitive analysis by retaining only the necessary program dependencies [ 12 ]. Slicing has been applied to debug-ging, program comprehension, and change-impact analysis, but no prior approach accounts for the NL/PL boundary: when the slicing criterion is an LLM call’s input, existing slicers conservatively in-clude all upstream code regardless of whether the LLM uses it. RQ3 demonstrates that taxonomy labels serve as semantically grounded barriers, providing the first LLM-aware backward slicing capability. 
+
+Taxonomy construction in SE. SE taxonomies are typically built through open coding or grounded theory [ 40 ]. Our approach com-bines principle-driven initial design (from quantitative information flow theory [ 4, 45 ]) with data-driven refinement, balancing deduc-tive rigor with inductive completeness. 
+
+## 8 Conclusion 
+
+LLM API calls create an opaque boundary between programming-language and natural-language semantics that breaks every analysis relying on dataflow summaries. Our 24-label taxonomy bridges this boundary by characterizing the observable information flow be-tween each placeholder and the LLM output along two dimensions— preservation level and output modality—achieving 𝜅 = 0.82 inter-annotator agreement on 9,083 real-world pairs. The taxonomy en-codes a determination no prior analysis could make: whether the LLM uses a given input. That single determination drives both downstream applications we demonstrate: in taint analysis, non-propagating labels pre-filter a two-stage pipeline to 𝐹 1 = 92 .3% on 353 expert-annotated pairs; in backward slicing, the same labels prune 15% of slice lines in affected files. Cross-language valida-tion on 6 real OpenClaw CVEs in TypeScript confirms general-ization beyond our Python dataset. The two applications differ in mechanism—filtering pairs vs. pruning dataflow edges—but both rely on the same semantic primitive, which suggests that change-impact analysis, dead-code elimination, and fault localization can benefit from the same model. Crossing the NL/PL Divide: Information Flow Analysis Across the NL/PL Boundary in LLM-Integrated Code 
+
+## References 
+
+[1] 2026. CVE-2026-22171: OpenClaw Feishu Media Path Traversal. https://www. redpacketsecurity.com/cve-alert-cve-2026-22171/. [2] 2026. CVE-2026-22175: OpenClaw OpenClaw’s exec allow-always can be bypassed via unrecognized multiplexer shell wrappers. https://www. redpacketsecurity.com/cve-alert-cve-2026-22175/. [3] 2026. CVE-2026-32060: OpenClaw Path Traversal in apply_patch. https: //advisories.gitlab.com/pkg/npm/openclaw/CVE-2026-32060/. [4] Mário S Alvim, Konstantinos Chatzikokolakis, Annabelle McIver, Carroll Morgan, Catuscia Palamidessi, and Geoffrey Smith. 2020. The science of quantitative information flow . Springer. [5] Anthropic. [n. d.]. Anthropic. https://www.anthropic.com/company. Accessed 2026-01-17. [6] Robert S Arnold. 1996. Software Change Impact Analysis . IEEE Computer Society Press, Los Alamitos, CA. [7] Steven Arzt, Siegfried Rasthofer, Christian Fritz, Eric Bodden, Alexandre Bartel, Jacques Klein, Yves Le Traon, Damien Octeau, and Patrick McDaniel. 2014. Flow-Droid: Precise Context, Flow, Field, Object-Sensitive and Lifecycle-Aware Taint Analysis for Android Apps. In Proceedings of the 35th ACM SIGPLAN Conference on Programming Language Design and Implementation (PLDI) . 259–269. [8] Pavel Avgustinov, Oege De Moor, Michael Peyton Jones, and Max Schäfer. 2016. QL: Object-oriented queries on relational data. In 30th European Conference on Object-Oriented Programming (ECOOP 2016) . Schloss Dagstuhl–Leibniz-Zentrum für Informatik, 2–1. [9] Rahul Bhagat and Eduard Hovy. 2013. What is a paraphrase? Computational linguistics 39, 3 (2013), 463–472. [10] Marcel Böhme, Eric Bodden, Tevfik Bultan, Cristian Cadar, Yang Liu, and Giuseppe Scanniello. 2024. Software Security Analysis in 2030 and Beyond: A Research Roadmap. ACM Transactions on Software Engineering and Methodol-ogy 34, 2 (2024), 1–50. [11] Harrison Chase. 2022. LangChain. https://github.com/langchain-ai/langchain. [12] Xiao Cheng, Jiawei Ren, and Yulei Sui. 2024. Fast Graph Simplification for Path-Sensitive Typestate Analysis through Tempo-Spatial Multi-Point Slicing. 
+
+Proceedings of the ACM on Software Engineering 1, FSE (2024), 1932–1954. [13] Herbert H Clark and Edward F Schaefer. 1989. Contributing to discourse. Cogni-tive science 13, 2 (1989), 259–294. [14] Jacob Cohen. 1960. A coefficient of agreement for nominal scales. Educational and psychological measurement 20, 1 (1960), 37–46. [15] Manuel Costa, Boris Köpf, Aashish Kolluri, Andrew Paverd, Mark Russinovich, Ahmed Salem, Shruti Tople, Lukas Wutschitz, and Santiago Zanella-Béguelin. 2025. Securing ai agents with information-flow control. arXiv preprint arXiv:2505.23643 (2025). [16] Dorothy E Denning. 1976. A lattice model of secure information flow. Commun. ACM 19, 5 (1976), 236–243. [17] William Enck, Peter Gilbert, Seungyeop Han, Vasant Tendulkar, Byung-Gon Chun, Landon P Cox, Jaeyeon Jung, Patrick McDaniel, and Anmol N Sheth. 2014. Taintdroid: an information-flow tracking system for realtime privacy monitoring on smartphones. ACM Transactions on Computer Systems (TOCS) 32, 2 (2014), 1–29. [18] Jeanne Ferrante, Karl J Ottenstein, and Joe D Warren. 1987. The program de-pendence graph and its use in optimization. ACM Transactions on Programming Languages and Systems 9, 3 (1987), 319–349. [19] Tom Fosters. 2026. Don’t get pinched: the OpenClaw vulnerabilities . Kaspersky. https://www.kaspersky.com/blog/openclaw-vulnerabilities-exposed/55263/ [20] Xiaoqin Fu and Haipeng Cai. 2021. FlowDist: Multi-Staged Refinement-Based Dynamic Information Flow Analysis for Distributed Software Systems. In 30th USENIX Security Symposium (USENIX Security 21) . 2093–2110. [21] Kai Greshake, Sahar Abdelnabi, Shailesh Mishra, Christoph Endres, Thorsten Holz, and Mario Fritz. 2023. Not what you’ve signed up for: Compromising real-world llm-integrated applications with indirect prompt injection. In Proceedings of the 16th ACM workshop on artificial intelligence and security . 79–90. [22] Bernd Gruner, Christoph-Simon Brust, and Andreas Zeller. 2025. Finding Infor-mation Leaks with Information Flow Fuzzing. ACM Transactions on Software Engineering and Methodology (2025). [23] Junjie He, Shenao Wang, Yanjie Zhao, Xinyi Hou, Zhao Liu, Quanchen Zou, and Haoyu Wang. 2026. TaintP2X: Detecting Taint-Style Prompt-to-Anything Injection Vulnerabilities in LLM-Integrated Applications. In Proceedings of the 48th IEEE/ACM International Conference on Software Engineering (ICSE) .[24] Nenad Jovanović, Christopher Kruegel, and Engin Kirda. 2006. Pixy: a static anal-ysis tool for detecting web application vulnerabilities. In 2006 IEEE Symposium on Security and Privacy (S&P) . IEEE, 258–263. [25] J Richard Landis and Gary G Koch. 1977. The measurement of observer agreement for categorical data. biometrics (1977), 159–174. [26] LangChain. 2026. langchain-ai/langchain: The agent engineering platform. https: //github.com/langchain-ai/langchain. GitHub repository, accessed 2026-01-17. [27] Li Li, Alexandre Bartel, Tégawendé F. Bissyandé, Jacques Klein, Yves Le Traon, Steven Arzt, Siegfried Rasthofer, Eric Bodden, Damien Octeau, and Patrick Mc-Daniel. 2015. IccTA: Detecting Inter-Component Privacy Leaks in Android Apps. In Proceedings of the 37th IEEE/ACM International Conference on Software Engineering (ICSE) . 280–291. [28] Wen Li, Jiang Ming, Xiapu Luo, and Haipeng Cai. 2022. PolyCruise: A Cross-Language Dynamic Information Flow Analysis. In 31st USENIX Security Sympo-sium (USENIX Security 22) . 2513–2530. [29] Ziyang Li, Saikat Dutta, and Mayur Naik. 2024. IRIS: LLM-assisted static analysis for detecting security vulnerabilities. arXiv preprint arXiv:2405.17238 (2024). [30] Fengyu Liu, Yuan Zhang, Jiaqi Luo, Jiarun Dai, Tian Chen, Letian Yuan, Zhengmin Yu, Youkun Shi, Ke Li, Chengyuan Zhou, et al . 2025. Make agent defeat agent: Automatic detection of {Taint-Style } vulnerabilities in {LLM-based } agents. In 
+
+34th USENIX Security Symposium (USENIX Security 25) . 3767–3786. [31] Puzhuo Liu, Chengnian Sun, Yaowen Zheng, Xuan Feng, Chuan Qin, Yuncheng Wang, Zhenyang Xu, Zhi Li, Peng Di, Yu Jiang, et al . 2025. Llm-powered static binary taint analysis. ACM Transactions on Software Engineering and Methodology 
+
+34, 3 (2025), 1–36. [32] Yi Liu, Gelei Deng, Yuekang Li, Kailong Wang, Zihao Wang, Xiaofeng Wang, Tianwei Zhang, Yepang Liu, Haoyu Wang, Yan Zheng, et al . 2023. Prompt injec-tion attack against llm-integrated applications. arXiv preprint arXiv:2306.05499 
+
+(2023). [33] V Benjamin Livshits and Monica S Lam. 2005. Finding security vulnerabilities in Java applications with static analysis.. In USENIX security symposium , Vol. 14. 18–18. [34] Yuetian Mao, Junjie He, and Chunyang Chen. 2025. From prompts to templates: A systematic prompt template analysis for real-world LLMapps. In Proceedings of the 33rd ACM International Conference on the Foundations of Software Engineering .75–86. [35] OpenAI. [n. d.]. OpenAI. https://openai.com/about/. Accessed 2026-01-17. [36] Xiaoxia Ren, Fenil Shah, Frank Tip, Barbara G Ryder, and Ophelia Chesley. 2004. Chianti: a tool for change impact analysis of Java programs. In Proceedings of the 19th annual ACM SIGPLAN Conference on Object-Oriented Programming, Systems, Languages, and Applications . ACM, 432–448. [37] Thomas Reps, Susan Horwitz, and Mooly Sagiv. 1995. Precise interprocedural dataflow analysis via graph reachability. In Proceedings of the 22nd ACM SIGPLAN-SIGACT Symposium on Principles of Programming Languages . ACM, 49–61. [38] Andrei Sabelfeld and Andrew C Myers. 2003. Language-based information-flow security. IEEE Journal on selected areas in communications 21, 1 (2003), 5–19. [39] Sander Schulhoff, Jeremy Pinto, Anaum Khan, Louis-François Bouchard, Chen-glei Si, Svetlina Anati, Valen Tagliabue, Anson Kost, Christopher Carnahan, and Jordan Boyd-Graber. 2023. Ignore this title and HackAPrompt: Exposing systemic vulnerabilities of LLMs through a global prompt hacking competition. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing . 4945–4977. [40] Carolyn B. Seaman. 1999. Qualitative methods in empirical studies of software engineering. IEEE Transactions on software engineering 25, 4 (1999), 557–572. [41] Semgrep. 2026. semgrep/semgrep: Lightweight static analysis for many lan-guages. https://github.com/semgrep/semgrep. GitHub repository, accessed 2026-02-01. [42] Lwin Khin Shar, Lionel C Briand, and Hee Beng Kuan Tan. 2015. Web Application Vulnerability Prediction Using Hybrid Program Analysis and Machine Learning. 
+
+IEEE Transactions on Dependable and Secure Computing 12, 6 (2015), 688–707. [43] Significant Gravitas. 2023. AutoGPT: An Autonomous GPT-4 Experiment. https: //github.com/Significant-Gravitas/AutoGPT. [44] Julius Sim and Chris C Wright. 2005. The kappa statistic in reliability studies: use, interpretation, and sample size requirements. Physical therapy 85, 3 (2005), 257–268. [45] Geoffrey Smith. 2009. On the foundations of quantitative information flow. In 
+
+International Conference on Foundations of Software Science and Computational Structures . Springer, 288–302. [46] Frank Tip. 1995. A survey of program slicing techniques. Journal of Programming Languages 3, 3 (1995), 121–189. [47] Omer Tripp, Marco Pistoia, Stephen J Fink, Manu Sridharan, and Omri Weisman. 2009. TAJ: effective taint analysis of web applications. ACM Sigplan Notices 44, 6 (2009), 87–97. [48] Zhijie Wang, Zijie Zhou, Da Song, Yuheng Huang, Shengmai Chen, Lei Ma, and Tianyi Zhang. 2025. Towards understanding the characteristics of code genera-tion errors made by large language models. In 2025 IEEE/ACM 47th International Conference on Software Engineering (ICSE) . IEEE, 2587–2599. [49] Alexander Wei, Nika Haghtalab, and Jacob Steinhardt. 2023. Jailbroken: How does llm safety training fail? Advances in neural information processing systems 
+
+36 (2023), 80079–80110. [50] Mark Weiser. 1984. Program slicing. IEEE Transactions on software engineering 4(1984), 352–357. [51] Zhiheng Xi, Wenxiang Chen, Xin Guo, Wei He, Yiwen Ding, Boyang Hong, Ming Zhang, Junzhe Wang, Senjie Jin, Enyu Zhou, et al . 2025. The rise and potential of large language model based agents: A survey. Science China Information Sciences Zihao Xu, Xiao Cheng, Ruijie Meng, and Yuekang Li 
+
+68, 2 (2025), 121101. [52] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R Narasimhan, and Yuan Cao. 2022. React: Synergizing reasoning and acting in language models. In The eleventh international conference on learning representations .

@@ -1,0 +1,768 @@
+Title: A Synthesis Method of Safe Rust Code Based on Pushdown Colored Petri Nets
+
+URL Source: https://arxiv.org/pdf/2604.02399v1
+
+Published Time: Mon, 06 Apr 2026 00:02:37 GMT
+
+Number of Pages: 22
+
+Markdown Content:
+# A Synthesis Method of Safe Rust Code Based on Pushdown Colored Petri Nets 
+
+Kaiwen Zhang 1[0000 −0003 −4573 −8968] and Guanjun Liu 1[0000 −0002 −7523 −4827] 
+
+Tongji University, Shanghai, China {zhangkw,liuguanjun}@tongji.edu.cn 
+
+Abstract. Safe Rust guarantees memory safety through strict compile-time constraints: ownership can be transferred, borrowing can temporar-ily guarantee either shared read-only or exclusive write access, and own-ership and borrowing are scoped by lifetime . Automatically synthesizing correct and safe Rust code is challenging, as the generated code must not only satisfy ownership, borrowing, and lifetime constraints, but also meet type and interface requirements at compile time. This work pro-poses a synthesis method based on our newly defined Pushdown Colored Petri Net (PCPN) that models these compilation constraints directly from public API signatures to synthesize valid call sequences. Token colors encode dynamic resource states together with a scope level in-dicating the lifetime region in which a borrow is valid. The pushdown stack tracks the entering or leaving of lifetime parameter via pushing and popping tokens. A transition is enabled only when type matching and interface obligations both hold and the required resource states are available. Based on the bisimulation theory, we prove that the enabling and firing rules of PCPN are consistent with the compile-time check of these three constraints. We develop an automatic synthesis tool based on PCPN and the experimental results show that the synthesized codes are all correct. 
+
+Keywords: Safe Rust · Colored Petri Nets · Type Systems 
+
+## 1 Introduction 
+
+Safe Rust turns many programming decisions into compile time checks [18]. A client program compiles only when it respects ownership transfer (i.e., moves), 
+
+borrowing exclusivity, and lifetime scoping [10]. These checks are local to a com-pilation unit and enforced without running our concerned program [14, 15, 26]. However, they are central obstacles for automated code generation. A candidate call sequence of automatically-generated code can be type correct at a coarse level but be rejected at compile time because a value is used after its ownership has been moved, or a mutable borrow overlaps with another one, or a generic constraint has no valid instantiation. Petri nets are a kind of formal models that are used to analyze reachability problems in concurrent systems [6, 16, 20, 21, 29], while the compile-time check problem of automatically-generated code is exactly represented the reachability  
+
+> arXiv:2604.02399v1 [cs.SE] 2 Apr 2026 2Kaiwen Zhang et al.
+
+problem of Petri nets. Tokens represent type resources in a program, transitions represent actions such as function call, and reachability captures whether a se-quence of actions can be executed or not. Every public Rust API is viewed as an atomic transformer specified solely by its signature and then modeled by a transition of a Petri net. Consequently, if a transition sequence is firable and satisfies that a multiset of available values is transferred into a multiset that contains the desired result [22], then we can backtrack this firable sequence into a compilable Rust code. Classical place/transition nets are not expressive enough for safe Rust . The first limitation is Rust typing. Rust signatures carry parametric types, references, and projections that must match across call sites [5, 7]. The second limitation is permission evolution. Borrowing does not merely read a token, it changes what can be done with the referent while the borrow is live. The third limitation is lifetime scope. A borrow is valid only within a lifetime region, and regions must respect outlives relationship (i.e., ordering constraints between lifetimes) induced by the program structure. In essence, classical nets treat tokens as identity-less units, making them incapable of tracking the generic types, fluid permissions of references, or hierarchical outlives relationships that define Rust’s safety guar-antees [2, 14, 15, 25, 26]. We address these issues by constructing a Pushdown Colored Petri Net (PCPN) from a compiler extracted environment Σ(C) [4, 11, 12]. Places are in-dexed by concrete types and by a small permission capability that approximates the borrow checker view of a live binding . Transitions come from two sources. The first source is the set of callable items extracted from signatures, including functions and methods. The second source is a fixed family of structural steps that model ownership, bounded duplication, borrow creation and discharge, pro-jections, and reborrowing. Token colors carry value identifiers together with in-stantiations of type and lifetime parameters . Internally created references carry an explicit region label that denotes the concrete region in which the borrow remains valid. A pushdown stack stores a well scoped record of outstanding bor-rows [1, 13], such that borrow creation and termination correspond to push and pop actions, respectively. A transition can fire only when its input tokens match its expected type schemes and when all interface obligations are satisfied. These obligations include trait bounds, associated type equalities, and outlives rela-tionship over lifetime parameters, which are checked during guarded enabling by using finite ground facts extracted from Σ(C).To justify this encoding, we define a small-step signature-induced resource semantics. The semantics abstracts each API call as a state transformer ad-mitted by the signature environment. It also gives explicit rules for ownership transfer, borrowing, reborrowing, and lifetime discharge. A strong bisimulation is established between this semantics and the firing semantics of a PCPN. As a consequence, an API call trace is compilable exactly when it corresponds to a fir-ing sequence that reaches a closed configuration whose borrow stack is empty. To ensure decidability, we obtain an effective finite search space by fixing explicit bounds on token counts and borrow nesting depth [3, 20, 23]. By quotienting Safe Rust Synthesis Based on Pushdown Colored Petri Nets 3
+
+configurations via a canonicalization function, the reachability graph is satu-rated through worklist exploration, allowing firing sequences to be backtracked and emitted as syntactically valid Rust snippets. We implement a prototype tool based on PCPN, which is publicly available at https://github.com/kevindadi/RustSynth. The new contributions we intend to make are as follows: 1. We formulate a signature-induced semantics for safe Rust that captures own-ership transfer, borrowing, and lifetime ordering. Notably, this semantics en-ables generic constraint solving without requiring the inspection of function bodies; 2. We provide a method to directly construct PCPN is constructed directly from Σ(C) by utilizing places indexed by types and capabilities, alongside a dedicated borrow stack to enforce properly nested lifetime regions; 3. We integrate type matching and constraint discharge into guarded enabling through a unified judgment. This mechanism can perform unification while verifying trait bounds, associated types, and outlives relationships; 4. We establish step correspondence and strong bisimulation between the re-source semantics and PCPN, yielding an exact reachability characterization of compilable API call traces; and 5. Under explicit bounds, we develop a finite canonical reachability graph. This structure supports effective witness (i.e., reconstructing valid API call se-quences) extraction and the emission of trusted, syntactically valid Rust snippets. Section 2 reviews the Rust features and the signature induced semantic in-terface used by our net construction. Section 3 defines PCPN and its guarded enabling. Section 4 gives the construction process of PCPN and the bisimula-tion theorem. Section 5 develops bounded reachability, canonical quotienting, and witness oriented search. Section 6 concludes this work. 
+
+## 2 Background 
+
+2.1 Rust ownership, borrowing, and lifetimes 
+
+This paper targets Safe Rust, a programming paradigm that enforces memory safety through a combination of static analysis and affine type systems. Unlike conventional languages, Rust manages resources without a garbage collector by relying on the principles of ownership, borrowing, and lifetimes. At the core of Safe Rust is the concept of ownership, which dictates that every value in Rust has a unique owner, known as a binding. For types that do not implement the Copy trait, such as strings or complex data structures, Rust enforces move semantics. When such a value is passed as an argument or assigned to a new variable, its ownership is transferred to the destination, and the source binding is immediately invalidated. This prevents multiple paths from attempting to manage the same memory simultaneously, effectively modeling values as unique resources. In contrast, Copy types allow for implicit duplication, 4 Kaiwen Zhang et al. 
+
+where the value is cloned rather than moved, leaving the source binding active and usable [9, 24, 27]. While ownership ensures clear resource disposal, borrowing provides a mech-anism for temporary access to a value through references without transferring its ownership. To maintain safety, Rust imposes a strict aliasing discipline akin to a readers-writer lock: a value may have either any number of shared references (&T ), which grant read-only access, or exactly one mutable reference ( &mut T ), which allows exclusive write access. The compiler’s borrow checker ensures that these two states are mutually exclusive. For instance, no value can be modified while it is being read by others. This rule prevents data races at compile time and ensures that references always point to valid memory. The validity of these references is further constrained by lifetimes . A lifetime defines the region of code in which a borrow remains valid. A fundamental in-variant is that a reference must never outlive the referent it points to. Although modern Rust utilizes None Lexical Lifetimes (NLL) to allow borrows to end precisely at their last point of use, our synthesis approach adopts a more struc-tured discipline. By inserting explicit drop calls to terminate borrows, we ensure that their lifetimes are properly nested. This structured approach is sound un-der the broader NLL rules and provides a predictable execution trace for code generation. Building upon this borrowing mechanism, reborrowing allows a program to derive a new, shorter-lived reference from an existing one. This is particularly common in method calls where a mutable reference is temporarily downgraded or restricted to a specific field. Crucially, the parent reference is suspended and becomes inaccessible while the child reborrow is live. Once the child reference is dropped, the parent reference regains its original permissions. This hierarchical suspension and resumption of access is essential for representing the complex call sequences found in standard Rust libraries as valid compilable code. Fig. 1 illustrates ownership transfer, where s is invalidated after moving to 
+
+t, and the borrowing exclusivity rule, which allows the mutable borrow m only after the shared borrow r is explicitly dropped. It also shows explicit termination of borrows.                                                                       
+
+> 1let s=R(1);
+> 2let t=s; // Ownership moved from sto t
+> 3// let u=s; // Illegal: sis now moved
+> 4let mut x=0;
+> 5let r=&x; // Shared borrow starts
+> 6// let m=&mut x; // Illegal: mutable borrow conflicts with r
+> 7drop(r); // Explicit end of borrow
+> 8let m=&mut x; // Legal: exclusive access granted
+> Fig. 1. A move and the shared and mutable borrow rules. Safe Rust Synthesis Based on Pushdown Colored Petri Nets 5
+
+2.2 A Small Signature-Driven Core Language 
+
+To bridge the gap between Rust source code and Petri net transitions [11, 17], we define a core syntax that distills API interactions into a sequence of atomic resource transformers. We represent the synthesized client code as a program 
+
+prog , consisting of a sequence of statements stmt defined as follows: 
+
+s ∈ stmt ≜ let x = Call (f, ¯x) | drop (x)
+
+| let r = Borrow {shr,mut }(x) | let r′ = Reborrow {shr,mut }(r)
+
+| let y = ProjMove (x, f ) | let r′ = ProjRef (r, f ) | let y = Deref (r)
+
+Each construct abstracts a fundamental transition in the Rust resource model. 
+
+Call represents function or method invocations where ownership effects are de-termined by Σ(C). Borrow and Reborrow model the creation of new reference tokens. The latter specifically accounts for the temporary suspension of parent references. ProjMove and ProjRef handle access to struct fields or tuple com-ponents, ensuring that the synthesizer can reason about sub-resources within complex data structures. Deref accounts for duplicating values of Copy types through references, yielding an independent owned value without affecting the reference’s usability. In contrast, Reborrow models the derivation of a new ref-erence from an existing one; this process imposes a hierarchical dependency where the parent reference is temporarily suspended until the child reference is dropped, thereby maintaining strict aliasing invariants during nested calls. Finally, drop (x) serves a dual purpose: for owned values, it models resource deal-location; for references, it acts as an explicit signal to terminate a borrow’s lifetime. This explicit termination is critical for our formal model to unfreeze a owner and restore its access permissions, ensuring that the synthesized code respects the LIFO (Last-In-First-Out) stack discipline of the underlying PCPN [18]. This syntax is sufficient for API-level reasoning [8, 28], as all library interac-tions are encapsulated in Call statements. Ownership effects are induced by the parameter types (e.g., Copy vs. non-Copy ), while borrow effects are managed through explicit reference creation and termination. The set of live regions at any point in the synthesized program is therefore deterministically governed by the set of active values and their corresponding borrow structure. 
+
+## 3 Pushdown Colored Petri Nets 
+
+This section formalizes our synthesis approach. We bridge the gap between Rust’s rich static semantics and the reachability analysis of Petri nets by transforming the compiler-extracted signature environment Σ(C) into a PCPN. The core chal-lenge lies in mapping Rust’s potentially infinite type space due to generics and lifetimes into a finite net structure. We address this by distinguishing between 
+
+type schemes appearing in signatures and ground types indexing Petri net places. 6 Kaiwen Zhang et al. 
+
+The resulting PCPN models the multiset of live values as tokens and enforces borrowing discipline via a pushdown stack. A valid firing sequence in this net corresponds to a well-typed, borrow-safe Rust code snippet. 
+
+3.1 Problem Setting and Type Formalization 
+
+Our synthesis target is defined by a finite set F of callable items extracted from 
+
+Σ(C). Each item f ∈ F is associated with a signature containing generic type pa-rameters, lifetime constraints, and trait obligations. Formally, let GTy be the set of monomorphic types (e.g., u8 and bool ) and nominal struct types extracted from the crate. Let TVar and LVar be countable sets of generic type variables and lifetime variables, respectively. To handle lifetime instantiation dynamically during synthesis, we introduce a special reserved lifetime variable ℓ• /∈ LVar ,which serves as a runtime hook to carry concrete region labels generated by the net inside token colors. 
+
+Definition 1 (Type Schemes). The set of type schemes Ty represents the polymorphic types found in API signatures. It is generated by the grammar: 
+
+τ ∈ Ty ::= g | α | τ0⟨τ1, . . . , τ n⟩ | (τ1, . . . , τ n) | [τ ] | Ref qℓ (τ )
+
+| Assoc (τ, Tr , A ) | Field (τ, f )
+
+where g ∈ GTy , α ∈ TVar , ℓ ∈ LVar ∪ { ℓ•}, and q ∈ { shr , mut }. Constructs Assoc 
+
+and Field are symbolic representations of associated types and field projections, resolved during unification. 
+
+While Ty captures the expressiveness of signatures, it is too large to index the places of a Petri net. To ensure that PCPN remains finitely branching, we restrict the state space to a finite universe of ground types . Let cTy ⊂ Ty be a finite set of instantiated, lifetime types. It is defined as the least set satisfying: (i) Base types GTy ⊆ cTy ; (ii) Compound types (tuples and slices) are in cTy only if their components are in cTy ; (iii) Reference types Ref qℓ (ˆ τ ) ∈ cTy if ˆτ ∈ cTy , where 
+
+ℓ can be a variable or the concrete hook ℓ•; (iv) Field types ˆτf ∈ cTy if the parent struct ˆτ ∈ cTy and field f are visible. Crucially, cTy contains no free type variables (TVar ) and no unresolved projections ( Assoc and Field ), but it retains lifetime variables to support schematic matching. All PCPN places will are strictly by 
+
+cTy .We model resource availability using multisets. For a set X, NX denotes the set of finite multisets m : X → N. We define standard operations: (i) Addition: 
+
+(m1 ⊕ m2)( x) := m1(x) + m2(x); (ii) Difference: (m1 ⊖ m2)( x) := max( m1(x) −
+
+m2(x), 0) ; (iii) Inclusion: m1 ⊆ m2 ⇐⇒ ∀ x, m 1(x) ≤ m2(x). These operations extend pointwise to mappings M : P → NX .
+
+3.2 PCPNs 
+
+We define a PCPN whose places are indexed by type and whose stack records outstanding references. Before defining the net structure, we fix the universes of Safe Rust Synthesis Based on Pushdown Colored Petri Nets 7
+
+identifiers and structure of solver evidences. Let V be a countably infinite set of value identifiers and L be a countably infinite set of region labels. Let Θ be the set of finite type substitutions θ : TVar ⇀ cTy and Λ the set of finite lifetime valuations λ : ( LVar ∪ { ℓ•}) ⇀ L.A transition firing is justified by an instantiation record ι ∈ Inst . This record captures how generic parameters are resolved and which fresh names are allo-cated. Formally, ι is a tuple: ι = ⟨θ, λ, ν, μ ⟩ where θ ∈ Θ and λ ∈ Λ resolve the transition’s static parameters, while ν : Vars → V and μ : Vars → L provide fresh identifiers and labels for the output tokens. The pushdown stack records outstanding borrows. We define the stack alphabet Γ as: Γ ::= Freeze (v) |
+
+Shr (vo, v r , L ) | Mut (vo, v r , L ) where v, v o, v r ∈ V and L ∈ L. We write Γ ∗ for the set of finite strings over Γ . A stack instance S ∈ Γ ∗ implies a sequence of frames, and ¯γ ∈ Γ ∗ denotes a segment of the stack pushed or popped atomically. 
+
+Definition 2 (Pushdown Colored Petri Net). A PCPN is a tuple 
+
+NC = ( P, T, W, Col , Γ, M 0, Guard , Out , Act ),
+
+where: P is a finite set of places indexed by capabilities and ground types: P := 
+
+{ pκ 
+
+> ˆτ
+
+| κ ∈ { own , frz , blk }, ˆτ ∈ cTy }; T is a finite set of transitions, comprising API-derived call rules and fixed structural rules; W : ( P × T ) ∪ (T × P ) →
+
+N is the flow weight function; Col := V × Θ × Λ is the set of token colors. A token c = ⟨v, θ, λ ⟩ carries a value ID and its instantiation context; M0 :
+
+P → NCol is the initial marking; Guard (t) : ( ⟨M, S ⟩, χ, ι ) 7 → Prop is a predicate checking if transition t is enabled under configuration ⟨M, S ⟩, input choice χ, and instantiation record ι ∈ Inst ; Out (t) : ( ⟨M, S ⟩, χ, ι ) 7 → π defines the multiset of output tokens π ∈ NCol produced by the firing; and Act (t) ∈ { ϵ, push (¯ γ), pop (¯ γ)}
+
+defines the stack operation, where ¯γ ∈ Γ ∗ is a string of borrow frames. 
+
+Let M := P → NCol be the set of colored markings. For p ∈ P and a multiset m ∈
+
+NCol , define the placed multiset p⟨m⟩ ∈ M by (p⟨m⟩)( p) = m and (p⟨m⟩)( p′) = ∅
+
+for p′̸ = p. For a single token c ∈ Col , write p⟨c⟩ for p⟨[c]⟩.Although the set of places effectively triples the number of ground types, this linear expansion is deliberate. By encoding the borrowing states structurally into places rather than token colors, we enforce access control via net topology rather than complex guard predicates. This significantly simplifies the enabling check for transitions. Furthermore, since references are treated as first-class types in 
+
+cT y , the model naturally supports nested borrows without additional rules. 
+
+Definition 3 (Configurations). A configuration of PCPN is a pair Cfg =
+
+⟨M, S ⟩, where M : P → NCol is a colored marking mapping each place to a multiset of tokens, and S ∈ Γ ∗ is a stack of borrow records with the top element at the leftmost position. The initial configuration is Cfg 0 = ⟨M0, ϵ ⟩.
+
+Definition 4 (Enabling). Let Cfg = ⟨M, S ⟩ be a configuration. A transition 
+
+t ∈ T is enabled at Cfg if there exist: an input choice χ : P → NCol such that 
+
+χ ⊆ M and |χ(p)| = W (p, t ) for all p ∈ P ; and an instantiation record ι ∈ Inst 
+
+providing variable valuations and fresh identifiers. 8 Kaiwen Zhang et al. 
+
+The pair φ = ⟨t, χ, ι ⟩ constitutes an enabled firing instance if the follow-ing conditions hold that Guard Satisfaction, i.e., Guard (t)( Cfg , χ, ι ) evaluates to true; and Stack Discipline, i.e., if Act (t) = pop (¯ γ), then S = ¯ γ · Srem for some remainder Srem ∈ Γ ∗.
+
+Definition 5 (Firing Rule). An enabled firing instance φ = ⟨t, χ, ι ⟩ trans-forms a configuration Cfg = ⟨M, S ⟩ into a new configuration Cfg ′ = ⟨M ′, S ′⟩,denoted as Cfg [φ⟩Cfg ′, according to the following rules: 1. Token Flow: M ′ = ( M ⊖ χ) ⊕ π, where π = Out (t)( Cfg , χ, ι ) is the multiset of produced tokens; and 2. Stack Update: S′ is derived from S by Act (t):
+
+S′ =
+
+
+
+S if Act (t) = ϵ
+
+¯γ · S if Act (t) = push (¯ γ)
+
+Srem if Act (t) = pop (¯ γ) and S = ¯ γ · Srem 
+
+A finite sequence of firing instances φ1 . . . φ n is a valid trace if there exist con-figurations Cfg 0, . . . , Cfg n such that Cfg i−1[φi⟩Cfg i for all 1 ≤ i ≤ n.
+
+In standard CPNs, a transition is enabled simply by matching token colors to arc expressions (e.g., matching an integer value). However, in our setting, transi-tions represent polymorphic Rust functions. A single transition schema does not describe a fixed transformation on ground values but rather a template valid for infinite instantiations of Generic T. Consequently, determining whether a transi-tion is enabled is not merely a check of token availability but a constraint solving problem. The net must deduce the concrete types of generic parameters from the input tokens (Unification) and verify that these types satisfy the function’s interface contracts (Obligation Discharge). The following section formalizes this process by refining the standard notion of binding elements via a structured constraint-satisfaction mechanism.. 
+
+3.3 Binding Elements and Guarded Enabling 
+
+A subtle but critical aspect of our model is the connectivity between generic transitions and places indexed by ground types (i.e., cTy ). Since places in P are indexed by ground types cTy , while a generic transition t specifies input require-ments as type schemes containing variables (e.g., α ∈ TVar ), the arc weights 
+
+W (p, t ) cannot be statically fixed for all generic instantiations. Instead, we in-terpret the connectivity symbolically . The input choice χ in Def. 4 represents a 
+
+candidate connection . The validity of connecting a place pκ 
+
+> ˆτ
+
+to a transition input port expecting type scheme τin is dynamically determined by the unification guard: Σ ⊢ τin ˙= ˆ τ ⇒ (σ, . . . ). Here, the ground type ˆτ serves as the evidence that constrains and resolves the type variable α in τin . Thus, places do partici-pate in binding: they act as the source of ground truth that collapses the generic template into a specific instance. The compilation environment Σ(C) provides the ground truth for checking validity. We verify constraints against two fact tables derived from the crate: Safe Rust Synthesis Based on Pushdown Colored Petri Nets 9
+
+1. ImplFact Σ ⊆ cTy × Trait : The set of known trait implementations. (ˆ τ , Tr ) ∈
+
+ImplFact Σ denotes that type ˆτ implements trait Tr .2. AssocFact Σ ⊆ cTy ×Trait ×Name ×cTy : The table of associated types. (ˆ τ , Tr , A, ˆτA) ∈
+
+AssocFact Σ records that ⟨ˆτ as Tr ⟩ :: A resolves to ˆτA.Due to Rust’s coherence rules, associated type resolution is functional. We denote the lookup as AssocTy Σ (ˆ τ , Tr , A ) = ˆ τA.The guard of a transition generates a set of obligations O that must be entailed by the environment. The syntax of an obligation atom o ∈ Obl is defined as: 
+
+o ::= τ : Tr | Assoc (τ, Tr , A ) = τ ′ | ℓ1 : ℓ2
+
+Here, ℓ1 : ℓ2 represents the outlives relationship ( ℓ1 ⊒ ℓ2). 
+
+Phase 1: Unification via Observation. Unification matches the expected type scheme of a transition’s input port against the observed ground type of a selected token. This process produces a partial substitution σ and may emit additional equality obligations Ou (e.g., when matching associated types). A substitution record is a pair σ = ⟨θ, λ ⟩ where θ : TVar ⇀ cTy and λ : ( LVar ∪ { ℓ•}) ⇀ L are finite partial maps. Two finite maps m1 and m2 are compatible , written m1#m2,if ∀x ∈ dom (m1) ∩ dom (m2). m 1(x) = m2(x). If compatible, we define their join 
+
+m1 ⊔ m2 as the union map. Then we lift this pointwise to substitution records: 
+
+⟨θ1, λ 1⟩ ⊔ ⟨ θ2, λ 2⟩ := ⟨θ1 ⊔ θ2, λ 1 ⊔ λ2⟩ (defined iff θ1#θ2 and λ1#λ2).
+
+We extend join to pairs (σ, O) by (σ1, O1) F(σ2, O2) := ( σ1 ⊔ σ2, O1 ∪ O 2),undefined if σ1 and σ2 are incompatible. For a finite family, F
+
+> i
+
+(σi, Oi) denotes iterated join. First, we define the auxiliary function fv L(τ ) which extracts the set of lifetime labels occurring in type τ . It is defined inductively: 
+
+fv L(g) = ∅ fv L(α) = ∅
+
+fv L(τ0⟨τ1, . . . , τ n⟩) = 
+
+> n
+
+[
+
+> i=0
+
+fv L(τi) fv L(( τ1, . . . , τ n)) = [
+
+> i
+
+fv L(τi)
+
+fv L([ τ ]) = fv L(τ ) fv L(Ref qℓ (τ )) = {ℓ} ∪ fv L(τ )
+
+fv L(Assoc (τ, Tr , A )) = fv L(τ ) fv L(Field (τ, f )) = fv L(τ ).
+
+Let Obs (p, c ) denote the observable structure of token c at place p. For token 
+
+c = ⟨v, θ c, λ c⟩ residing in pκ 
+
+> ˆτ
+
+, we observe the ground type ˆτ and the relevant lifetime labels: Obs (pκ 
+
+> ˆτ
+
+, c ) := ⟨ˆτ , λ c ↾fv L(ˆ τ )⟩.We define the unification judgment Σ ⊢ τ ˙= ⟨ˆτ , λ ⟩ ⇒ (σ, Ou) by using the following inference rules: 
+
+Phase 2: Entailment and Resolution. An instantiated obligation set O is satisfied if every atom is derivable from Σ and the current stack S. We formalize this by using entailment rules: 10 Kaiwen Zhang et al. 
+
+U-GTy 
+
+Σ ⊢ g ˙= ⟨g, λ ⟩ ⇒ (⟨∅ , ∅⟩ , ∅)
+
+U-TVar 
+
+Σ ⊢ α ˙= ⟨ˆτ , λ ⟩ ⇒ (⟨[α 7 → ˆτ ], ∅⟩ , ∅)
+
+U-Slice 
+
+Σ ⊢ τ ˙= ⟨ˆτ , λ ⟩ ⇒ (σ, O)
+
+Σ ⊢ [τ ] ˙ = ⟨[ˆ τ ], λ ⟩ ⇒ (σ, O)
+
+U-Field 
+
+Σ ⊢ Field (τ, f ) ˙ = ⟨ˆτ , λ ⟩ ⇒ (⟨∅ , ∅⟩ , {Field (τ, f ) = ˆ τ })
+
+U-Assoc 
+
+Σ ⊢ Assoc (τ, Tr , A ) ˙ = ⟨ˆτ , λ ⟩ ⇒ (⟨∅ , ∅⟩ , {Assoc (τ, Tr , A ) = ˆ τ })
+
+U-Ref 
+
+Σ ⊢ τ ˙= ⟨ˆτ , λ ⟩ ⇒ (σ0, O0) λ(ℓ′) = LΣ ⊢ Ref qℓ (τ ) ˙ = ⟨Ref qℓ′ (ˆ τ ), λ ⟩ ⇒ (σ0 ⊔ ⟨∅ , [ℓ 7 → L]⟩, O0)
+
+U-Tuple 
+
+∀i. Σ ⊢ τi ˙= ⟨ˆτi, λ ⟩ ⇒ (σi, Oi) ( σ, O) = G
+
+> i
+
+(σi, Oi)
+
+Σ ⊢ (τ1, . . . , τ n) ˙ = ⟨(ˆ τ1, . . . , ˆτn), λ ⟩ ⇒ (σ, O)
+
+U-App 
+
+Σ ⊢ τ0 ˙= ⟨ˆτ0, λ ⟩ ⇒ (σ0, O0) ∀i. Σ ⊢ τi ˙= ⟨ˆτi, λ ⟩ ⇒ (σi, Oi) ( σ, O) = 
+
+> n
+
+G
+
+> i=0
+
+(σi, Oi)
+
+Σ ⊢ τ0⟨τ1, . . . , τ n⟩ ˙= ⟨ˆτ0⟨ˆτ1, . . . , ˆτn⟩, λ ⟩ ⇒ (σ, O)
+
+E-Trait 
+
+(θ(τ ), Tr ) ∈ ImplFact Σ
+
+Σ; S ⊢ σ(τ : Tr )
+
+E-Life 
+
+S ⊢ λ(ℓ1) ⊒ λ(ℓ2)
+
+Σ; S ⊢ σ(ℓ1 : ℓ2)
+
+E-Assoc 
+
+AssocTy Σ (θ(τ ), Tr , A ) = θ(τ ′)
+
+Σ; S ⊢ σ(Assoc (τ, Tr , A ) = τ ′)
+
+The outlives relation S ⊢ L1 ⊒ L2 reflects the LIFO validity: it holds if L1 = L2
+
+or if L1 appears deeper in the stack S than L2 does. 
+
+Phase 3: Unified Enabling Judgment. We can now formally define the 
+
+SolveGuard predicate. A firing instance is valid if we can find a complete in-stantiation record ι that extends the partial unification result and satisfies all obligations. Let Type in (t, p ) be the type scheme expected by transition t at input place p.To accommodate the complexity of the enabling condition within limited width, Safe Rust Synthesis Based on Pushdown Colored Petri Nets 11 
+
+we present the rule by using a stacked structure: 
+
+(1) Input Matching: 
+
+∀p ∈ •t, ∀c ∈ χ(p) : Σ ⊢ Type in (t, p ) ˙ = Obs (p, c ) ⇒ (σp,c , Op,c )(2) Consistency: 
+
+(σf orced , Ou) = F
+
+> p,c
+
+(σp,c , Op,c )(3) Completion: 
+
+σ⋆ ⪰ σf orced is a complete binding for Vars (t)(4) Freshness: 
+
+FreshOK (⟨M, S ⟩, σ ⋆, ν, μ )(5) Entailment: 
+
+Σ; S ⊢ σ⋆ |= ( O(t) ∪ O u)
+
+Σ; ⟨M, S ⟩ ⊢ enable t, χ ⇝ ⟨σ⋆, ν, μ ⟩ (G-Solve )
+
+The judgment proceeds in two logical stages: binding synthesis and validity checking. First, the consistency step merges partial unifications from all input tokens into a forced substitution σf orced and a collected obligation set Ou. The join operation F fails if any token implies a conflicting assignment for the same variable. Since σf orced may be partial (e.g., return-type-only parameters remain unconstrained), the completion step non-deterministically selects a total exten-sion σ⋆ ⪰ σf orced . This extension must map all variables in Vars (t)—the set of generic type and lifetime parameters declared by t—to valid ground types in cTy 
+
+and region labels in L. Second, the judgment enforces structural and semantic integrity. The freshness predicate FreshOK (⟨M, S ⟩, σ ⋆, ν, μ ) ensures that the new value identifiers ν and region labels μ generated for output tokens are disjoint from those currently live in marking M and stack S. Finally, the entailment check requires that the total obligation set—combining static requirements O(t)
+
+from the signature and dynamic requirements Ou emitted by unification—is fully derivable from the environment Σ and the current borrow stack S.
+
+## 4 Constructing PCPN from C
+
+The construction of PCPN NC transforms the static signature environment Σ(C)
+
+into a dynamic net structure. This involves two steps: monomorphizing API calls into concrete transitions, and instantiating a fixed set of structural schemas. 
+
+4.1 API-Derived Call Transitions 
+
+From Σ(C), we extract a finite set of callable items F. While ImplFact Σ tells us which types implement which traits , it does not create the net structure. We must explicitly generate a transition for each valid concrete instantiation of a generic function. 12 Kaiwen Zhang et al. 
+
+Definition 6 (Call Transition Instantiation). Let Θf := { θ : ¯ αf → cTy } be the set of all substitutions mapping parameters of f to ground types in cTy . For each f ∈ F , we generate a transition tf,θ for every substitution θ ∈ Θf satisfying the following conditions: All argument and return types resolve to valid types in 
+
+cTy ; and all static obligations O0 (derived from the signature of f ) are statically entailed by ImplFact Σ . The constructed tf,θ has input/output places determined by the resolved types and carries the remaining obligations in its guard. 
+
+4.2 Structural Transition Schemas 
+
+We instantiate a fixed family of structural schemas to model Rust’s ownership and borrowing rules. To ensure formal rigor, we define the auxiliary construc-tors used in the schemas. Let c = ⟨v, θ, λ ⟩ be an input token. NewVal (c, v ′) := 
+
+⟨v′, θ, λ ⟩ creates a new value with the same type/lifetime context but a fresh ID. 
+
+NewRef (c, v ′, L ) := ⟨v′, θ, λ [ℓ• 7 → L]⟩ creates a reference token with a fresh ID and a specific region label L.In Tables 1–4 , χ(p) denotes the single token consumed from place p, and π
+
+denotes the multiset of produced tokens. All schemas implicitly require FreshOK 
+
+if they generate new IDs ( ν, μ ). The transition schemas in Table 1 formalize Rust’s affine and linear typing discipline by defining the consumption and production of owned value tokens. Rule 1, denoted as Move ˆτ , enforces strict linearity for non-Copy types. It con-sumes a token from pown  
+
+> ˆτ
+
+and produces an empty post-multiset, effectively re-moving the value from the current scope to model a move operation or drop. Conversely, Rule 2, CopyUse ˆτ , applies to types implementing the Copy trait. It consumes the token but immediately regenerates it in the same place, treating the value as a persistent resource that can be duplicated implicitly. The explicit creation of independent values is handled by Rules 2 ⋆ and 2 ′. DupCopy performs a bitwise copy, while DupClone invokes a deep copy via the Clone trait. Crucially, these are the only structural rules that increase the net cardinality of tokens in the system. Therefore, both the finiteness of the state space and the termination of the reachability analysis rely primarily on restricting the firing frequency of these specific duplication schemas within the budget. 
+
+Table 1. Ownership and Duplication Schemas.                                       
+
+> Rule Schema Name Output Multiset ( π)Guard Condition
+> 1Move ˆτ∅¬IsCopy (ˆ τ)
+> 2CopyUse ˆτpown
+> ˆτ⟨c⟩IsCopy (ˆ τ)
+> 2⋆DupCopy ˆτpown
+> ˆτ⟨c⟩ ⊕ pown
+> ˆτ⟨c′⟩IsCopy (ˆ τ)∧c′=NewVal (c, ν )
+> 2′DupClone ˆτpown
+> ˆτ⟨c⟩ ⊕ pown
+> ˆτ⟨c′⟩ˆτ:Clone ∧c′=NewVal (c, ν )
+> 3′DropOwn ˆτ∅⊤
+
+Table 2 implements the Readers-Writer Lock mechanism through the coor-dination of state places ( pfrz , p blk ) and pushdown stack. The creation of shared Safe Rust Synthesis Based on Pushdown Colored Petri Nets 13 
+
+references involves a two-phase freeze logic. Rule 4 initiates the first borrow by moving the owner token from pown to pfrz and pushing a composite stack frame 
+
+Shr (. . . ) · Freeze (vo). This Freeze (vo) marker acts as a sentinel, indicating that this specific transition is responsible for suspending ownership. Subsequent alias-ing borrows, defined in Rule 5, merely cycle the token within pfrz and push an 
+
+Shr frame. The discharge process enforces LIFO validity: popping an Shr frame (Rule 8) leaves the owner frozen to support remaining readers, whereas pop-ping the frame containing the sentinel (Rule 9) triggers the unfreeze operation, restoring the token to pown . For mutable borrows, Rule 6 enforces exclusivity by moving the owner to pblk and pushing a Mut frame. The owner remains inacces-sible until the corresponding Mut frame is popped in Rule 7, guaranteeing that no aliasing occurs during the mutation scope. We denote pref  
+
+> ˆτ
+
+:= pown Ref shr    
+
+> ℓ•(ˆ τ)
+
+and 
+
+pmut  
+
+> ˆτ
+
+:= pown Ref mut    
+
+> ℓ•(ˆ τ)
+
+for brevity in the table, but they refer to the standard places defined in Def. 2. 
+
+Table 2. Borrow Creation and Discharge Schemas                                                              
+
+> No. Transition Flow Stack Action ( Act )Output Token Construction
+> 4pown
+> ˆτ→pfrz
+> ˆτ⊕pref
+> ˆτpush Shr (vo, v r, L )·Freeze (vo)cr=NewRef (c, ν, μ )
+> 5pfrz
+> ˆτ→pfrz
+> ˆτ⊕pref
+> ˆτpush Shr (vo, v r, L )cr=NewRef (c, ν, μ )
+> 6pown
+> ˆτ→pblk
+> ˆτ⊕pmut
+> ˆτpush Mut (vo, v r, L )cr=NewRef (c, ν, μ )
+> 7pblk
+> ˆτ⊕pmut
+> ˆτ→pown
+> ˆτpop Mut (vo, v r, L )–8pfrz
+> ˆτ⊕pref
+> ˆτ→pfrz
+> ˆτpop Shr (vo, v r, L )–9pfrz
+> ˆτ⊕pref
+> ˆτ→pown
+> ˆτpop Shr (vo, v r, L )·Freeze (vo)–
+
+The structural decomposition of types is modeled in Table 3, where ownership and borrowing rules are propagated from parent structures to their fields. Rule 10 formalizes a partial move by consuming the parent struct token and producing a token for the specific field τf . For shared references, Rule 11 derives a field reference &τf from a parent reference &τ without modifying the stack, as the parent’s frozen state implicitly covers all fields. The most complex case is the 
+
+splitting borrow formalized in Rule 12. When deriving a mutable reference to a field ( &mut τf ) from a mutable parent reference ( &mut τ ), the system treats the parent reference itself as the resource owner. The parent reference token is moved to a blocked state pblk Ref to prevent simultaneous access to the rest of the struct, and a new Mut frame is pushed. This mechanism ensures that disjoint fields can be mutated safely only when the borrow checker’s granularity allows, or prevents access when the parent is already uniquely borrowed. Table 4 defines operations performed through references, focusing on the mechanism of reborrowing essential for nested calls. Rule 14 allows reading a value from a shared reference only if the referent type is Copy , producing a new value token while maintaining the reference’s liveness. Rules 15 and 16 formalize explicit reborrowing, where a mutable reference is temporarily borrowed out to create a shorter-lived sub-reference either mutable or shared. In this process, the original reference token is moved to pblk Ref , and a new reference token is generated 14 Kaiwen Zhang et al. 
+
+Table 3. Field Projection Schemas (for field f of type τ )                                       
+
+> No. Transition Flow Stack Action Token/Guard
+> 10 pown
+> τ→pown
+> τfϵcf=NewVal (c, ν )
+> 11 pref
+> τ→pref
+> τ⊕pref
+> τfϵcc=NewVal (c, ν )
+> 12 pmut
+> τ→pblk Ref mut (τ)⊕pmut
+> τfpush Mut (. . . )cc=NewRef (c, ν, μ )
+> 13 pblk Ref mut (τ)⊕pmut
+> τf→pmut
+> τpop Mut (. . . )(Stack match)
+
+with a fresh ID. The stack tracks the lifetime of this sub-borrow. When the corresponding frame is popped (Rules 15 ′ and 16 ′), the original reference is unblocked and returned to pown Ref .
+
+Table 4. Dereference and Reborrowing Schemas                                                        
+
+> No. Transition Flow Stack Action Token/Guard
+> 14 pref
+> τ→pref
+> τ⊕pown
+> τϵIsCopy (τ)∧c′=NewVal (c, ν )
+> 15 pmut
+> τ→pblk Ref mut (τ)⊕pmut
+> τpush Mut (. . . )c′=NewRef (c, ν, μ )
+> 15’ pblk Ref mut (τ)⊕pmut
+> τ→pmut
+> τpop Mut (. . . )(Stack match) 16 pmut
+> τ→pblk Ref mut (τ)⊕pref
+> τpush Mut (. . . )c′=NewRef (c, ν, μ )
+> 16’ pblk Ref mut (τ)⊕pref
+> τ→pmut
+> τpop Mut (. . . )(Stack match)
+
+4.3 Correctness and Bisimulation 
+
+We establish the correctness of our synthesis approach by proving a strong bisimulation between PCPN and Symbolic Rust Semantics (SRS) defined in Section 2.2. This verification relies on the alignment between the open-ended nature of the Rust language and the finite structure of the constructed net. While the syntax of SRS allows for arbitrary Rust programs, PCPN is con-structed specifically to explore the state space reachable via the finite API Σ(C).To make verification well-posed, we must restrict the domain of SRS to the finite universe established during net construction. Recall that cTy is the finite set of ground types instantiated from the generic signatures of C. We impose the Closed World Assumption on SRS: 1. The program prog may only declare variables and operate on resources having types τ ∈ cTy ; and 2. We model primitive literals (e.g., integers) as explicit 0-ary constructors in the callable set F. This ensures that the creation of primitive values in SRS corresponds to explicit firing transitions in PCPN. Under the above assumptions, SRS and PCPN operate over the same finite universe of types. We relate SRS and PCPN transitions through the set of labels Lab , which in-cludes API calls f @σ and structural schema names. Since both systems allocate Safe Rust Synthesis Based on Pushdown Colored Petri Nets 15 
+
+fresh identifiers dynamically, we compare configurations modulo β-renaming, a bijective renaming of value IDs and region labels, denoted Cfg 1 ≡β Cfg 2. We for-malize the components of an SRS rule. For a label l ∈ Lab and an instantiation 
+
+ι, we denote: PreCond Σ (l, Cfg , ι ): The logical conjunction of all preconditions in the SRS rule for l including resource presence, type equality, trait bounds, and freshness. Consume l(Cfg , ι ) removes a multiset of resources (tokens) from the configuration by rule l. Produce l(Cfg , ι ) adds a multiset of resources and pushes/pops the stack frames by rule l. We write SRS -post (Cfg , l, ι ) for the con-figuration resulting from applying these updates. 
+
+Lemma 1 (Structural Transformer Coincidence). For every structural la-bel l ∈ Lab (corresponding to schemas in Tables 1–4), let tl be the unique cor-responding transition in the PCPN. For any configuration Cfg and instantia-tion record ι, the following hold: (1) Consumption Match, i.e., the input arc weights of tl exactly match the SRS resource consumption: Consume l(Cfg , ι ) = 
+
+χ ⇐⇒ χ matches W −(tl); and (2) Production Match, i.e., the state up-date effect is identical modulo β-renaming. If enabled, SRS -post (Cfg , l, ι ) ≡β
+
+Fire (Cfg , ⟨tl, χ, ι ⟩).Proof. This follows directly from the construction of the PCPN schemas in Sec-tion 4. Each SRS rule explicitly lists the resources required (e.g., pown ). The corresponding PCPN schema (e.g., Rule 4) is constructed with exactly these places as input arcs with unit weight. Thus, χ forms a valid multiset for tl iff it satisfies the SRS consumption requirement. The SRS post-state is defined by 
+
+(M ⊖ χ) ⊕ π and a stack update. The PCPN firing rule applies Out (tl) and 
+
+Act (tl). By inspection of Tables 1–4, for every rule, Out (tl) generates the same multiset π using the same auxiliary constructors NewVal /NewRef , and Act (tl)
+
+performs the same push/pop operation. Any difference lies solely in the choice of fresh identifiers in ι, which is absorbed by ≡β . ■
+
+Lemma 2 (Guard Equivalence). For every label l ∈ Lab and configuration 
+
+Cfg , the SRS preconditions hold if and only if the PCPN guard solver succeeds. Let χ be a valid resource choice. Then: 
+
+PreCond Σ (l, Cfg , ι ) ⇐⇒ ι ∈ SolveGuard (tl, Cfg , χ ).
+
+Proof. The proof proceeds by showing that the three phases of SolveGuard are structurally isomorphic to the preconditions of the SRS rules. 
+
+(⇒ Completeness) Assume PreCond Σ holds. SRS requires that the types of selected resources match the rule’s input signature (e.g., c ∈ pown  
+
+> ˆτ
+
+). This im-plies that the observed token type ˆτobs unifies with the schema’s input type τin .Thus, Phase 1 of SolveGuard succeeds, yielding substitution σunif y . SRS vali-dates trait bounds and lifetime relations (e.g., via CapOK ). These static checks are exactly the definition of the entailment relation Σ; S ⊢ O . Since SRS im-plies that these hold, Phase 2 of SolveGuard (Entailment) succeeds. SRS requires 
+
+FreshOK (Cfg , ν, μ ). This is explicitly checked in Phase 3 of SolveGuard . Since all phases succeed, ι ∈ SolveGuard .16 Kaiwen Zhang et al. 
+
+(⇐ Soundness) Assume ι ∈ SolveGuard . This implies Σ ⊢ Unify (Phase 1), 
+
+Σ ⊢ Entail (Phase 2), and FreshOK (Phase 3). The construction of tl ensures that its guard obligations O(t) are exactly the trait bounds from the SRS signature, and Ou captures the geometric constraints of the rule. Therefore, the satisfaction of SolveGuard implies that all logical predicates in PreCond Σ are satisfied. ■
+
+Lemma 3 ( β-Invariance). Let Cfg 1 ≡β Cfg 2. For every firing step Cfg 1[φ1⟩Cfg ′
+
+> 1
+
+,there exists a firing step Cfg 2[φ2⟩Cfg ′ 
+
+> 2
+
+such that lab( φ1) = lab( φ2) and Cfg ′ 
+
+> 1
+
+≡β
+
+Cfg ′
+
+> 2
+
+.Proof. The proof follows from the structural definition of the transition schemas. Since all guard conditions (including equality checks, unification, and stack pat-terns) and state updates (multiset operations and stack actions) are defined parametrically over identifiers, they commute with any bijective renaming map. Thus, β-equivalence is a bisimulation on the configuration space. ■
+
+Theorem 1 (Step Correspondence). Let Cfg s be an SRS configuration and 
+
+Cfg p be a PCPN configuration such that Cfg s ≡β Cfg p. For any label l ∈ Lab :
+
+Σ(C) ⊢ Cfg sl
+
+−→ Cfg ′ 
+
+> s
+
+⇐⇒ ∃φ. Cfg p[φ⟩Cfg ′ 
+
+> p
+
+∧ lab( φ) = l ∧ Cfg ′ 
+
+> s
+
+≡β Cfg ′
+
+> p
+
+.
+
+Proof. We prove the equivalence by mutual implication, relying on the structural coincidence (Lemma 1) and guard equivalence (Lemma 2). For the forward direction, assume that SRS takes a step Σ ⊢ Cfg sl
+
+−→ Cfg ′
+
+> s
+
+.By the Closed World Assumption, the involved types reside within cTy , ensuring that the corresponding transition tl exists in the net. Since Cfg s ≡β Cfg p, we can identify a resource set χ in Cfg p corresponding to the resources consumed by SRS. The validity of the SRS step implies that all preconditions holds; thus by Lemma 2, the PCPN guard is satisfied, meaning that tl is enabled. Further-more, Lemma 1 guarantees that the state update performed by the SRS rule is functionally identical to the effect of firing tl, producing a post-state Cfg ′ 
+
+> p
+
+that is β-equivalent to Cfg ′
+
+> s
+
+.Conversely, for the backward direction, assume the PCPN fires Cfg p[φ⟩Cfg ′
+
+> p
+
+with label l. Since the transition tl is enabled, the guard constraints are satisfied. By Lemma 2, this implies that the logical preconditions for the corresponding SRS statement are met. We can thus construct a valid SRS derivation using the same resources. By Lemma 1, the deterministic update logic of the SRS mirrors the net’s transition effect, resulting in a configuration Cfg ′ 
+
+> s
+
+that is β-equivalent to Cfg ′
+
+> p
+
+. ■
+
+Theorem 2 (Strong Bisimulation). The relation R = {(Cfg s, Cfg p) | Cfg s ≡β
+
+Cfg p} is a strong bisimulation between Σ-restricted SRS Label Transition System (LTS) and PCPN firing LTS. Proof. The result is a direct consequence of Theorem 1 and β-invariance property (Lemma 3). Since R is defined by β-equivalence, and Theorem 1 establishes that every step from β-equivalent states leads to β-equivalent states with the Safe Rust Synthesis Based on Pushdown Colored Petri Nets 17 
+
+same label, the simulation conditions are strictly satisfied in both directions. This implies that any trace realizable in the verified PCPN corresponds to a valid SRS program execution, and conversely, any valid execution of a program constructed from the library is explorable by the net. ■
+
+## 5 Reachability Analysis and Snippet Synthesis 
+
+This section develops a finite, bounded reachability graph on top of NC and uses it as a search space for witness extraction and snippet emission [23]. Building on Theorem 2, which guarantees semantic adequacy of PCPN with respect to SRS, we focus on the algorithmic pipeline that turns the net into executable Rust witnesses. Starting from an extracted signature environment Σ(C) and callable set F, we construct NC as described in Section 3. We then fix explicit bounds on type instantiations, token multiplicities, and borrow-stack depth. Configurations are quotiented up to β-renaming by using a canonicalization function Canon to ensure finiteness, and a finite reachability graph enabled firings [8],[19]. Syn-thesis tasks are performed by searching this graph with an objective predicate, optionally guided by strategy heuristics to prioritize effective parameter or type bindings and suppress endlessly applicable value producers. Once a goal node is reached, we backtrack its firing sequence and emit a Rust snippet by translating each transition into a corresponding core statement. 
+
+5.1 Explicit Bounds and Duplication Limits 
+
+To ensure termination, we must constrain the infinite potential of data dupli-cation and recursion. We define a bound tuple B = ( cTy , B, D ), where cTy is the finite universe of instantiated types, B : P → N limits token count per place, and D ∈ N limits stack depth. In Section 4, we have introduced structural schemas for DupCopy and DupClone .These are the sole sources of unbounded token growth. Under bound B, a du-plication transition tdup for type τ is enabled at marking M only if: |M (pown  
+
+> τ
+
+)| <B(pown  
+
+> τ
+
+). This constraint is naturally enforced by the global definition of bounded reachability: Cfg φ
+
+−→B,D Cfg ′ iff Cfg φ
+
+−→ Cfg ′ and BudgetOK B,D (Cfg ′), where 
+
+BudgetOK B,D (⟨M, S ⟩) ≡ (∀p. |M (p)| ≤ B(p)) ∧ | S| ≤ D. Write Cfg φ
+
+−→B,D Cfg ′ if 
+
+Cfg [φ⟩Cfg ′ (Def. 5) and BudgetOK B,D (Cfg ′). Let ⇒∗ 
+
+> B,D
+
+be the reflexive transitive closure of −→B,D .
+
+5.2 Canonicalization and finite branching 
+
+Reachability is invariant under bijective renaming of value identifiers and region labels (Lemma 3). Consequently, we perform the analysis over canonical repre-sentatives of β-equivalence classes, computed via a canonicalization function. 
+
+Definition 7 (Canonicalization). A canonicalization function Canon : Cfg →
+
+Cfg maps a configuration to a representative of its β-equivalence class by: i) 18 Kaiwen Zhang et al. 
+
+renaming value identifiers in the order of their occurrence to a fixed canonical pool; ii) renaming region labels in the order of their occurrence when scanning the stack from top to bottom; and iii) sorting token multisets within each place by a fixed total order on colors. 
+
+Because cTy and the sets of signature variables TVar , LVar are finite, and be-cause the assumed boundedness of the system limits the number of simultane-ously live identifiers and labels, the search space of unification completions is finite. In the implementation, we additionally choose the least fresh identifier or label with respect to fixed total orders, making freshness choices deterministic. 
+
+5.3 Canonical Bounded Reachability Graph Theorem 3 (Finiteness of Reachable States). The set of canonical bounded reachable states, defined as bVB,D :=  Canon (Cfg ) ⟨M0, ϵ ⟩ ⇒ ∗ 
+
+> B,D
+
+Cfg , is finite. Proof. By the bounding condition BudgetOK B,D , every reachable configuration contains at most P 
+
+> p∈P
+
+B(p) tokens and at most D frames. The set of places P
+
+and the set of ground types cTy are finite. The canonicalization function abstracts away concrete identifier and label names, leaving only finitely many canonical shapes under the given bounds. ■
+
+Definition 8 (Canonical bounded reachability graph). The canonical bounded reachability graph is the directed labeled graph bGB,D = ( bVB,D , bEB,D ) where 
+
+(dCfg , φ, dCfg ′
+
+) ∈ bEB,D if there exist configurations Cfg , Cfg ′ such that Canon (Cfg ) = 
+
+dCfg , Canon (Cfg ′) = dCfg ′
+
+, and Cfg φ
+
+−→B,D Cfg ′.
+
+Algorithm 1 constructs bGB,D via worklist saturation. Starting from dCfg 0,it iteratively expands states, and valid successors (checked via BudgetOK ) are canonicalized and added to the graph if new, mapping parents in par for witness extraction. 
+
+Theorem 4 (Termination and completeness within bounds). Algorithm 1 terminates and returns the complete graph bGB,D . Moreover, for every node 
+
+dCfg ∈ bVB,D with par (dCfg )̸ = ⊥, backtracking par yields a witness firing sequence from dCfg 0 to dCfg .Proof. Termination follows from finiteness of bVB,D (Theorem 3) and the fact that each new node is enqueued once. Completeness follows because the algorithm enumerates all bounded-enabled firings from every discovered node and adds the corresponding edges [11, 17]. The parent map is set on the first discovery of each node, and ths backtracking yields a valid path. ■Safe Rust Synthesis Based on Pushdown Colored Petri Nets 19 
+
+Input: PCPN NC , bounds (B, D )
+
+Output: Graph bGB,D and parent map par 
+
+dCfg 0 ← Canon (⟨M0, ϵ ⟩)
+
+Q ← [dCfg 0]; bV ← { dCfg 0}; bE ← ∅ ; par (dCfg 0) ← ⊥ 
+
+while Q̸ = ∅ do 
+
+dCfg ← pop( Q)
+
+foreach t ∈ T do foreach valid inputs χ ⊆ dCfg .M do foreach ι ∈ SolveGuard (t, dCfg , χ ) do if t is enabled at dCfg under (χ, ι ) then 
+
+Cfg ′ ← Fire (dCfg , ⟨t, χ, ι ⟩)
+
+if BudgetOK B,D (Cfg ′) then 
+
+dCfg ′
+
+← Canon (Cfg ′)
+
+bE ← bE ∪ { (dCfg , ⟨t, χ, ι ⟩, dCfg ′
+
+)}
+
+if dCfg ′
+
+/∈ bV then 
+
+bV ← bV ∪ { dCfg ′
+
+};push( Q, dCfg ′
+
+)
+
+par (dCfg ′
+
+) ← (dCfg , ⟨t, χ, ι ⟩)
+
+end end end end end end end return ( bGB,D = ( bV , bE), par )
+
+Algorithm 1: Worklist saturation of bGB,D with a parent map Once the reachability graph is constructed, we synthesize the final executable Rust code using the procedure outlined in Algorithm 2. This algorithm trans-forms a graph path into a valid sequence of operations that satisfies the synthesis objective. Algorithm 2 first scans the vertices bVB,D to find a candidate state dCfg g that meets the user-defined Goal . It then recovers the execution trace σ by back-tracking via the parent map. However, this trace may end inside nested scopes. To ensure syntactic validity (e.g., closing open scopes), it invokes Algorithm 3, which iteratively fires unique scope-ending transitions until the stack empties (S = ϵ), yielding a complete sequence σ↓.
+
+5.4 Witness extraction, deterministic stack closure, and emission Definition 9 (Backtracking a witness). Given a parent map par and a node 
+
+dCfg , define Backtrack (par , dCfg ) as: Backtrack (par , dCfg 0) = ϵ, and if par (dCfg ) = (dCfg p, φ ) then Backtrack (par , dCfg ) = Backtrack (par , dCfg p) · φ.20 Kaiwen Zhang et al. 
+
+Input: MRG ( bGB,D , par ), Objective Goal 
+
+Output: Rust Snippet satisfying Goal , or ⊥
+
+Select dCfg g ∈ bVB,D such that Goal (dCfg g )
+
+if no such dCfg g exists then return ⊥
+
+σ ← Backtrack (par , dCfg g )
+
+Let Cfg g be the concrete state reached by σ from ⟨M0, ϵ ⟩
+
+σclose ← CloseStack (Cfg g ); if σclose = ⊥ then return ⊥
+
+σ↓ ← σ · σclose 
+
+return Emit (σ↓)
+
+Algorithm 2: Goal-directed synthesis over bGB,D 
+
+Input: Configuration Cfg = ⟨M, S ⟩
+
+Output: Closing sequence σclose , or ⊥
+
+σclose ← ϵ
+
+while S̸ = ϵ do 
+
+Let γ = top( S)
+
+Find unique transition t enabling pop (γ) if no such transition exists then return ⊥
+
+Cfg ← Fire (Cfg , t );σclose ← σclose · t;S ← Cfg .S 
+
+end return σclose 
+
+Algorithm 3: CloseStack (Cfg )
+
+A configuration is closed if its stack is empty: Closed (⟨M, S ⟩) ≜ (S = ϵ).Given a witness reaching Cfg , we optionally append a closure suffix that repeat-edly pops the top frame. 
+
+Theorem 5 (Soundness of bounded synthesis). If Algorithm 2 returns s̸ =
+
+⊥, then there exists a closed bounded firing sequence σ↓ such that s = Emit (σ↓)
+
+and ⟨M0, ϵ ⟩[σ↓⟩B,D Cfg for some closed configuration Cfg . Consequently, the emit-ted snippet is accepted by the SRS equivalently, by the guarded signature checks. Proof. By construction, σ is a bounded witness to dCfg g in the canonical graph. If 
+
+CloseStack succeeds, σ↓ reaches a closed configuration by repeated stack pops. Each firing in σ↓ is enabled by guarded solving, hence corresponds to a valid SRS step, and hence Emit (σ↓) is a valid SRS trace realization. ■
+
+## 6 Conclusion 
+
+This paper presented a semantics-first approach to signature-level Rust code generation, establishing a strong bisimulation between SRS and PCPN to char-acterize compilable traces. Under explicit bounds, we construct a finite reach-ability graph for deterministic witness extraction. However, our analysis is an under-approximation limited by the specified budget and potential state explo-sion in complex generic dependencies. Future work includes extending the theory Safe Rust Synthesis Based on Pushdown Colored Petri Nets 21 
+
+to unsafe and async features, optimizing graph exploration via guided heuristics, and applying the generator to differential compiler testing. 
+
+## References 
+
+1. Alur, R., Madhusudan, P.: Visibly pushdown languages. In: Proceedings of the thirty-sixth annual ACM symposium on Theory of computing. pp. 202–211 (2004) 2. Astrauskas, V., Müller, P., Poli, F., Summers, A.J.: Leveraging rust types for mod-ular specification and verification. Proceedings of the ACM on Programming Lan-guages 3(OOPSLA), 1–30 (2019) 3. Bouajjani, A., Esparza, J., Maler, O.: Reachability analysis of pushdown automata: Application to model-checking. In: International Conference on Concurrency The-ory. pp. 135–150. Springer (1997) 4. Cai, L., Zhang, J., Liu, Z.: Generating test cases using colored petri net. In: 2010 2nd International Symposium on Information Engineering and Electronic Com-merce. pp. 1–5 (2010) 5. DeLine, R., Fähndrich, M.: Typestates for objects. In: European Conference on Object-Oriented Programming. pp. 465–490. Springer (2004) 6. Dou, H., Zhou, M., Wang, S., Albeshri, A.: An Efficient Liveness Analy-sis Method for Petri Nets via Maximally Good-Step Graphs. IEEE Trans-actions on Systems, Man, and Cybernetics 54 (7), 3908–3919 (Jan 2024). https://doi.org/10.1109/TSMC.2024.3372941 7. Feng, Y., Martins, R., Wang, Y., Dillig, I., Reps, T.W.: Component-based synthesis for complex apis. In: Proceedings of the 44th ACM SIGPLAN Symposium on Principles of Programming Languages. pp. 599–612 (2017) 8. Gabbay, M.J., Pitts, A.M.: A new approach to abstract syntax with variable bind-ing. Formal aspects of computing 13 (3), 341–363 (2002) 9. Girard, J.Y.: Linear logic. Theoretical computer science 50 (1), 1–101 (1987) 10. Ho, S., Protzenko, J.: Aeneas: Rust verification by functional translation. Proceed-ings of the ACM on Programming Languages 6(ICFP), 711–741 (2022) 11. Jensen, K.: Coloured petri nets. In: Petri nets: central models and their properties, pp. 248–299. Springer (1987) 12. Jensen, K., Kristensen, L.M., Wells, L.: Coloured petri nets and cpn tools for modelling and validation of concurrent systems. International Journal on Software Tools for Technology Transfer 9(3), 213–254 (2007) 13. Jung, C., Lee, S., Raman, E., Pande, S.: Automated memory leak detection for production use. In: Proceedings of the 36th International Conference on Software Engineering. p. 825–836. ICSE 2014, Association for Computing Machinery, New York, NY, USA (2014), https://doi.org/10.1145/2568225.2568311 14. Jung, R., Dang, H.H., Kang, J., Dreyer, D.: Stacked borrows: an aliasing model for rust. Proceedings of the ACM on Programming Languages 4(POPL), 1–32 (2019) 15. Jung, R., Jourdan, J.H., Krebbers, R., Dreyer, D.: Rustbelt: Securing the founda-tions of the rust programming language. Proceedings of the ACM on Programming Languages 2(POPL), 1–34 (2017) 16. Kosaraju, S.R.: Decidability of reachability in vector addition systems (preliminary version). In: Proceedings of the fourteenth annual ACM symposium on Theory of computing. pp. 267–281 (1982) 17. Liu, G.: Petri Nets: Theoretical Models and Analysis Methods for Concurrent Systems. Springer Nature (2022) 22 Kaiwen Zhang et al. 18. Matsakis, N.D., Klock, F.S.: The rust language. In: Proceedings of the 2014 ACM SIGAda annual conference on High integrity language technology. pp. 103–104 (2014) 19. Pitts, A.M.: Nominal sets: Names and symmetry in computer science. Cambridge University Press (2013) 20. Rackoff, C.: The covering and boundedness problems for vector addition systems. Theoretical Computer Science 6(2), 223–231 (1978) 21. Reps, T., Horwitz, S., Sagiv, M.: Precise interprocedural dataflow analysis via graph reachability. In: Proceedings of the 22nd ACM SIGPLAN-SIGACT sympo-sium on Principles of programming languages. pp. 49–61 (1995) 22. Robidoux, R., Xu, H., Xing, L., Zhou, M.: Automated modeling of dynamic re-liability block diagrams using colored petri nets. IEEE Transactions on Systems, Man, and Cybernetics - Part A: Systems and Humans 40 (2), 337–351 (2010) 23. Solar-Lezama, A., Tancau, L., Bodik, R., Seshia, S., Saraswat, V.: Combinatorial sketching for finite programs. In: Proceedings of the 12th international conference on Architectural support for programming languages and operating systems. pp. 404–415 (2006) 24. Tov, J.A., Pucella, R.: Practical affine types. ACM SIGPLAN Notices 46 (1), 447– 458 (2011) 25. VanHattum, A., Schwartz-Narbonne, D., Chong, N., Sampson, A.: Verifying dy-namic trait objects in rust. In: Proceedings of the 44th International Conference on Software Engineering: Software Engineering in Practice. pp. 321–330 (2022) 26. Villani, N., Hostert, J., Dreyer, D., Jung, R.: Tree borrows. Proceedings of the ACM on Programming Languages 9(PLDI), 1019–1042 (2025) 27. Wadler, P.: Linear types can change the world! In: Programming concepts and methods. vol. 3, p. 5. North-Holland, Amsterdam (1990) 28. Weiss, A., Gierczak, O., Patterson, D., Ahmed, A.: Oxide: The essence of rust. arXiv preprint arXiv:1903.00982 (2019) 29. Zurawski, R., Zhou, M.: Petri nets and industrial applications: A tutorial. IEEE Transactions on Industrial Electronics 41 (6), 567–583 (1994)

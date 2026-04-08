@@ -6,79 +6,79 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-04-07
-- 运行时间：2026-04-07 20:20:52 UTC
+- 最新运行日期：2026-04-08
+- 运行时间：2026-04-08 20:26:27 UTC
 - 运行状态：成功
 - 本次总论文数：19
 - 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日深度解析 19 篇前沿成果，重点攻克 LLM Agent 的 Token 级实时控制与复杂软件库的漏洞挖掘难题。
-ATLAS-RTC 框架通过闭环控制显著提升 Agent 可靠性，定向灰盒模糊测试则为客户端安全防御提供了满分级新方案。
-建议关注 Agent 技能精简与 MCP 协议安全，在追求极致推理效率的同时警惕系统级供应链风险。
-- 详情：[/202604/07/README](/202604/07/README)
+今日精选 19 篇前沿成果，深度复盘 Java 漏洞挖掘新路径与 LLM 智能体安全架构。
+重点推荐结合上下文 Sink 知识的 Java 漏洞发现技术，以及针对 Agentic LLM 间接注入风险的系统性评估。
+建议开发者优先关注智能体系统的鲁棒性验证，并尝试引入多维监控协议以提升系统抗共谋能力。
+- 详情：[/202604/08/README](/202604/08/README)
 
 ### 精读区论文标签
-1. [ATLAS-RTC: Closing the Loop on LLM Agent Output with Token-Level Runtime Control](/202604/07/2603.27905v2-atlas-rtc-closing-the-loop-on-llm-agent-output-with-token-level-runtime-control)  
-   标签：评分：10.0/10、query:agsec
-   evidence：在解码过程中强制执行结构化输出的Token级运行时控制系统
-2. [Triggering and Detecting Exploitable Library Vulnerability from the Client by Directed Greybox Fuzzing](/202604/07/2604.04102v1-triggering-and-detecting-exploitable-library-vulnerability-from-the-client-by-directed-greybox-fuzzing)  
-   标签：评分：10.0/10、query:libfuz
-   evidence：针对库漏洞检测的定向灰盒模糊测试
-3. [ClawSafety: "Safe" LLMs, Unsafe Agents](/202604/07/2604.01438v2-clawsafety-safe-llms-unsafe-agents)  
+1. [Contextualizing Sink Knowledge for Java Vulnerability Discovery](/202604/08/2604.01645v2-contextualizing-sink-knowledge-for-java-vulnerability-discovery)  
+   标签：评分：9.0/10、query:libfuz
+   evidence：利用API语义进行Java漏洞发现的以汇点为中心的模糊测试框架
+2. [TraceGuard: Structured Multi-Dimensional Monitoring as a Collusion-Resistant Control Protocol](/202604/08/2604.03968v1-traceguard-structured-multi-dimensional-monitoring-as-a-collusion-resistant-control-protocol)  
    标签：评分：9.0/10、query:agsec
-   evidence：针对智能体框架中高风险动作识别和提示词注入的基准测试
-4. [Predict, Don't React: Value-Based Safety Forecasting for LLM Streaming](/202604/07/2604.03962v1-predict-dont-react-value-based-safety-forecasting-for-llm-streaming)  
+   evidence：针对代理动作追踪一致性的结构化多维监控
+3. [Your Agent, Their Asset: A Real-World Safety Analysis of OpenClaw](/202604/08/2604.04759v1-your-agent-their-asset-a-real-world-safety-analysis-of-openclaw)  
    标签：评分：9.0/10、query:agsec
-   evidence：针对部分生成的安全决策和有害性预测
-5. [Causality Laundering: Denial-Feedback Leakage in Tool-Calling LLM Agents](/202604/07/2604.04035v1-causality-laundering-denial-feedback-leakage-in-tool-calling-llm-agents)  
+   evidence：具有本地系统访问权限的AI智能体真实世界安全分析
+4. [Gradient-Controlled Decoding: A Safety Guardrail for LLMs with Dual-Anchor Steering](/202604/08/2604.05179v1-gradient-controlled-decoding-a-safety-guardrail-for-llms-with-dual-anchor-steering)  
    标签：评分：9.0/10、query:agsec
-   evidence：工具调用智能体安全的运行时强制执行层
-6. [CoopGuard: Stateful Cooperative Agents Safeguarding LLMs Against Evolving Multi-Round Attacks](/202604/07/2604.04060v1-coopguard-stateful-cooperative-agents-safeguarding-llms-against-evolving-multi-round-attacks)  
+   evidence：梯度控制解码作为LLM输出的安全护栏
+5. [Pre-Execution Safety Gate & Task Safety Contracts for LLM-Controlled Robot Systems](/202604/08/2604.05427v1-pre-execution-safety-gate--task-safety-contracts-for-llm-controlled-robot-systems)  
    标签：评分：9.0/10、query:agsec
-   evidence：基于协作代理的状态化多轮LLM防御框架
-7. [ANX: Protocol-First Design for AI Agent Interaction with a Supporting 3EX Decoupled Architecture](/202604/07/2604.04820v1-anx-protocol-first-design-for-ai-agent-interaction-with-a-supporting-3ex-decoupled-architecture)  
+   evidence：LLM控制的执行前安全门和任务安全合同
+6. [Stop Fixating on Prompts: Reasoning Hijacking and Constraint Tightening for Red-Teaming LLM Agents](/202604/08/2604.05549v1-stop-fixating-on-prompts-reasoning-hijacking-and-constraint-tightening-for-red-teaming-llm-agents)  
    标签：评分：9.0/10、query:agsec
-   evidence：用于可验证交互与安全的智能体原生协议
+   evidence：操纵智能体推理轨迹与约束收紧
+7. [Multi-Agent LLM Governance for Safe Two-Timescale Reinforcement Learning in SDN-IoT Defense](/202604/08/2604.01127v1-multi-agent-llm-governance-for-safe-two-timescale-reinforcement-learning-in-sdn-iot-defense)  
+   标签：评分：8.0/10、query:agsec
+   evidence：用于SDN-IoT防御中安全强化学习的LLM治理
 
 ### 速读区论文标签
-1. [SkillReducer: Optimizing LLM Agent Skills for Token Efficiency](/202604/07/2603.29919v1-skillreducer-optimizing-llm-agent-skills-for-token-efficiency)  
+1. [AIVV: Neuro-Symbolic LLM Agent-Integrated Verification and Validation for Trustworthy Autonomous Systems](/202604/08/2604.02478v1-aivv-neuro-symbolic-llm-agent-integrated-verification-and-validation-for-trustworthy-autonomous-systems)  
    标签：评分：8.0/10、query:agsec
-   evidence：优化 Agent 技能以提高 Token 效率和路由层控制
-2. [Yet Even Less Is Even Better For Agentic, Reasoning, and Coding LLMs](/202604/07/2604.00824v3-yet-even-less-is-even-better-for-agentic-reasoning-and-coding-llms)  
+   evidence：自主系统的LLM Agent集成验证
+2. [A Systematic Security Evaluation of OpenClaw and Its Variants](/202604/08/2604.03131v1-a-systematic-security-evaluation-of-openclaw-and-its-variants)  
    标签：评分：8.0/10、query:agsec
-   evidence：保留对智能体能力至关重要的决策Token
-3. [From Component Manipulation to System Compromise: Understanding and Detecting Malicious MCP Servers](/202604/07/2604.01905v1-from-component-manipulation-to-system-compromise-understanding-and-detecting-malicious-mcp-servers)  
+   evidence：智能体框架安全性评估及执行全生命周期的攻击行为分析
+3. [Your Agent is More Brittle Than You Think: Uncovering Indirect Injection Vulnerabilities in Agentic LLMs](/202604/08/2604.03870v1-your-agent-is-more-brittle-than-you-think-uncovering-indirect-injection-vulnerabilities-in-agentic-llms)  
    标签：评分：8.0/10、query:agsec
-   evidence：理解和检测将 LLM 连接到外部工具的恶意 MCP 服务器
-4. [Towards Secure Agent Skills: Architecture, Threat Taxonomy, and Security Analysis](/202604/07/2604.02837v1-towards-secure-agent-skills-architecture-threat-taxonomy-and-security-analysis)  
+   evidence：评估针对Agent间接提示注入和未授权操作的防御策略
+4. [Automating Cloud Security and Forensics Through a Secure-by-Design Generative AI Framework](/202604/08/2604.03912v1-automating-cloud-security-and-forensics-through-a-secure-by-design-generative-ai-framework)  
    标签：评分：8.0/10、query:agsec
-   evidence：大模型智能体技能的安全分析与威胁分类
-5. [Fine-Tuning Large Language Models for Cooperative Tactical Deconfliction of Small Unmanned Aerial Systems](/202604/07/2603.28561v1-fine-tuning-large-language-models-for-cooperative-tactical-deconfliction-of-small-unmanned-aerial-systems)  
+   evidence：PromptShield 通过本体驱动的验证防御 LLM 免受对抗性提示攻击
+5. [Security in LLM-as-a-Judge: A Comprehensive SoK](/202604/08/2603.29403v2-security-in-llm-as-a-judge-a-comprehensive-sok)  
    标签：评分：7.0/10、query:agsec
-   evidence：多智能体环境下安全关键约束下的 LLM 决策
-6. [Secure Forgetting: A Framework for Privacy-Driven Unlearning in Large Language Model (LLM)-Based Agents](/202604/07/2604.00430v1-secure-forgetting-a-framework-for-privacy-driven-unlearning-in-large-language-model-llm-based-agents)  
+   evidence：关于基于LLM的裁判在评估输出安全性方面的安全方面知识体系
+6. [Safety, Security, and Cognitive Risks in World Models](/202604/08/2604.01346v2-safety-security-and-cognitive-risks-in-world-models)  
    标签：评分：7.0/10、query:agsec
-   evidence：基于LLM的智能体的安全控制与隐私
-7. [OrgAgent: Organize Your Multi-Agent System like a Company](/202604/07/2604.01020v1-orgagent-organize-your-multi-agent-system-like-a-company)  
+   evidence：Agent AI世界模型中的安全与安全性风险
+7. [ToolMisuseBench: An Offline Deterministic Benchmark for Tool Misuse and Recovery in Agentic Systems](/202604/08/2604.01508v1-toolmisusebench-an-offline-deterministic-benchmark-for-tool-misuse-and-recovery-in-agentic-systems)  
    标签：评分：7.0/10、query:agsec
-   evidence：多智能体系统中用于最终答案控制的合规层
-8. [VibeGuard: A Security Gate Framework for AI-Generated Code](/202604/07/2604.01052v1-vibeguard-a-security-gate-framework-for-ai-generated-code)  
-   标签：评分：7.0/10、query:agsec
-   evidence：AI生成代码输出的安全门框架
-9. [Heddle: A Distributed Orchestration System for Agentic RL Rollout](/202604/07/2603.28101v1-heddle-a-distributed-orchestration-system-for-agentic-rl-rollout)  
-   标签：评分：6.0/10、query:agsec
-   evidence：以轨迹为中心的智能体执行系统
-10. [VulnScout-C: A Lightweight Transformer for C Code Vulnerability Detection](/202604/07/2603.28309v1-vulnscout-c-a-lightweight-transformer-for-c-code-vulnerability-detection)  
+   evidence：评估代理系统中的工具误用和策略违规
+8. [TestDecision: Sequential Test Suite Generation via Greedy Optimization and Reinforcement Learning](/202604/08/2604.01799v1-testdecision-sequential-test-suite-generation-via-greedy-optimization-and-reinforcement-learning)  
+   标签：评分：7.0/10、query:libfuz
+   evidence：通过强化学习进行序列化测试套件生成
+9. [Efficient Software Vulnerability Detection Using Transformer-based Models](/202604/08/2604.00112v1-efficient-software-vulnerability-detection-using-transformer-based-models)  
    标签：评分：6.0/10、query:libfuz
-   evidence：使用多智能体流水线进行 C 代码漏洞检测
-11. [BACE: LLM-based Code Generation through Bayesian Anchored Co-Evolution of Code and Test Populations](/202604/07/2603.28653v1-bace-llm-based-code-generation-through-bayesian-anchored-co-evolution-of-code-and-test-populations)  
+   evidence：利用程序切片和API函数调用进行漏洞检测
+10. [AutoEG: Exploiting Known Third-Party Vulnerabilities in Black-Box Web Applications](/202604/08/2604.00704v1-autoeg-exploiting-known-third-party-vulnerabilities-in-black-box-web-applications)  
    标签：评分：6.0/10、query:libfuz
-   evidence：LLM 框架中用于代码验证的自动化测试生成
-12. [Attesting LLM Pipelines: Enforcing Verifiable Training and Release Claims](/202604/07/2603.28988v1-attesting-llm-pipelines-enforcing-verifiable-training-and-release-claims)  
+   evidence：第三方组件的自动漏洞利用生成
+11. [Detecting Call Graph Unsoundness without Ground Truth](/202604/08/2604.00885v1-detecting-call-graph-unsoundness-without-ground-truth)  
+   标签：评分：6.0/10、query:libfuz
+   evidence：Java静态分析框架语义一致性的实证研究
+12. [Do Phone-Use Agents Respect Your Privacy?](/202604/08/2604.00986v2-do-phone-use-agents-respect-your-privacy)  
    标签：评分：6.0/10、query:agsec
-   evidence：在LLM流水线中强制执行可验证声明和安全扫描
+   evidence：基于规则审计的移动Agent隐私行为可验证评估框架
 
 
 <div class="dpr-home-promo-card">

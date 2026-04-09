@@ -1,0 +1,3391 @@
+Title: Trace-Guided Synthesis of Effectful Test Generators
+
+URL Source: https://arxiv.org/pdf/2604.04345v1
+
+Published Time: Tue, 07 Apr 2026 01:36:06 GMT
+
+Number of Pages: 66
+
+Markdown Content:
+# Trace-Guided Synthesis of Effectful Test Generators 
+
+ZHE ZHOU, Purdue University, USA 
+
+ANKUSH DESAI, Snowflake, USA 
+
+BENJAMIN DELAWARE, Purdue University, USA 
+
+SURESH JAGANNATHAN, Purdue University, USA Several recently proposed program logics have incorporated notions of underapproximation into their design, enabling them to reason about reachability rather than safety. In this paper, we explore how similar ideas can be integrated into an expressive type and effect system. We use the resulting underapproximate type specifications to guide the synthesis of test generators that probe the behavior of effectful black-box systems. A key novelty of our type language is its ability to capture underapproximate behaviors of effectful operations using symbolic traces that expose latent data and control dependencies, constraints that must be preserved by the test sequences the generator outputs. We implement this approach in a tool called Clouseau , and evaluate it on a diverse range of applications by integrating Clouseau ’s synthesized generators into property-based testing frameworks like QCheck and model-checking tools like P. In both settings, the generators synthesized by Clouseau are significantly more effective than the default testing strategy, and are competitive with state-of-the-art, handwritten solutions. 
+
+1 Introduction 
+
+Unlike program verifiers, symbolic execution [ 3 , 16 ], bounded model checking [ 7 , 12 , 13 ], or property-based testing [ 5, 19 , 25 , 32 ] frameworks underapproximate a program’s behavior, with a goal of generating only true positives (i.e., every reported bug is a real bug), but admitting false negatives (i.e., not all real bugs may be reported). To place such tools on a more formal footing, several new underapproximate program logics have recently been proposed [ 26 , 33 , 37 , 46 ] for reasoning about incorrectness properties of a program, i.e., a characterization of the conditions under which a particular error state is guaranteed to be reached. As one example, O’Hearn defines [ 33 ]incorrectness triples of the form [𝑃 ] c [𝑄 ], which assert that for any post-state of a command c sat-isfying assertion 𝑄 there must exist a pre-state satisfying 𝑃 . This interpretation underapproximates 
+
+c’s behavior because it requires a witness pre-state to justify every valid post-state. While these underapproximate axiomatic proof systems have focused on imperative first-order state-based specifications, other recent efforts have instead explored notions of incorrectness and underapproximation using the language of types [ 38 , 43 , 44 ]. Ramsay and Walpole [38] , for example, introduces a two-sided type system that allows for the refutation of typing formulas, guaranteeing that not only do well-typed programs not go wrong, but also that ill-typed programs don’t evaluate. Zhou et al. [44] , on the other hand, leverages notions of underapproximation in the form of coverage 
+
+types to represent the set of values guaranteed to be produced by a test generator. These type systems consider compositional underapproximate reasoning techniques for pure functional programs, and thus cannot be directly applied to impure functional programs that, e.g., interact with effectful libraries. To address this important limitation, this paper introduces 
+
+Underapproximate Hoare Automata Types , or uHat s, a type abstraction for underapproximating effectful computations . A uHat type judgement has the form: 
+
+⊢ 𝑒 : [𝐻 ] 𝑡 [𝐹 ] 
+
+> Authors’ Contact Information: Zhe Zhou, Purdue University, USA, zhou956@purdue.edu; Ankush Desai, Snowflake, USA, Ankush.desai@snowflake.com; Benjamin Delaware, Purdue University, USA, bendy@purdue.edu; Suresh Jagannathan, Purdue University, USA, suresh@cs.purdue.edu. 2026. ACM XXXX-XXXX/2026/4-ART https://doi.org/10.1145/nnnnnnn.nnnnnnn , Vol. 1, No. 1, Article . Publication date: April 2026.
+> arXiv:2604.04345v1 [cs.PL] 6 Apr 2026 2Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+
+where 𝐻 and 𝐹 qualify type 𝑡 with pre- ( 𝐻 ) and post- ( 𝐹 ) conditions. Both conditions are expressed as symbolic regular expressions (SREs) that capture the trace of effects performed before and by 
+
+𝑒 , similar to the Hat s proposed by Zhou et al. [45] . Unlike their overapproximate predecessors, however, uHat s underapproximate program behaviors: the judgement above states that for every trace of effects 𝛼 accepted by 𝐹 , there exists a trace accepted by 𝐻 under which 𝑒 must produce 𝛼 .Intuitively, a uHat captures the sufficient conditions (i.e., 𝐻 ) that guarantee a set of effects (i.e., 𝐹 )can be realized by executing 𝑒 .To illustrate, consider a program that interacts with a key-value store that provides get and put 
+
+operations. The following uHat underapproximates the behavior of get with respect to a context (i.e., trace) of previously performed put s:            
+
+> get :𝑘 :Key .t[•∗·⟨ put 𝑘 𝑣 ⟩·• ∗]{ 𝜈 :Value .t|𝜈 =𝑣 }𝑢 [⟨get 𝑘 𝑣 ⟩]
+
+This uHat asserts that a get operation is guaranteed to produce a trace consisting of a single event, 
+
+⟨get 𝑘 𝑣 ⟩, provided that some put operation binding 𝑘 to 𝑣 (i.e., •∗·⟨ put 𝑘 𝑣 ⟩·• ∗) was executed before. The underapproximate interpretation given to uHat s encodes a form of reachability and data dependence between the effects that have occurred prior to executing an operation, and the effect produced by the operation — in this case, the execution of a get operation on a key 𝑘 depends on the execution of a previous put operation on 𝑘 .1
+
+In this paper, we show how uHat s can be used to guide a synthesis procedure for the property-based testing (PBT) domain. PBT is an increasingly popular framework for automated testing of user-specified properties. A key component of PBT frameworks are test generators , nondeterministic functions that supply input values to the system under test (SUT). To be effective, a generator needs to produce inputs that are relevant to the property of interest, e.g., they should satisfy the preconditions of the SUT. The need to manually write effective generators is a well-known pain point [ 19 ] to wider adoption of PBT, and developing generators for properties that impose deep structural or semantic constraints on inputs remains a publication-worthy exercise [18, 20, 34]. The challenges with writing PBT generators are further exacerbated when the SUT is effectful and includes opaque components, e.g., libraries whose source code may not be available or amenable for inspection. In this setting, tests are typically comprised of sequences of inputs that induce effects in a particular order to expose latent data and control dependencies relevant to the property being checked, indirectly manipulating library-managed state. Some examples of scenarios where tests are naturally expressed this way include: (1) Library API invocations: The SUT is a library implementing an effectful abstract data type (ADT) equipped with a set of APIs. A test consists of a sequence of API calls that could lead the implementation to an error state (e.g., a violation of a representation invariant [29, 45]). (2) Serialized inputs: The SUT is a procedure that processes serialized input data whose effects are tokens used to reconstruct an AST which is then evaluated. The test generator creates (serialized) inputs that produce semantic dependencies among nodes in the corresponding AST that could violate a property of interest (e.g., evaluation errors due to incorrect treatment of variable scoping or binding). (3) Database transactions: The SUT is a database supporting transactional read and write oper-ations under various isolation levels. A test consists of a sequence of transaction operations whose interleaved order is chosen to expose potential violations of isolation or consistency guarantees the database is supposed to provide.                        
+
+> 1Note that an overapproximate interpretation of this judgement is not sensible, as it would require that a get operation on
+> 𝑘 be able to simultaneously observe every value 𝑣 previously put into 𝑘 . This would mean that after performing ⟨put 𝑘 12⟩
+> and ⟨put 𝑘 13⟩, the result of ⟨get 𝑘 1⟩would be both both 2and 3, which is obviously impossible. , Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 3
+
+(4) Distributed protocols: The SUT is a distributed system whose components are expected to adhere to protocol invariants. A test is a sequence of message invocations that can lead the system to a global state in which these invariants are not maintained. Despite being drawn from diverse domains, all these examples share the requirement that an effective test generator needs to be cognizant of how dependencies between the events in traces are (or are not) meaningful to manifesting a property violation. To capture this information succinctly, we use uHat s as a formal specification language to precisely describe latent dependencies among effectful operations, and to ensure that effectful generators adhere to these specifications by conforming to those dependencies. We develop a custom DSL for writing such generators. For example, using the specification given above, a well-typed program written in our DSL would only generate test sequences in which every get operation is preceded by at least one put on the same key, while placing no other constraints on the operations that might occur between the two. While this use of uHat s enables us to check whether a manually-written generator explores traces relevant to a target property, the burden of writing such a generator still remains. To alleviate this overhead, we connect these two elements by defining a type-guided program synthesis technique that automatically constructs DSL generator programs using uHat specifications. The resulting generators are guaranteed to produce traces that violate a target property when executed angelically [ 2], and can thus evince a concrete bug assuming the SUT provides responses conforming to provided specifications when performing effects. 
+
+> Fig. 1. Clouseau workflow
+
+Fig. 1 depicts the workflow of our system, named Clouseau . The rele-vant APIs of the SUT are specified using uHat s. Along with the prop-erty of interest, these specifications drive the synthesis of a test genera-tor in Clouseau ’s DSL, which is then transpiled into different testing frameworks; thus far, we have implemented QCheck [ 35 ] (OCaml) and P [ 13 ] targets. 2 Synthesized test generator programs are guaranteed to produce test sequences that respect the underapproximate interpretation of the uHat API specifications. This paper makes the following contributions: (1) We present a new type abstraction, uHat , that ascribes an underapproximate interpretation to an effect history trace used to justify the effects produced by an expression. (2) We develop a DSL for writing test generators typed using uHat s. The DSL, an extension of a typed 𝜆 -calculus with support for (asynchronous) effects, nondeterministic choice, and recursion, is sufficiently expressive to be applicable across a diverse range of applications, (3) We describe a trace-guided synthesis procedure that uses uHat specifications associated with SUT-provided effectful operators, along with an SRE specification of the property to be tested, to generate well-typed test generators. We evaluate this procedure by comparing the generators synthesized by Clouseau to state-of-the-art baselines on benchmarks whose bugs require deep (effectful) semantic and structural properties of the target SUT to surface. The rest of the paper is organized as follows. Sec. 2 provides additional motivation and ex-amples. Sec. 3 presents the operational semantics and type system for the Clouseau DSL. Sec. 4 describes the synthesis algorithm. A detailed evaluation study over a broad range of diverse bench-marks drawn from the domains given above is given in Sec. 5; these include generating tests for semantically complex data structure properties such as well-typed simply-typed lambda calculus  
+
+> 2For P, the generator replaces the default (random) scheduler. , Vol. 1, No. 1, Article . Publication date: April 2026. 4Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+
+terms using de Bruijn indices, as well as real-world distributed protocols deployed in industry. Sec. 6 presents related work and conclusions. 
+
+2 Overview 
+
+We propose a trace-based type-guided synthesis framework for generating effectful input test sequences in a PBT system interacting with a SUT comprised of opaque, potentially concurrent and/or distributed, components. Before formalizing our underapproximate type system and detailing our synthesis algorithm, we first present the key features of our approach, followed by illustrative examples from multiple domains. 
+
+2.1 Trace-based Specifications 
+
+We capture the inputs and observed outputs of an effectful operation (e.g., put or get in our earlier example) as an event in a trace , which is simply a sequence of events. To reason compositionally about dependencies between the effects performed by a generator program, we rely on local specifications of operations in the form of uHat s. Our type system uses these specifications to capture the constraints of individual operations in a modular fashion, delegating the burden of managing the event and data dependencies of effectful operations from top-level trace specifications to the underlying type system. Concretely, we model these local specifications as a collection of uHat -based signatures like the one for get from the introduction: parameter types constrain the payloads of events, while return types capture relationships between events. We employ symbolic regular expressions (SREs) to qualify trace-based properties within a type, following prior work on trace-based type systems [ 23 ,31 , 45 ]. However, our formulation is distinguished from these other efforts by how it generalizes beyond history-sensitive specifications of effects or state, additionally allowing types to express latent dependencies among arbitrary events. 
+
+2.2 The Clouseau DSL 
+
+To support test generators across diverse application domains, we introduce a domain-specific language (DSL) that extends a typed lambda calculus core, with recursion, nondeterministic choice (⊕), and effectful operations ( op ). This language serves as the basis for writing (and, in our case, synthesizing) effectful test generators. The DSL further allows (angelic) random value generation and property checking via assume and assert statements. Concretely, an assume (𝜙 ) expression constrains all the program variables at the point at which it appears to satisfy the formula 𝜙 , while 
+
+assert (𝜙 ) halts program execution if the formula 𝜙 fails to hold. 
+
+2.3 Examples 
+
+In order to bias test exploration toward desirable execution paths within a huge search space, test developers typically embed domain knowledge about the SUT into specialized test generators. This knowledge includes not only basic correctness properties SUT operations must respect, but also incorporates features of the SUT that can help a test generator focus on interesting configura-tions. While similar observations guide the design of prior PBT frameworks [ 20 ], uHat s allow this knowledge to be stated formally and compositionally. These specifications inform our automated synthesis procedure and ensure conformance by the generators it synthesizes, without the need to manually craft and tune generation strategies directly into test generator implementations. The following three examples, drawn from different domains, highlight this point. We show both weak 
+
+uHat s that express only basic correctness properties as well as more precise specifications that are sufficient to guide the synthesizer to produce more effective generators.  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 5
+
+Read Atomicity. Database transactions allow concurrent transactions to operate on database state. To mask latency, client-issued read operations are typically implemented as asynchronous request and response event pairs. It is desirable, however, that read operations be logically atomic, i.e., the response to a client-issued read request on a key 𝑘 always returns the last committed value of 𝑘 at the time of the request , regardless of writes that may have been committed between the request and response. The following trace captures an execution that violates read atomicity 3:
+
+Client 1: ⟨write 3⟩; ⟨write 4⟩
+
+Client 2: ⟨readReq 𝜄 1⟩; ⟨readRsp 𝜄 1 3⟩; ⟨readReq 𝜄 2⟩; ⟨readRsp 𝜄 2 4⟩
+
+Here, Client 2 issues two consecutive asynchronous read operations. A readReq event indicates that an asynchronous read request effect has been issued by the client on the single key managed by the database; the asynchronous response from the database is recorded by the readRsp event in the trace. Requests are matched to responses using the tag 𝜄 . In this trace, however, the second read response witnesses the value of a write performed by another transaction that was issued after its matching request. We are interested in surfacing executions like these from uHat specifications. The following uHat type on readRsp operations admits executions that satisfy read atomicity: 
+
+readRsp : [LAST (⟨ write 𝑣 ⟩) · ⟨ readReq 𝜄 ⟩ · • ∗]{ 𝜈 :int | 𝜈 = 𝑣 }𝑢 [⟨readRsp 𝜄 𝑣 ⟩]
+
+This type specifies that the response to a previously issued asynchronous readReq operation can return a value 𝑣 , if the last committed write prior to the request wrote the value 𝑣 . (Here, 𝜄 and 𝑣 
+
+are treated as implicitly quantified ghost variables; we make this notion precise in Sec. 3.) Note that this specification also encodes a simple correctness property requiring read responses to correspond to a prior read request with the same tag 𝜄 and to reflect a write operation that occurred before the request. A store that enforces read atomicity further constrains the write operations visible to a response. Because this specification is interpreted as an underapproximation of the possible behaviors of the SUT, it establishes a clear dependence between write and asynchronous 
+
+readReq /readRsp operations that should be respected by any trace which contains these events. This uHat uses LAST (⟨op 𝑣 ⟩) as an alias for the following regex: 
+
+LAST (⟨ op 𝑣 ⟩) ≡ • ∗ · ⟨ op 𝑣 ⟩ · (• \ ⟨ op ⟩) ∗ (1) 
+
+An implementation of readRsp that does not satisfy this type could yield a trace in which a response to a request yields a different value than previously seen by the transaction, thus exposing a read atomicity violation. This safety property is captured by the following SRE: 4
+
+LAST (⟨ write 𝑣 ⟩) · ⟨ readReq 𝜄 ⟩ · • ∗·⟨ readRsp 𝜄 𝑣 ⟩·• ∗ (𝐴 atomic )
+
+A violation of this property can be manifested by a test generator that performs sequences of synchronous write and asynchronous read effects in search of an offending trace similar to the one given above. Asynchronous effect pairs like readReq /readRsp allow our DSL to support a form of interactive 
+
+test generation, instructing the SUT to perform effects via opReq , and later observing the results via their opResp counterparts. For instance, the test generator shown below is automatically                        
+
+> 1let rec transaction_gen () =
+> 2() ⊕let x = int_gen () in
+> 3let _ = write xin
+> 4let i = readReq in
+> 5transaction_gen ();
+> 6let y = readResp iin
+> 7assert (x == y)
+
+synthesized from the above uHat specification and 
+
+𝐴 atomic . The presence of the readResp 𝑖 operation at line 6 corresponds to the last effect present in 𝐴 atomic . The 
+
+uHat associated with this operation admits arbitrary op-erations between it and the matching request, captured by “ •∗” in the specification, following the ⟨readReq 𝜄 ⟩ 
+
+> 3For simplicity, we assume the database manages a single key that is elided from event arguments, and that write operations are synchronous and commit their value to the database immediately.
+> 4SREs are implicitly universally quantified over any free variables occurring in them. , Vol. 1, No. 1, Article . Publication date: April 2026. 6Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+
+event in the history trace of readRsp . This behavior is subsumed by the recursive call to transaction_gen at line 5. The readReq effect at line 4 matches the ⟨readRsp 𝜄 ⟩ event and the write operations on line 3 are synthesized from the ⟨write 𝑣 ⟩ event that precedes the ⟨readReq ⟩ in the history trace; since 𝑣 is unconstrained in the specification, it is instantiated by a call to the int_gen primitive generator at line 2. The choice operator at line 2 determines if more recursive calls are required, i.e., if more readReq and writeResp events are generated. The assertion comparing y with x determines if a violation (i.e., if the read result is different from the first written value) occurs. Alternatively, we can provide a weaker specification that encodes the more basic correctness property that read responses can only return values written before its matching request, making no assumptions about which write the response is paired with:             
+
+> readRsp :[•∗· ⟨ write 𝑣 ⟩· • ∗· ⟨ readReq 𝜄 ⟩ · • ∗]{ 𝜈 :int |𝜈 =𝑣 }𝑢 [⟨readRsp 𝜄 𝑣 ⟩]
+
+This specification only requires that the value 𝑣 returned by the read response is some value written before the read was requested: it need not be the last value written before the corresponding request. The following generator is also type-safe with respect to this weaker specification:                        
+
+> 1let x = int_gen () in let _ = write xin
+> 2let y = int_gen () in let _ = write yin
+> 3let i = readReq in let z = readResp iin
+> 4assert (z == x || z == y)
+
+This generator issues two writes followed by a read, and asserts that the read value must be one of the two previously written ones. Notably, although this program is type-safe according to the weaker uHAT, it is not allowed by the original specification, which requires the read value to be the last one. Because this weaker specification does not capture the core property of read atomicity, generators synthesized from this specification may produce benign test cases that would not surface read atomicity violations. Nonetheless, the generator transaction _gen can also be derived from this weaker specification. Thus, an imprecise specification simply means that our synthesis algorithm has less guidance on the structure of the generators it produces. In the limit, a specification that places no constraints on the operations of the system under test results in synthesized generators that simply perform random testing. 
+
+Information-Flow Control. Hritcu et al. [20] applies the PBT methodology to a secure information-flow control (IFC) abstract machine meant to enforce end-to-end noninterference (EENI). This property captures the notion that secret inputs should not influence public outputs: any two executions starting initial states that are indistinguishable (i.e., states in which all “low” security values are the same) should terminate in final states that are also indistinguishable. Hritcu et al. [20] encode the IFC machine input as a sequence of stack machine commands. For instance, the following serialized input corresponds to two IFC programs that both store value 1 from stack into memory, but at different addresses; the only difference is the pointer address which is labeled H
+
+and thus not visible to an observer:                                       
+
+> push (L,⟨1,1⟩) ;push (H,⟨0,1⟩) ;store ≡
+> Program 1: push 1(L,1);push 1(H,0);store and Program 2: push 2(L,1);push 2(H,1);store
+> Memory 1: [( L,0);(L,0)] ⇓ [( L,1),(L,0)] Memory 2: [( L,0);(L,0)] ⇓ [( L,0),(L,1)]
+
+Here, L and H are the low (public) and high (secret) security levels, with L ⊑ H. To ensure indis-tinguishability, public commands (level L) must use identical argument values in both programs, whereas secret commands (level H) may choose different address values ( 0 and 1). Since IFC is a property that holds over pairs of executions, the trace specification push (L, ⟨1, 1⟩) identifies two programs performing a push operation with the same security label ( L) and value (1); in contrast,  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 7
+
+push (H, ⟨0, 1⟩) captures a push operation with security label H that pushes value 0 in one execution and 1 in the other. Although both executions start from the same initial memory state ([( L, 0), (L, 0)]), the IFC machine may yield different final states ([( L, 0), ( L, 1)] and [( L, 1), ( L, 0)]) after performing the store which uses the H secret pointer (either 0 or 1) to store the L value (1). The goal of a PBT generator is to generate input sequences like these to determine if an IFC machine implementation will fault prior to the store being executed. To avoid synthesizing generators that produce uninteresting test programs, we would like the executions they induce to: (1) exercise a noninterference correctness property - two input programs must be indistinguishable at the low security level (e.g., push (L, 1) and push (L, 2) are distinguishable); (2) bias the search to avoid programs that expose uninteresting secrets, for example by storing a high security value at the same address in both executions (e.g., push (H, ⟨1, 1⟩) ), or pushing values to invalid addresses (e.g., push (L, ⟨− 1, −1⟩) ). The following uHat specification addresses both concerns:                               
+
+> push :[•∗]unit [⟨push lvl 𝑥 𝑦 |lvl =L⇐⇒ 𝑥 =𝑦 ⟩]
+> store :[•∗· ⟨ push lvl 𝑥 1𝑦 1⟩⟩· (• \ ⟨ store ⟩) ∗· ⟨ push lvl 𝑥 2𝑦 2|isAddr (𝑥 2) ∧ isAddr (𝑦 2)⟩ ]unit [store ]
+
+The post-condition SRE for push enforces that its arguments should only be equal if they are intended to be public, while the pre-condition SRE of a store event describes stacks containing at least two elements (i.e., there must be at least two push operations with no intervening store ), with the top element of the stack referencing the memory location to be updated. The desired global property that a generator needs to test can be expressed as •∗ · store · • ∗ that ensures store 
+
+can be safely performed. The following test generator generates effect sequences consistent with this property and the uHat specifications for push and store given above:                           
+
+> 1let push_gen () =
+> 2let (x: int ) = assume (isAddr x) in let (y: int ) = assume (isAddr y) in
+> 3(assume (x = y); push L⟨x, y ⟩)⊕(assume (x != y); push H⟨x, y ⟩)
+> 4in push_gen (); push_gen (); store ;
+
+On the other hand, the following specifications only guarantee that tests exercise noninterference, and do not impose any additional constraints on the diversity of secret inputs or address validity:                            
+
+> push :[•∗]unit [⟨push lvl 𝑥 𝑦 |lvl =L=⇒𝑥 =𝑦 ⟩]
+> store :[•∗· ⟨ push lvl 𝑥 1𝑦 1⟩· (• \ ⟨ store ⟩) ∗· ⟨ push lvl 𝑥 2𝑦 2|true ⟩]unit [store ]
+
+This weaker specification can synthesize generators that produce uninteresting secret values (push ’s post-condition weakens the bi-implication found in the stronger specification given earlier) or invalid addresses ( store s no longer constrain the arguments supplied to a previously executed 
+
+push to be addresses); in either case, overall test efficiency is reduced. 
+
+STLC Terms. Our final example applies our approach to the well-studied [ 18 , 25 , 44 ] problem of using PBT to test the correctness of an interpreter for simply-typed lambda calculus (STLC) terms. The SUT in this example is an STLC interpreter, and the synthesized test generator produces a family of serialized STLC terms, i.e., sequences of string tokens, using a single effectful operation, 
+
+token : String → unit . Unlike these earlier efforts, we consider terms in which variables are represented by their de Bruijn index [ 9 ]. Consider a SUT that fails to correctly increment the index during substitution under a lambda abstraction, leading to incorrect variable capture.                         
+
+> Reduction rule :(𝜆𝑡 .𝑒 )𝑣 ↩→𝑒 [0↦→𝑣 ]
+> Incorrect substitution :(𝜆𝑡 .𝑒 ) [ 𝑛 ↦→𝑣 ]=𝜆𝑡 . (𝑒 [𝑛 ↦→𝑣 ]) ✗should be 𝑛 +1
+> , Vol. 1, No. 1, Article . Publication date: April 2026. 8Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+
+The following term will trigger a bug in our SUT, as this well-typed term will, in fact, get stuck:             
+
+> (𝜆 int .(𝜆 (int int ).[0] [ 1]) ( 𝜆 int .[0])) 3(𝑒 STLC )
+> ↩→ ( 𝜆 (int int ).3[1]) ( 𝜆 int .3)(wrong substitution “ [0] ↦ → 3”)
+> ↩→3[1](stuck!)
+
+Here, our buggy implementation mistakenly substitutes the bound variable “ [0]” with the argument value 3 in the two inner abstractions, instead of “ [1]”. Guiding test generation for interpreters over serialized STLC terms is challenging, as the gener-ated token sequences must contain nested function abstractions with appropriate de Bruijn indices; otherwise, errors involving incorrect variable substitution with non-zero bound variable indices cannot be detected. To enforce the correct use of de Bruijn indices we need to express the relation between indices and abstraction depth. To do so, we introduce a ghost event depth that tracks the current abstraction depth; as we describe in the following sections, ghost events carry a payload that enables establishing additional dependencies with other events beyond those involving the effects parameters and result that can still be efficiently checked using our type system. Here, 
+
+token is an effect that appends its argument to a serialized string that is eventually passed to the interpreter being tested. A uHat specification to track depth can now be given as follows:            
+
+> [LAST (⟨ depth 𝑑 ⟩)· ⟨ token (𝜆𝑡 . ⟩· ⟨ depth 𝑑 +1⟩· • ∗]𝑢𝑛𝑖𝑡 [⟨token )⟩· ⟨ depth 𝑑 ⟩]
+
+As shown above, upon entering a function abstraction, we retrieve the last tagged depth (assumed to be initialized to 0), increment it at the start of the body, and restore it upon exiting. Leveraging 
+
+depth , we can specify a correct de Bruijn index safety property using the following SRE:          
+
+> LAST (⟨ depth 𝑑 |𝑛 <𝑑 ⟩)· token [b𝑛 ] ·• ∗(𝐴 𝜆 )
+
+The bound variable index 𝑛 is required to be less than the current depth 𝑑 ; the notation b𝑛 signifies that 𝑛 ’s value must be substituted in the string output produced by token . The following code snippet shows a test generator for nested abstractions synthesized by Clouseau based on the above specification and safety property:                     
+
+> 1let rec abs_gen (d: depth) =
+> 2(let (i: int ) = assume (0 <= i && i < d) in token [b𝑖 ])⊕
+> 3(let t = random_stlc_ty () in token (𝜆𝑡 . ;abs_gen (d + 1); token )
+
+Observe that the ghost event used in 𝐴 𝜆 and the specification for token ) is not present in the code; instead it acts as a hint to the synthesis procedure to construct a recursive function abs _gen 
+
+parameterized by the current depth 𝑑 , ensuring correct tracking of abstraction nesting. In order to facilitate test exploration, token sequences should correspond to STLC terms that are both: (1) well-formed : all opened lambda abstractions need to eventually be closed and all variables in a term should be bound, so that terms are not immediately rejected by the parser; and (2) well-typed : to avoid terms that are discarded by the type checker. The specification given above encodes only the first property, and thus permit a synthesized test generator to produce well-formed but ill-typed STLC terms. A more precise specification that encodes both conditions is provided in the supplementary material. Although this weaker specification does not prohibit the generation of ill-typed terms, it nonetheless correctly encodes the structure of Bruijn indices, using the ghost variable 𝑑 to track abstraction depth. In the following, we present a procedure to synthesize generators that only produce traces consistent with uHat -based specifications and SRE-given safety properties. We emphasize that because these specifications are used primarily to constrain the search space of terms used to synthesize a test generator, they give developers significant leeway on the level of precision captured: less precise underapproximations simply lead to (potentially) less effective generators.  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 9
+
+3 Language                                                                                                                                                          
+
+> Variables 𝑥, 𝑦, 𝑧, 𝜈, ...
+> Base Types 𝑏 :: =unit |bool |nat |int |id ...
+> Basic Types 𝑠 :: =𝑏 |𝑠 𝑠
+> Pure Operations op :: =+ | − | == |<| ≤ | rand _int ...
+> Constants 𝑐 :: =() | B|Z|I...
+> Qualifiers 𝜙 :: =𝑐 |𝑥 |op 𝑣 | ⊥ | ⊤ | ¬ 𝜙 |𝜙 ∧𝜙 |𝜙 ∨𝜙 |𝜙 =⇒𝜙 | ∀ 𝑥 :𝑏. 𝜙
+> Effectful Operations op :: =put |get |readReq |readRsp |write |push |pop |...
+> Values 𝑣 :: =𝑐 |𝑥 |𝜆𝑥 :𝑠.𝑒 |fix 𝑓 :𝑠.𝜆𝑥 :𝑠.𝑒
+> Expressions 𝑒 :: =𝑣 |𝑒 ⊕𝑒 |𝑣 𝑣 |op 𝑣 |op 𝑣 |let 𝑥 :𝑏 =𝑒 in 𝑒 |assume 𝜙 |assert 𝜙
+> Events 𝑚 :: =⟨op 𝑣 ⟩
+> Traces 𝛼 :: =[ ] | 𝑚 :: 𝛼 |𝛼 𝛼
+> Notations 𝑒 1;𝑒 2let _=𝑒 1in 𝑒 2
+> let 𝑥 :𝑡 =assume 𝜙 (𝑥 )in 𝑒 let 𝑥 :𝑡 =rand _int () in assume 𝜙 (𝑥 );𝑒
+
+Fig. 2. Syntax of 𝝀 𝐶 expressions 
+
+We formalize our approach using a core language, 𝝀 𝐶 , for expressing trace generators – nondeter-ministic programs that probe the behaviors of a black-box system under test via a set of (effectful) operators that the system provides. This calculus is equipped with a type system that characterizes the set of traces that a program must be able to produce, if the system under test produces appro-priate responses. The syntax of 𝝀 𝐶 is shown in Fig. 2; the calculus includes both pure and effectful operations ( op and op ), nondeterministic choices ( ⊕), recursion ( fix ), and assume and assert 
+
+statements in the style of solver-aided languages [ 2 ]. As we saw in Sec. 2, asynchronous effects can be modeled as a pair of opReq / opResp operations, where the former generates an id (given as 𝜄 in the syntax) that can then be subsequently referenced when performing a corresponding response operation.                  
+
+> Operator Semantics ⊨op (𝑐 ) ⇓ 𝑐 𝛼 ⊨op (𝑐 ) ⇓ 𝑐
+> Operational Semantics 𝛼 ⊨𝑒 𝛼
+> ↩−→𝑒
+> ⊨op (𝑐 ) ⇓ 𝑐 ′
+
+StPOp          
+
+> 𝛼 ⊨op 𝑐 [ ]
+> ↩−→𝑐 ′
+> 𝛼 ⊨op 𝑐 ⇓𝑐 ′
+
+StEfOp        
+
+> 𝛼 ⊨op 𝑐 [op 𝑐 𝑐 ′]
+> ↩−−−−− →𝑐 ′
+
+Fig. 3. Selected reduction rules 
+
+𝝀 𝐶 is equipped with a small-step operational semantics similar to other calculi for trace-based type systems [ 45 ]; selected reduction rules are shown in Fig. 3. 5 The reduction re-lation 𝛼 ⊨ 𝑒 𝛼 ′
+
+↩−−→ 𝑒 ′ constrains the output trace 
+
+𝛼 ′ produced by executing 𝑒 based on a history trace 𝛼 . The evaluation of pure operations (rule 
+
+StPOp ) makes no use of trace, either history or output. The result of an effectful operation, in contrast, can depend on the events that preceded it, and it produces an output trace containing an event whose payload contains both the arguments and return value of the operation. 
+
+3.1 Type System 
+
+The syntax of types in 𝝀 𝐶 is shown in Fig. 4. Types include pure refinement types, which describe pure computations, and underapproximate Hoare Automata Types ( uHat s), which describe effectful computations. Pure refinement types are similar to those found in prior underapproximate refinement type systems [ 44 ], and allow base types (e.g., int ) to be further constrained by a logical formula or qualifier. In contrast to traditional type systems where a pure type qualifier {𝜈 :𝑏 }𝑜                                                                                                 
+
+> 5The full reduction rules; complete definitions of the auxiliary typing relations (including well-formedness); the full typing rules beyond Fig. 5; further denotational details; and proofs of the theorems in Sec. 3.3 are all given in the supplemental material. , Vol. 1, No. 1, Article . Publication date: April 2026. 10 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+> Symbolic Regex 𝐻, 𝐹, 𝐴 :: =∅ | 𝜖 | ⟨ op 𝑥 |𝜙 ⟩ | 𝐴 ∨𝐴 |𝐴 ·𝐴 |𝐴 ∗|𝐴 \𝐴 |𝐴 ∧𝐴 | •
+> Pure Refinement Types 𝑡 :: ={𝜈 :𝑏 |𝜙 }𝑢 |𝑥 :𝑡 𝑡 |𝑥 :𝑡 𝜏 |𝑥 :𝑏 d𝑡 |op :𝑠 𝑡
+> Underapproximate HATs 𝜏 :: =[𝐻 ]𝑥 :𝑡 [𝐹 ]|𝜏 ⊓𝜏
+> Type Contexts Γ:: =∅ | 𝑥 :𝑡, Γ
+> Type Aliases ⟨op |𝜙 ⟩⟨op 𝑥 |𝜙 ⟩⟨op 𝑣 ⟩⟨op 𝑥 |𝑥 =𝑣 ⟩⟨op ⟩⟨op 𝑥 | ⊤⟩ 𝐴 1𝐴 2𝐴 1·𝐴 2𝑏 {𝜈 :𝑏 | ⊤ }𝑢
+> Fig. 4. 𝝀 𝐶 types
+
+constrains every value a pure expression may evaluate to; the type qualifier {𝜈 :𝑏 | 𝜙 }𝑢 constrains a subset of the values it must evaluate to. For example, the constant value 1 can be assigned the types {𝜈 :int }𝑜 and {𝜈 :int }𝑜 – the value 1 satisfies the constraint in both overapproximate qualifiers – but, 1 cannot be assigned the type, {𝜈 :int | 𝜈 = 1 ∨ 𝜈 = 2}𝑢 , since it cannot evaluate to both 1 and 2 as required by this underapproximate qualifier. The term 1 ⊕ 2 ⊕ 3, in contrast, does have this underapproximate type. 
+
+Underapproximate Hoare Automata Types. Similar to other recent trace-based type systems [ 45 ], 
+
+𝝀 𝐶 uses Symbolic Finite Automata (SFAs) [ 8 , 17 , 42 ] to qualify the traces generated by effectful computations; in contrast to those prior works, the uHat s in 𝝀 𝐶 use SFAs to underapproximate 
+
+the set of effects that a program must produce. A uHat [𝐻 ] 𝑥 :𝑡 [𝐹 ] consists of a pure refinement type 𝑡 and two SFAs: a history SFA 𝐻 that constrains the history trace under which a term is executed, and a future SFA 𝐹 that describes a subset of the events that it must generate as a result. 
+
+uHat s represent SFAs using symbolic regular expressions (SREs), but in principle could support any encoding of SFAs, e.g., Symbolic LTL 𝑓 [10 ]. SREs support symbolic events , ⟨op 𝑥 | 𝜙 ⟩, atomic predicates that describe an effectful operation op whose arguments 𝑥 satisfy the qualifier 𝜙 . SREs provide a convenient language for writing SFAs, supporting versions of the standard regex operators shown in Fig. 4, including union 𝐴 ∨ 𝐴 , sequence 𝐴 ·𝐴 , and Kleene star 𝐴 ∗ operators. The figure also gives the definition of the type aliases that Sec. 2 used to limit user annotation burden. When the fields of a symbolic event are clear from context, we omit its arguments 𝑥 , e.g., 
+
+⟨push | 𝑣 > 0⟩ means ⟨push 𝑣 | 𝑣 > 0⟩. We omit quantifiers with equality constraints, e.g., writing 
+
+⟨push 𝑣 | 𝑣 = 3⟩, as ⟨push 3⟩, and the top ( ⊤) qualifier in symbolic events and types. 
+
+Example 3.1 (Ghost Events). Consider an effectful stack library implemented as a fixed-size array whose elements grow monotonically. An incorrect implementation that fails to grow the array when the stack is full may cause push operations to be dropped. To detect this violation, we need to explore traces of the following form, where the last pop operation raises an “empty stack” exception:      
+
+> push (1);push (2);push (3);pop (2);pop (1);pop (?)
+
+Because we would like the uHat specifications for push and pop to guide the synthesis of a test generator, they should be interpreted as underapproximations, consisting of nested pairs of push 
+
+and pop events. This can be expressed by the following uHat specifications, using ghost events 
+
+pushI and popI as shown below:                                    
+
+> push :𝑛 :int d𝑦 :int d𝑥 :{𝜈 :int |𝑦 <𝜈 }𝑢 [Last (⟨ pushI 𝑛 𝑦 ⟩) ]unit [⟨push 𝑥 ⟩·⟨ pushI 𝑛 +1𝑥 ⟩]
+> pop :𝑛 :int d𝑚 :int d
+> [Last (⟨ popI 𝑚 _⟩) ∧ Last (⟨ pushI 𝑛 _⟩) ∧ (• ∗·⟨ pushI (𝑛 −𝑚 )𝑥 ⟩·• ∗)]𝑥 :int [⟨pop 𝑥 ⟩·⟨ popI 𝑚 +1𝑥 ⟩]
+
+Intuitively, the pushI and popI ghost events are simply push and pop events equipped with indices that record the number of push and pop operations. As seen here, ghost events allow uHat 
+
+specifications to capture latent data dependencies between effectful operations. The signature for 
+
+push requires that the new pushed value ( 𝑥 ) is greater than the last pushed value ( 𝑦 ), and adds a                                       
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 11
+> Auxiliary Typing Γ⊢WF 𝜏 Γ⊢𝐴 ⊆𝐴 Γ⊢𝜏 <:𝜏 Typing Γ⊢op :𝑡 Γ⊢𝑣 :𝑡 Γ⊢𝑒 :𝜏
+> Γ⊢WF 𝜏 [𝑥 ↦→𝑣 ]
+
+SubG                          
+
+> Γ⊢𝑥 :𝑏 d𝜏 <:𝜏 [𝑥 ↦→𝑣 ]
+> Γ⊢𝑡 1<:𝑡 2Γ, 𝑥 :𝑡 1⊢𝐹 2⊆𝐹 1
+> Γ, 𝑥 :𝑡 1⊢𝐻 1⊆𝐻 2
+
+SubHF                             
+
+> Γ⊢[𝐻 1]𝑥 :𝑡 1[𝐹 1]<:[𝐻 2]𝑥 :𝑡 2[𝐹 2]
+> Γ⊢op :𝑥 :𝑡 𝑥 [𝐻 ]𝑡 [𝐹 ]
+> Γ, 𝑥 :𝑡 𝑥 ⊢𝐻 ′⊆𝐻
+> Γ, 𝑥 :𝑡 𝑥 ⊬𝐻 ′⊆ ∅
+
+TOpHis                
+
+> Γ⊢op :𝑥 :𝑡 𝑥 [𝐻 ′]𝑡 [𝐹 ]
+> Γ⊢𝑣 :𝑡
+
+TRet           
+
+> Γ⊢𝑣 :[𝐻 ]𝑡 [𝜖 ]
+> Δ(op )=𝑡
+
+TOpCtx                         
+
+> Γ⊢op :𝑡
+> Γ⊢op :𝑥 𝑖 :𝑡 𝑖 [𝐻 ]𝑡 [⟨op 𝑥 𝑖 ⟩· 𝐹 ]∀𝑖. Γ⊢𝑣 𝑖 :𝑡 𝑖
+
+TEffOp                      
+
+> Γ⊢op 𝑣 𝑖 :[𝐻 ]𝑡 [⟨op 𝑣 𝑖 ⟩· 𝐹 ]
+> Γ⊢𝑒 1:𝜏 1Γ⊢𝑒 2:𝜏 2
+
+TChoice                         
+
+> Γ⊢𝑒 1⊕𝑒 2:𝜏 1⊓𝜏 2
+> Γ⊢𝑒 1:[𝐻 ]𝑥 :𝑡 𝑥 [𝐹 1]Γ, 𝑥 :𝑡 𝑥 ⊢𝑒 2:[𝐻 ·𝐹 1]𝑡 [𝐹 2]
+
+TLet                   
+
+> Γ⊢let 𝑥 =𝑒 1in 𝑒 2:[𝐻 ]𝑡 [𝐹 1·𝐹 2]
+> Γ, 𝑥 :𝑡 𝑥 ⊢𝑒 :𝜏
+
+TFun       
+
+> Γ⊢𝜆𝑥 .𝑒 :𝑥 :𝑡 𝑥 𝜏
+
+TFixBase                    
+
+> Γ⊢fix 𝑓 .𝜆𝑥 .𝑒 :𝑥 :𝑠 [𝐻 ] { 𝜈 :𝑏 | ⊥ }𝑢 [∅]
+> Γ⊢fix 𝑓 .𝜆𝑥 .𝑒 :𝑡
+> Γ, 𝑓 :𝑡 ⊢𝜆𝑥 .𝑒 :𝑡 ′
+
+TFixInd      
+
+> Γ⊢fix 𝑓 .𝜆𝑥 .𝑒 :𝑡 ′
+
+Fig. 5. Selected typing rules. 
+
+new ghost event pushI with an incremented index (i.e., ⟨pushI 𝑛 +1 𝑥 ⟩). The signature for pop also records the number of pop operations in the same way (i.e., ⟨popI 𝑚 +1 𝑥 ⟩); additionally, it requires the last popped value ( 𝑥 ) to be equal to the (𝑛 −𝑚 )𝑡ℎ pushed value, reflecting the “last-in-first-out” property of the stack. 
+
+3.2 Typing Rules 
+
+𝝀 𝐶 is equipped with a pair of typing judgments on pure and effectful expressions, Γ ⊢ 𝑣 : 𝑡 and 
+
+Γ ⊢ 𝑒 : [𝐻 ] 𝑥 :𝑡 [𝐹 ], respectively. Both judgments rely on a type context, Γ, that maps from variables to pure refinement types (i.e., 𝑡 ). As in prior work [ 44 ], typing contexts are not allowed to contain 
+
+uHat s— doing so breaks several structural properties (e.g., weakening) that are used to prove type safety. Both rules are parameterized over an additional context Δ, which provides types for pure and effectful operators. 
+
+Auxiliary typing relations. Our type system also relies on three additional auxiliary relations. The first is a well-formedness relation Γ ⊢WF 𝜏 that ensures, among other things, that all qualifiers appearing in a type 𝜏 are closed under the current typing context Γ and that the verification conditions generated by the synthesis algorithm presented in the next section can be encoded as effectively propositional (EPR) sentences [ 39 ], which can be efficiently handled by an off-the-shelf theorem prover such as Z3 [ 11 ]. We also require the history regex 𝐻 to not be empty, which guarantees that it represents a meaningful underapproximate precondition. The type system also uses a semantic subtyping relation tailored for underapproximation; Fig. 5 presents the key subtyping rule for uHat s. The rule SubG allows the instantiation of a ghost variable in a uHat into well-formed types. The rule SubHF uses an auxiliary inclusion relation on SREs Γ ⊢ 𝐴 1 ⊆ 𝐴 2 to relate the history and future regexes of two uHat s under the current type context Γ, as well as the return type using the standard subtyping relation on pure refinement types. Notably, because our typing judgements are underapproximate, this subtyping relation is covariant in the history regex and contravariant in the future regex, yielding behavior similar to the reverse rule of consequence found in Incorrectness Logic (IL) [ 33 ]. Like that rule, SubHF allows us to strengthen a postcondition (i.e., shrink the future trace), and weaken the precondition (i.e., enlarge the history trace). Since the future automata in a uHat can refer to the pure value it returns,  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. 12 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+
+the inclusion check between the future automata extends the typing context with a binding for the return value. A subset of our typing rules is shown in Fig. 5. All our rules assume any types they use are well-formed, so we elide the corresponding well-formedness judgments from their premises. The 
+
+TRet rule requires the future regex of a pure term ( 𝜖 ) to only accept the empty trace. The operator type is retrieved from the global operator context Δ using the TOpCtx rule. For a given event, there may be multiple reachable history traces (underapproximate preconditions) that can be allowed by an operator that is determined by the context in which the operator executes, and by the operator type alone. We, therefore, expect that the operator type found in the operator context is the most precise one, i.e., it doesn’t allow any unreachable history traces, and admits underapproximation specialization. The rule TOpHis can then freely choose a non-empty subset of the reachable history traces to align with the actual calling context. The application rule TEffOp requires the arguments of an effectful operator to be well-typed against its parameter types; it records the effect as an event in the future trace along with any additional ghost events ( 𝐹 ). The nondeterministic choice operator is typed using the TChoice rule which merges the uHat s of the two branches. The 
+
+TLet rule requires the binding expression 𝑒 1 to generate the first part of its future trace 𝐹 1, with the rest of trace produced by the body expression 𝑒 2 under a new history that includes 𝐹 1. The typing rule for functions ( TFun ) is standard, while the rule for recursive functions is modeled after the corresponding IL rule, unrolling the recursion as needed. The FixBase rule types any recursive function with a uHat lacking reachability constraints (i.e., [𝐻 ] { 𝜈 :𝑏 | ⊥ }𝑢 [∅]). In contrast, the FixInd rule permits typing a recursive function with type 𝑡 ′ by requiring it to have another type 
+
+𝑡 , and by checking that its body can be assigned type 𝑡 ′ under the assumption that the function itself has type 𝑡 .
+
+Example 3.2 (Operator Application Typing). We present a typing derivation for a simple generator that generates push and pop operations using the signatures from Example 3.1. Consider how we might type check the following expression:                          
+
+> ∅ ⊢ let 𝑥 :int =assume 0<𝑥 in push 𝑥 ;pop :
+> [⟨pushI 0 0 ⟩⟨ popI 0 0 ⟩]𝑥 :{𝜈 :int |0<𝜈 }𝑢 [⟨push 𝑥 ⟩⟨ pushI 1𝑥 ⟩⟨ pop 𝑥 ⟩⟨ popI 1𝑥 ⟩]
+
+The signature of the generator is a uHat that assumes a history trace in which the stack is empty (i.e., the ghost events pushI and popI both hold a 0 index and a dummy value). The body of the generator generates a positive number 𝑥 using assume ; the underapproximate refinement type of 𝑥 
+
+signifies that it must evaluate to every positive integer. The generator then is expected to pop the same value. We can thus type check its two effectful operation applications using the following judgement:                        
+
+> 𝑥 :{𝜈 :int |0<𝜈 }𝑢 ⊢push 𝑥 ;pop :
+> [⟨pushI 0 0 ⟩⟨ popI 0 0 ⟩]𝑥 :{𝜈 :int |0<𝜈 }𝑢 [⟨push 𝑥 ⟩⟨ pushI 1𝑥 ⟩⟨ pop 𝑥 ⟩⟨ popI 1𝑥 ⟩]
+
+Using the TEffOp rule to type the first push effect, we retrieve the operator’s types from the operator context Δ:                     
+
+> ... ⊢push :𝑛 :int d𝑦 :int d
+> 𝑥 :{𝜈 :int |𝑦 <𝜈 }𝑢 [Last (⟨ pushI 𝑛 𝑦 ⟩) ]unit [⟨push 𝑥 ⟩⟨ pushI 𝑛 +1𝑥 ⟩](by TOpCtx )
+
+We can then apply the subtyping rule ( SubG ) to instantiate the signature’s ghost variables (e.g., 
+
+𝑛 ↦ → 0 and 𝑦 ↦ → 0):                    
+
+> ... ⊢push :𝑥 :{𝜈 :int |0<𝜈 }𝑢 [Last (⟨ pushI 0 0 ⟩) ]unit [⟨push 𝑥 ⟩⟨ pushI 1𝑥 ⟩](by SubG )
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 13
+
+The rule TOpHis can then be used to specialize its history trace to align with that of the actual calling context ( ⟨pushI 0 0 ⟩⟨ popI 0 0 ⟩). Note that we do not need to also specialize the future regex, since it is already a prefix of the future trace of the target type: 
+
+... ⊢ push : 𝑥 :{𝜈 :int | 0 < 𝜈 }𝑢  [⟨pushI 0 0 ⟩⟨ popI 0 0 ⟩] unit [⟨push 𝑥 ⟩⟨ pushI 1 𝑥 ⟩] (by TOpHis )
+
+The rest of program is now typed via the following judgement: 
+
+𝑥 :{𝜈 :int | 0 < 𝜈 }𝑢 ⊢ pop : [⟨pushI 0 0 ⟩⟨ popI 0 0 ⟩⟨ push 𝑥 ⟩⟨ pushI 1 𝑥 ⟩] 𝑥 :{𝜈 :int | 0 < 𝜈 }𝑢 [⟨pop 𝑥 ⟩⟨ popI 1 𝑥 ⟩]
+
+As before, after looking up the type of pop using TOpCtx (①), we can instantiate the ghost variable 
+
+𝑛 as 1 and 𝑚 as 0 via SubG (②), align the return type via SubHF (( ③) and refine the history regex via the rule TOpHis (④):                                                                                                 
+
+> ... ⊢pop :𝑛 :int d𝑚 :int d
+> [Last (⟨ popI 𝑚 _⟩) ∧ Last (⟨ pushI 𝑛 _⟩) ∧ (• ∗⟨pushI (𝑛 −𝑚 )𝑥 ⟩• ∗)]𝑥 :int [⟨pop 𝑥 ⟩⟨ popI 𝑚 +1𝑥 ⟩]①
+> ... ⊢pop :[Last (⟨ popI 0_⟩) ∧ Last (⟨ pushI 1_⟩) ∧ (• ∗⟨pushI 1𝑥 ⟩• ∗)]𝑥 :int [⟨pop 𝑥 ⟩⟨ popI 1𝑥 ⟩]②
+> ... ⊢pop :[Last (⟨ popI 0_⟩) ∧ Last (⟨ pushI 1_⟩) ∧ (• ∗⟨pushI 1𝑥 ⟩• ∗)]𝑥 :{𝜈 :int |0<𝜈 }𝑢 [⟨pop 𝑥 ⟩⟨ popI 1𝑥 ⟩]③
+> ... ⊢pop :[⟨pushI 0 0 ⟩⟨ popI 0 0 ⟩⟨ push 𝑥 ⟩⟨ pushI 1𝑥 ⟩]𝑥 :{𝜈 :int |0<𝜈 }𝑢 [⟨pop 𝑥 ⟩⟨ popI 1𝑥 ⟩]④
+
+3.3 Metatheory 
+
+Although ghost events constrain uHat s, they do not appear in actual traces produced by the operational semantics. We define an erasure function ⌈𝛼 ⌉ to remove ghost events from a trace 𝛼 .
+
+Type denotations. Similar to other refinement type systems [ 22 ], types in 𝝀 𝐶 are denoted as their inhabitants (i.e., J𝑡 K and J𝜏 K). The type context Γ is denoted as a substitution 𝜎 (i.e., [𝑥 1 ↦ →
+
+𝑣 1, 𝑥 2 ↦ → 𝑣 2]) that provides the assignments for binding variables in Γ and the denotation (the denoted language) of SREs is a set of traces. Then, trace inclusion under a type context is defined as Γ ⊢ 𝐴 ⊆ 𝐴 ′  ∀𝜎 ∈ JΓK.J𝜎 (𝐴 )K ⊆ J𝜎 (𝐴 ′)K. The type denotation of [𝐻 ] 𝑥 :{𝜈 :𝑏 | 𝜙 }𝑢 [𝐹 ] is: 
+
+{𝑒 | ∅ ⊢ s 𝑒 : 𝑏 ∧ ∀ 𝑣 :𝑏.𝜙 [𝑥 ↦ → 𝑣 ] =⇒ ∀ 𝛼 𝑓 ∈ J𝐹 [𝑥 ↦ → 𝑣 ]K.∃𝛼 ℎ ∈ J𝐻 [𝑥 ↦ → 𝑣 ]K.⌈𝛼 ℎ ⌉ ⊨ 𝑒 ⌈𝛼 𝑓 ⌉
+
+↩−−−→∗ 𝑣 }
+
+A term 𝑒 inhabits [𝐻 ] 𝑥 :{𝜈 :𝑏 | 𝜙 }𝑢 [𝐹 ] iff, for trace 𝛼 𝑓 accepted by 𝐹 , there exists history trace 𝛼 ℎ
+
+accepted by 𝐻 , such that the execution of 𝑒 under 𝛼 ℎ produces 𝛼 𝑓 . Our formulation constitutes a trace-based analogue of IL [33], in which effects are modeled as program state transitions: 
+
+[𝑃 ] 𝑒 [𝑄 ]  ∀𝑠 post ∈ J𝑄 K.∃𝑠 pre ∈ J𝑃 K.(𝑠 pre , 𝑒 ) ⇓ 𝑠 post 
+
+A notable distinction between these two presentations is that we characterize 𝐹 as the set of newly produced traces rather than the full post-execution trace, reflecting our trace-based type rules. This formulation additionally avoids redundant prefixes inherited from the execution history. We expect the uHat s provided by the operator typing context Δ to be consistent with the corresponding auxiliary operator semantics: 
+
+Definition 3.3 (Well-formed operator typing context). The operator typing context Δ is well-formed iff the semantics of every operator op is consistent with the type 𝑥 :𝑏 x d 𝑦 :𝑡 y  [𝐻 ] 𝑧 :𝑡 [𝐹 ] provided by Δ, and 𝐻 does not specify any unreachable traces. 
+
+∀𝑥 :𝑏 x . ∀𝑦 ∈ J𝑡 y K. ∀𝐻 ′ .𝐻 ′ ≠ ∅ ∧ 𝐻 ′ ⊆ 𝐻 =⇒ ( op 𝑦 ) ∈ J[𝐻 ′] 𝑧 :𝑡 [𝐹 ]K
+
+Theorem 3.4 (Fundamental Theorem). A well-typed term, i.e., Γ ⊢ 𝑒 : [𝐻 ] 𝑡 [𝐹 ], generates traces consistent with its uHat : ∀𝜎 ∈ JΓK.𝜎 (𝑒 ) ∈ J𝜎 ([𝐻 ] 𝑡 [𝐹 ])K.
+
+Corollary 3.5 (Type Soundness). A generator 𝑒 that satisfies ∅ ⊢ 𝑒 : [𝜖 ] unit [𝐹 ] must produce all traces accepted by 𝐹 , i.e., ∀𝛼 ∈ J𝐹 K.[] ⊨ 𝑒 ⌈𝛼 ⌉
+
+↩−−→∗ () . 
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. 14 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+
+4 Synthesis 
+
+Given an SRE 𝐴 describing some property of a black-box system under test, Corollary 3.5 ensures that a well-typed test generator program ∅ ⊢ 𝑒 : [𝜖 ] unit [𝐹 ] must be able to produce every trace 
+
+𝛼 that is consistent with both 𝐹 and 𝐴 , i.e. 𝛼 ∈ 𝐹 ∧ 𝐴 . Thus, the high-level goal of our synthesis procedure is to find a generator that a) uses effectful operators in a way that is consistent with the temporal and data-dependency constraints captured by their specifications in Δ, and b) has a uHat whose future automaton shares a meaningful overlap with 𝐴 . Our synthesis algorithm simultaneously solves both problems by using a loop, depicted in Fig. 6, to iteratively refine the target SRE into a set of more concrete SREs, each of which can be directly mapped to a well-typed generator program. Each iteration of this loop targets a single event in an element of this set and adds events before and after that event so that its dependencies are satisfied, ensuring that the corresponding operator in a synthesized program is well-typed. Our loop also employs a regex non-emptiness check to ensure that each element of this set represents a generator that produces at least one feasible trace. After the refinement loop has finished, a well-typed generator program can be mechanically extracted using the refined property as a template. 
+
+Fig. 6. Clouseau’s high-level test generator synthesis algorithm 
+
+4.1 Synthesis Algorithm 
+
+The main refinement loop in our synthesis algorithm operates over abstract traces — sequences of symbolic events ⟨op | 𝜙 ⟩ plus alternatives defined by the following grammar: 
+
+Abstract Trace 𝜋 :: = 𝜖 | ⟨ op | 𝜙 ⟩𝑏 | 𝜋 ·𝜋 | [⟨ op | 𝜙 ⟩𝑏 ]∗
+
+Each symbolic event ⟨op | 𝜙 ⟩𝑏 in an abstract trace is tagged with a boolean 𝑏 indicating whether the surrounding context satisfies its constraints. Operating over abstract traces helps our synthesizer easily identify events with unresolved dependencies. Every SRE can be normalized into a set of abstract traces via an algorithm that applies a standard minimization algorithm and then decomposes unions into abstract traces: ⟨op 1 | 𝜙 1⟩ ∪ ⟨ op 2 | 𝜙 2⟩ becomes {⟨ op 1 | 𝜙 1⟩⊥, ⟨op 2 | 𝜙 2⟩⊥ }, for example. 6
+
+Example 4.1 (SRE Normalization). The set of abstract traces corresponding to the history regex of pop from Example 3.1 includes the following abstract trace:                                           
+
+> Original SRE: Last (⟨ popI 𝑚 _⟩) ∧ Last (⟨ pushI 𝑛 _⟩) ∧ (• ∗⟨pushI (𝑛 −𝑚 )𝑥 ⟩• ∗)
+> One normalized trace: Π∗
+> any ·⟨ popI 𝑚 _⟩⊥·Π∗
+> noPopI ⟨pushI (𝑛 −𝑚 )𝑥 ⟩⊥·Π∗
+> noPopI ⟨pushI 𝑛 _⟩⊥·Π∗
+> noI (𝜋 pop1 )where Πany ≡ [ ⟨ pushI ⟩⊥| ⟨ popI ⟩⊥| ⟨ push ⟩⊥| ⟨ pop ⟩⊥]
+> ΠnoPopI ≡ [ ⟨ pushI ⟩⊥| ⟨ push ⟩⊥| ⟨ pop ⟩⊥]ΠnoI ≡ [ ⟨ push ⟩⊥| ⟨ pop ⟩⊥]
+
+This abstract trace imposes an ordering on the three intersected symbolic events in the origi-nal SRE; other traces correspond to different orderings. The alternatives after ⟨popI 𝑚 _⟩ and 
+
+⟨pushI (𝑛 − 𝑚 ) 𝑥 ⟩ in the trace disallow ⟨popI ⟩ event and ⟨pushI ⟩ events, respectively. The mini-mization step also produces traces that merge these intersected events: the procedure automatically considers the case where 𝑚 = 0, which unifies the two pushI events, resulting in the inclusion of the following abstract trace in the normalized set: 
+
+Π∗
+
+> any
+
+·⟨ popI 0 _⟩⊥·Π∗
+
+> noPopI
+
+·⟨ pushI 𝑛 𝑥 ⟩⊥·Π∗ 
+
+> noI
+
+(𝜋 pop2 ) 
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 15
+
+Algorithm 1: Test Generator Synthesis 
+
+Inputs : Operator context Δ, variables 𝑥 :𝑏 , and target trace property 𝐴 
+
+Output : Generator 𝑒 , such that 𝑥 :{𝜈 :𝑏 | ⊤ }𝑢 ⊢ 𝑒 : [𝜖 ] unit [𝐴 ′] ∧ 𝑥 :{𝜈 :𝑏 | ⊤ }𝑢 ⊢ 𝐴 ′ ⊆ 𝐴  
+
+> 1
+
+Γ ← 𝑥 :{𝜈 :𝑏 | ⊤ }𝑢 ; // initial type context  
+
+> 2
+
+𝐶 ← {( Γ, 𝜋 ) | 𝜋 ∈ Norm (𝐴 )} ; // initialize set of abstract traces  
+
+> 3
+
+while ∃( Γ′, 𝜋 ) ∈ 𝐶. 𝜋 = 𝜋 ℎ ·⟨ op | 𝜙 ⟩⊥·𝜋 𝑓 do // events still need to be refined  
+
+> 4
+
+Π ← Refine (Δ, Γ′, 𝜋 ℎ, ⟨op | 𝜙 ⟩⊥, 𝜋 𝑓 ) ∪ 𝐶 − {( Γ′, 𝜋 )}  
+
+> 5
+
+return DeriveTerm (𝐶 ) ; // synthesize recursions and derive generator program 
+
+Algorithm 2: Abstract Trace Refinement ( Refine )
+
+Inputs : Operator context Δ, typing context Γ, abstract trace 𝜋 ℎ ·⟨ op | 𝜙 ⟩⊥·𝜋 𝑓 
+
+Output : Set of refined abstract traces Π where the dependencies of ⟨op | 𝜙 ⟩ are satisfied  
+
+> 1
+
+𝑧 :𝑏 d 𝑦 :𝑡 𝑦  [𝐻 ] 𝑥 :𝑡 𝑥 [⟨op | 𝜙 ′⟩· 𝐹 ] ← Δ(op ); // retrieve uHat of op  
+
+> 2
+
+Γ′ ← Γ, 𝑧 :{𝜈 :𝑏 | ⊤ }𝑢 , 𝑦 :𝑡 𝑦 , 𝑥 :𝑡 𝑥 ; // add ghost variables and parameters types to type context  
+
+> 3
+
+⟨op | 𝜙 ′′ ⟩ ← ⟨ op | 𝜙 ∧ 𝜙 ′⟩ ; // refine target operation  
+
+> 4
+
+𝐻 ′ ← 𝜋 ℎ ∧ 𝐻 ; // merge history regex  
+
+> 5
+
+𝐹 ′ ← 𝜋 𝑓 ∧ ( 𝐹 ·• ∗) ; // merge future regex  
+
+> 6
+
+𝑃 ← Norm (𝐻 ′·⟨ op | 𝜙 ′′ ⟩⊤·𝐹 ′) ; // normalize refined trace  
+
+> 7
+
+return {( Γ′, 𝜋 ′) | 𝜋 ′ ∈ 𝑃 ∧ Γ′ ⊢ 𝜋 ′ ⊈ ∅} ; // filter empty abstract traces 
+
+Our top-level synthesis algorithm is shown in Algorithm 1. Given a target trace property 𝐴 whose qualifiers only contain the variables 𝑥 :𝑏 , this algorithm synthesizes a well-typed 𝝀 𝐶 generator. The algorithm maintains a set of candidate abstract traces, 𝐶 , each of which is a refinement of 𝐴 ;this set is initialized directly from 𝐴 (line 2). Each trace in 𝐶 is paired with a typing context that the synthesizer uses to filter out refinements that do not correspond to well-typed programs. The algorithm first uses a loop (lines 3 − 4) to refine 𝐶 until it only contains abstract traces that are consistent with the operator context Δ, and then uses the resulting set of traces to derive the final (recursive) generator (line 5). Each iteration of this loop nondeterministically chooses a target event in one of the current abstract traces (line 2) whose tag indicates its dependencies are not satisfied; it then uses the Refine subroutine to insert the required operations before and after the target event. 
+
+Abstract trace refinement. The abstract trace refinement subroutine, Refine , is shown in Algo-rithm 2. It first retrieves the uHat of the target operation op from Δ (line 1), and adds its parameters to the type context (line 3). Refine then merges the selected uHat with the current abstract trace (lines 4 − 6) and normalizes the result to produce a set of refinements of the input trace that are consistent with op (line 7). Line 6 effectively applies the SubHF rule to drop any states that are unreachable after the target operation; while line 4 effectively applies TOpHis to ensure the trace that precedes the target operation satisfies its specification. Before returning the refined trace, 
+
+Refine checks that it corresponds to a meaningful test generator by filtering out any empty traces (line 7). 
+
+Example 4.2 (Abstract Trace Refinement). We illustrate the refinement process by showing how it derives a trace corresponding to the generator from in Example 3.2. Assume the refinement loop begins with the following (singleton) set of abstract traces: 
+
+Π∗
+
+> any
+
+·⟨ pop | ⊤⟩· Π∗ 
+
+> any
+> 6The full definition of our SRE normalization procedure is provided in the supplemental material. , Vol. 1, No. 1, Article . Publication date: April 2026. 16 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+
+where the user requires that the test generator performs at least one pop operation. In the first iteration, the symbolic event ⟨pop | ⊤⟩ is selected for refinement using Refine . The algorithm first retrieves the uHat of pop from Δ:
+
+Δ(pop ) ≡ 𝑛 :int d 𝑚 :int d [𝜋 pop1 ∪ 𝜋 pop2 ∪ ... ] 𝑥 :int [⟨pop 𝑥 ⟩·⟨ popI 𝑚 +1 𝑥 ⟩]·Π∗
+
+> any
+
+We have normalized the history regex to illustrate that merging this uHat with the current abstract trace and normalizing can result in multiple new abstract traces. For example, property 𝜋 pop2 in the history regex can yield the following trace: 
+
+(𝑚 :{𝜈 :int | 𝜈 = 0}𝑢 , 𝑛 :{𝜈 :int | ⊤ }𝑢 , 𝑦 :{𝜈 :int | ⊤ }𝑢 , 𝑥 :{𝜈 :int | ⊤ }𝑢 ,
+
+Π∗ 
+
+> any
+
+⟨popI 𝑚 𝑦 ⟩⊥Π∗ 
+
+> noPopI
+
+⟨pushI 𝑛 𝑥 ⟩⊥Π∗ 
+
+> noI
+
+⟨pop 𝑥 ⟩⊤ ⟨popI 𝑚 𝑥 ⟩⊥)
+
+The new variables in the type context require 𝑚 = 0, as mentioned in Example 4.1. Although the uHat of pop does not explicitly add any new push or pop events to the abstract trace, it does require multiple ghost events, which will recover corresponding concrete events during further refinement. For example, the uHat of pushI is given below; it requires that a pushI event always occurs after a push event, unless it is an initialization event (i.e., 𝑖 = 0):                                             
+
+> Δ(pushI ) ≡ 𝑖 :int 𝑥 :int [•∗⟨push ⟩]unit [⟨pushI 𝑖 𝑥 |𝑖 >0⟩]⊓[(• \ ⟨ pushI ⟩) ∗]unit [⟨pushI 𝑖 𝑥 |𝑖 =0⟩]
+> Δ(popI ) ≡ 𝑖 :int 𝑥 :int [•∗⟨pop ⟩]unit [⟨popI 𝑖 𝑥 |𝑖 >0⟩]⊓[(• \ ⟨ popI ⟩) ∗]unit [⟨popI 𝑖 𝑥 |𝑖 =0⟩]
+
+On the other hand, the ⟨popI 𝑚 𝑦 ⟩ event in the abstract trace has index 𝑚 = 0, and the algorithm can smartly determine that there is no previous pop event in this case. It is because the merge result of the first intersected type of popI fails the non-emptiness check, where 𝑚 > 0 ∧ 𝑚 = 0
+
+is unsatisfiable. Finally, this trace will be refined to one consistent with the program shown in Example 3.2: 
+
+(𝑚 :{𝜈 :int | 𝜈 = 0}𝑢 , 𝑛 :{𝜈 :int | 𝜈 = 𝑚 +1}𝑢 , 𝑦 :{𝜈 :int | ⊤ }𝑢 , 𝑥 :{𝜈 :int | 𝜈 > 𝑦 }𝑢 ,
+
+Π∗
+
+> noI
+
+·⟨ pushI 𝑚 𝑦 ⟩⊥·⟨ popI 𝑚 𝑦 ⟩⊥·Π∗
+
+> noI
+
+·⟨ push 𝑥 ⟩⊥·⟨ pushI 𝑛 𝑥 ⟩⊥·Π∗
+
+> noI
+
+·⟨ pop 𝑥 ⟩⊤·⟨ popI 𝑛 𝑥 ⟩⊥·Π∗
+
+> any
+
+) (𝜋 stack )
+
+Deriving a Generator. The second component of our synthesis algorithm, DeriveTerm , derives generators for each abstract trace in the set produced the refinement loop and then combines them using ⊕ to construct the final generator. This process relies on a subroutine, DeriveTrace , that generates straightline programs without recursion by dropping by all ghost events and variables and then mapping each symbolic event to a corresponding effectful operation with appropriate arguments. So, given the following context and abstract trace: 
+
+(𝑚 :{𝜈 :int | 𝜈 = 0}𝑢 , 𝑛 :{𝜈 :int | 𝜈 = 𝑚 +1}𝑢 , 𝑦 :{𝜈 :int | ⊤ }𝑢 , 𝑥 :{𝜈 :int | 𝜈 > 𝑦 }𝑢 , ⟨push 𝑥 ⟩·⟨ pop 𝑥 ⟩) 
+
+DeriveTrace will synthesize the following program:                       
+
+> 1let (x: int ) = assume (∃ 𝑚 𝑛 𝑦.𝑚 =0∧𝑛 =𝑚 +1∧𝑥 >𝑦 )in push x; (* equivalent to assume true *)
+> 2let (z: int ) = pop () in assert (x == z)
+
+DeriveTerm applies a sketch-style methodology to synthesize a recursive generator, using DeriveTrace 
+
+to fill in the holes of a template recursive function definition. It does so by associating each of the holes in the template with a subsequence of the abstract trace, treating each occurence of a Kleene star in an abstract trace as a candidate placeholder for a recursive call. In order to ensure a particular partitioning is sensible, the algorithm simulates a bounded number of loop iterations to ensure a completed sketch is well-typed. 
+
+Example 4.3 (Recursion Template). Consider the following template which defines and uses a recur-sive function 𝑓 that calls itself once: 𝑇  let 𝑓 = fix 𝑓 .𝜆 () . () ⊕ 𝑒 1 ; 𝑓 () ; 𝑒 2 in ( 𝑒 3 ; 𝑓 () ; 𝑒 4 ).This template includes a pair of holes before and after the recursive call in the definition of 𝑓 , and another pair around the top-level call to 𝑓 . We can build the following two program sketches by mapping portions of 𝜋 stack from Example 4.2 to the four holes in 𝑇 :                                    
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 17
+> Π∗
+> noI ⟨pushI 𝑚 𝑦 ⟩⟨ popI 𝑚 𝑦 ⟩Π∗
+> noI
+> |{z }
+> 𝑒 3
+> ⟨push 𝑥 ⟩⟨ pushI 𝑛 𝑥 ⟩
+> |{z }
+> 𝑒 1
+> Π∗
+> noI
+> |{z}
+> 𝑓 ()
+> ⟨pop 𝑥 ⟩⟨ popI 𝑛 𝑥 ⟩
+> |{z }
+> 𝑒 2
+> Π∗
+> noI
+> |{z}
+> 𝑒 4
+> Π∗
+> noI ⟨pushI 𝑚 𝑦 ⟩⟨ popI 𝑚 𝑦 ⟩Π∗
+> noI ⟨push 𝑥 ⟩⟨ pushI 𝑛 𝑥 ⟩
+> |{z }
+> 𝑒 3
+> Π∗
+> noI
+> |{z}
+> 𝑒 1
+> Π∗
+> noI
+> |{z}
+> 𝑓 ()
+> ⟨pop 𝑥 ⟩⟨ popI 𝑛 𝑥 ⟩
+> |{z }
+> 𝑒 2
+> Π∗
+> noI
+> |{z}
+> 𝑒 4
+
+We can then simulate unrolling the recursive call in a solution to each sketch by duplicating the subtraces labeled 𝑒 1 𝑓 () 𝑒 2 a bounded number of times and checking whether they are consistent with 𝜋 stack : doing so reveals that the second sketch would not yield a valid solution, as the recursive call would repeatedly perform pop events without any push events. The first sketch, in contrast, is consistent with 𝜋 stack ; using DeriveTrace to synthesize generators for each 𝑒 yields the following:                         
+
+> 1let rec f () = () ⊕
+> 2let (x: int ) = int_gen () in push x; (* 𝑒 1*)
+> 3f ();
+> 4let (z: int ) = pop () in assert (x == z) (* 𝑒 2*)
+> 5in (* 𝑒 3*) f () (* 𝑒 4*)
+
+Theorem 4.4 (Algorithm 1 is Sound). Every generator synthesized by Algorithm 1 is type-safe with respect to our declarative typing system. 
+
+5 Implementation And Evaluation 
+
+We have implemented a tool based on the above approach, called Clouseau , that synthesizes effectful test generators from user-provided uHat specifications and property. The output program in our DSL can be transpiled to OCaml (QCheck) or P. Our experiments use the OCaml transpilation to test effectful abstract datatype libraries, serializers, transformers, and interpreters, concurrent data structures and databases; we use the P target to test reactive distributed system models (i.e., message-passing systems defined as a collection of actors) by using the synthesized generator as a property-directed scheduler that replaces P’s default random one. Notably, the same specification and synthesis strategy is used in both cases. Clouseau consists of approximately 14K lines of OCaml code and uses Z3 [11] as its backend SMT solver. 
+
+Evaluation setting. Clouseau takes two inputs: a target property, expressed as an SRE, and an operator context that contains uHat specifications for the operators used in the SUT. During synthesis, Clouseau decomposes the target property to build a generator consistent with the traces that the property accepts, but constrained to respect the history and future traces of any effects it references. Because operator types are interpreted underapproximately, there are potentially many valid candidate programs that are consistent with the uHat specifications of the operators they use. Our implementation considers a union of well-typed synthesis candidates, the number of which is bounded by the amount of time allotted for synthesis (3 minutes in our experiments). Synthesized generators use assume statements to ensure that data dependencies among effectful operations are respected and use assert statements to flag property violations. Like other PBT setups that rely on precondition-style filtering, our evaluation adopts an angelic reading of assume : when the SUT or runtime rejects a candidate trace (e.g., when the interpreter aborts on an ill-typed expression), we treat that run as uninformative and retry with a fresh sample rather than counting it toward a found violation. This matches how generators are typically used in practice and avoids conflating specification imprecision with genuine safety failures. Our experimental evaluation addresses four research questions: 
+
+Q1 : Is Clouseau expressive ? Can it synthesize generators for a diverse set of benchmarks with interesting non-trivial structural and semantic safety properties?  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. 18 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+
+Q2 : Is Clouseau effective ? Do synthesized generators enable more targeted exploration of the state space to witness violations of provided safety properties than existing techniques? 
+
+Q3 : Is Clouseau efficient ? Is it able to synthesize meaningful generators reasonably quickly? 
+
+Q4 : Is Clouseau robust ? Is it able to synthesize meaningful generators for benchmarks even when provided with weaker specifications than necessary? We have evaluated Clouseau on a diverse corpus of programs 7 drawn from a variety of sources (described in the captions of Table 1 and Table 2) ( Q1 ). Our benchmarks are grouped into four categories. The first are data structure benchmarks ( Stack , Set , Filesystem ) where the test generator probes for violations of structural invariants. The second are evaluators - programs that input serialized data, transform them into an internal AST representation, and then interpret them; we consider evaluators for data structures like graphs and automata ( Graph , NFA ), information flow control machines, and simply-typed lambda-calculus, the latter two both described in Sec. 2. The third are concurrent and database benchmarks ( Transaction , Shopping , Courseware , Twitter ,
+
+Smallbank ) that test properties related to consistency and synchronization. Property violations in any of these categories only manifest in specific configurations (e.g., a violating test case for NFA 
+
+involves constructing an automata containing multiple nodes with more than two outgoing edges). We evaluate these three classes of benchmarks by transpiling synthesized generators into OCaml, leveraging its QCheck library as needed. The SUT for each of these benchmarks is known to be buggy; in all cases we use implementations either available from prior sources directly (if the OCaml source was available), or by directly translating them into OCaml. The fourth group of benchmarks shown in Table 2 considers applications involving various kinds of distributed protocols; these are executed using the P runtime environment, by transpiling synthesized generators written in our DSL into P’s state machine modeling language. Here as well, the protocol being tested is known to be faulty from the sources they were adopted from. The IFCLoad W, DeBruijnHO W, and 
+
+Transaction W benchmarks are variants of other benchmarks that use the weaker specifications described in Sec. 2; the end of this section discusses these results in more detail ( Q4 ). Table 1 divides the results of our experiments into four categories, separated by double bars. The first measures the complexity of benchmarks with respect to the number of distinct effectful operators (# op ) and the number of qualifiers (i.e., symbolic events) used in uHat specifications and the property being tested. For the benchmarks in Table 1, our results show that writing underapproximate specifications require anywhere from 6 - 22 different operators and include over 100 symbolic events in our most complex examples. The second group of columns characterizes 
+
+Clouseau ’s ability to discover a violation compared to the baseline ( Q2 ). To make the comparison objective, we execute generators in the two systems 10K times, and count the number of runs in which a fault was uncovered. For example, for Stack , using QCheck to generate random sequences of push and pop effects, resulted in an erroneous execution every 31.9 times on average; in contrast, every execution of the generator(s) synthesized by Clouseau manifested the bug. Notably, even for benchmarks in which there is a sophisticated customized generator available 8 (e.g., IFC or de Bruijn ), 
+
+uHat -guided synthesis leads to significantly better outcomes. We use MonkeyDB [ 1], a mock storage system that can be used to find violations of database isolation properties, as the baseline for a number of the concurrency benchmarks. Although it is specialized for this particular application class, and Clouseau is not, evaluation results are comparable, with Clouseau yielding generators that identify weak isolation violations modestly more effectively than the baseline. Similar conclusions apply to the P benchmarks shown in Table 2. For simple benchmarks, P’s default scheduler, which performs enumerative state exploration to construct schedules, independently of the behaviors of 
+
+> 7The supplemental material includes additional details about our benchmarks.
+> 8When these custom generators are available, we use them as the baseline in our experiments. , Vol. 1, No. 1, Article . Publication date: April 2026.
+
+Trace-Guided Synthesis of Effectful Test Generators 19 
+
+Table 1. Using Clouseau to synthesize effectful test generators in OCaml. Benchmarks from prior work are annotated with their source: HAT [ 45 ], the OCaml multicore PBT framework [ 28 ], QuickCheck on IFC machines [ 20 ] and well-typed De Bruijn STLC programs [ 44 ]; as well as OLTP-Bench [ 15 ], an extensible testbed for benchmarking relational databases, and MonkeyDB [ 1], a mock storage system for testing weak isolation levels. The baselines used for comparison are taken from the original sources when they exist (these are labeled with †), otherwise we use QCheck’s default random generator. Clouseau synthesized correct-by-construction test generators for all benchmarks within 3 minutes; the number of generator variants synthesized is bounded at 3. We set a 30-minute bound for the baselines to find a property violation. 
+
+Benchmark #op #qualifier # Num. Executions ttotal (s) #evt #refine #SMT Name Property uHAT goal Clouseau Baseline 
+
+Stack [45] Pushes and pops are correctly paired. 6 12 3 1.0 31 .9 0.60 15 4 98 
+
+Set [45] Membership holds for every element inserted into the set. 
+
+7 22 3 1.0 22 .1 1.28 12 12 255 
+
+Filesystem [45] A valid file path only contains non-deleted entries. 7 67 4 1.3 2812 .1 6.02 13 14 853 
+
+Graph [45] A serialized stream of nodes and edges is restored to form a fully-connected graph. 
+
+6 24 4 1.0 Timeout 16 .61 16 16 2114 
+
+NFA [45] An NFA reaches a final state for every string in the language it accepts. 
+
+8 50 4 1.0 Timeout 21 .85 26 6 5080 
+
+IFCStore [20] A well-behaved IFC program containing a Store 
+
+command never leaks a secret. 
+
+8 37 2 2.8 4811 .7† 1.02 8 8 160 
+
+IFCAdd [20] A well-behaved IFC program containing an Add 
+
+command never leaks a secret. 
+
+8 37 2 1.6 3383 .4† 0.96 8 8 154 
+
+IFCLoad [20] A well-behaved IFC program containing a Load 
+
+command never leaks a secret. 
+
+8 37 2 15 .4 11293 .7† 5.76 16 18 930 
+
+IFCLoad W[20] IFCLoad without search bias (cf. Sec. 2). 8 33 2 115 .4 11293 .7† 4.83 16 18 754 
+
+DeBruijnFO [44] An STLC interpreter correctly evaluates a 
+
+well-typed first-order STLC program that uses a de Bruijn representation. 
+
+10 117 4 1.5 634 .0† 40 .38 18 26 4765 
+
+DeBruijnHO [44] An STLC interpreter correctly evaluates a 
+
+well-typed higher-order STLC program that uses a de Bruijn representation. 
+
+10 118 4 1.4 Timeout † 91 .73 18 31 9034 
+
+DeBruijnHO W[44] DeBruijnHO with untyped higher-order programs (cf. Sec. 2). 
+
+10 107 4 Timeout Timeout † 3.23 7 22 957 
+
+Shopping [1] All items added to a cart can be checked-out. 10 60 3 1.0 20 .0† 22 .10 17 30 1269 
+
+HashTable [28] No updates to a concurrent hashtable are ever lost. 13 38 4 1.0 2.5† 0.76 6 6 57 
+
+Transaction Asynchronous read operations are logically atomic. 8 45 3 1.2 Timeout 2.89 15 16 423 
+
+Transaction W Transaction without read atomicity enforcement (cf. Sec. 2). 
+
+8 40 3 Timeout Timeout 2.24 15 15 372 
+
+Courseware [1] Every student enrolled in a course exists in the enrollment database for that course. 
+
+16 106 3 1.0 57 .5† 27 .71 18 33 1479 
+
+Twitter [1] Posted tweets are visible to all followers. 16 99 3 1.0 6.3† 61 .96 24 24 2339 
+
+Smallbank [15] Account updates are strongly consistent. 22 162 3 1.9 Timeout 163 .55 28 29 10263 
+
+the actors under test or the target property, or handwritten ones which inject additional actors to control input message generation and prevent uninteresting message orderings (e.g. Simplified2PC 
+
+or Heartbeat ), are effective and Clouseau ’s performance is comparable to these. As in the previous set of experiments, however, for more complex benchmarks (e.g., ChainReplication , Paxos ), even 
+
+, Vol. 1, No. 1, Article . Publication date: April 2026. 20 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan 
+
+Table 2. Experimental results of using Clouseau to synthesize property-directed schedulers for reactive distributed systems. Benchmarks from prior work are annotated with their source: P [ 13 ]( †), ModP [ 14 ]( ⋄ )an extension of P with support for modules, and MessageChain [ 30 ]( ★), an automated verification tool for P. We also include a real-world model of a two-phase commit protocol (AnonReadAtomicity □) used by a major cloud vendor. The components under test are written in P, and handler specifications for the SUTs components (message-passing actors) are given as uHat s. Clouseau synthesizes a set of schedulers, each of which specifies a distinct scheduling order for messages, all consistent with provided specifications. We set a 
+
+3 minute time bound for the synthesis procedure (t total is the average time to find a single controller.) We set a bound of 30 minute time bound for the P baselines to generate a faulty execution. 
+
+Benchmark #op #qualifier # Num. Executions ttotal (s) #evt #refine #SMT Name Property uHAT goal Clouseau Baseline  
+
+> Database The database maintains a Read-Your-Writes policy.
+
+4 15 3 1.0 5.6 0.32 6 6 49 
+
+> Firewall
+
+[30] Requests generated inside the firewall are eventually propagated to the outside. 
+
+5 26 4 1.0 10 .0 0.59 10 10 222 
+
+> RingLeaderElection
+
+[30] There is always a single unique leader. 3 14 2 1.0 17 .7 0.83 8 8 100 
+
+> BankServer
+
+[13] Withdrawals in excess of the available balance are never allowed. 
+
+6 42 1 1.0 2.2† 0.17 5 5 27 
+
+> Simplified2PC
+
+[13] Transactions are atomic. 9 32 5 2.1 5.8† 1.03 8 8 88 
+
+> HeartBeat
+
+[13] All available nodes are identified by a detector. 
+
+7 31 3 1.0 6.0† 1.10 14 14 145 
+
+> ChainReplication
+
+[14] Concurrent updates are never lost. 7 72 4 1.0 500 .0† 19 .24 12 169 2054 
+
+> Paxos
+
+[14] Logs are correctly replicated. 10 110 2 1.0 667 .7† 23 .70 14 77 1763   
+
+> Raft Leader election is robust to faults.
+
+9 39 6 1.0 Timeout 26 .84 12 78 1262   
+
+> AnonReadAtomicity Read Atomicity is preserved.
+
+17 113 3 1.0 53 .3† 18 .35 16 16 1909 
+
+manual specialization to generate interesting test sequences is significantly less effective than 
+
+Clouseau ’s trace-guided synthesis approach. Moreover, as indicated by the Raft numbers, a random exploration procedure, without manually engineered guidance, is too naïve to find a violating execution. It is notable that here too, Clouseau ’s performance on these P benchmarks is competitive, and in several cases, superior to handcrafted P schedulers, even though Clouseau has no built-in knowledge of P’s underlying programming model. The last group of columns in both tables provide details on the cost of our synthesis procedure. The first column presents total synthesis time (t total ), which takes anywhere from .6 to 165 seconds (Q3 ); synthesis time is roughly proportional to benchmark complexity, as reflected in the # op and #qualifier columns. The last three columns additionally analyze the characteristics of Clouseau ’s synthesis procedure with respect to the number of events in the abstract refined trace (#evt), the number of SMT queries (#SMT), as well as the number of refinement steps (#refine); recall that the synthesis procedure uses a refinement loop to construct a more specialized underapproximation from uHat specifications that are consistent with the provided safety property. In general, these numbers correlate with each other, and serve as rough proxies for benchmark complexity. They indicate that even for the most challenging benchmarks, Clouseau is able to synthesize an effective generator in a reasonable amount of time. 
+
+Case study. To demonstrate that Clouseau can be effective in real-world scenarios, we have applied it to AnonReadAtomicity , a distributed transaction system in use at a major cloud provider, where asynchronous reads are expected to execute atomically, as discussed in Sec. 2. The property to be checked requires that if there exists a key k updated within an active transaction, any successful 
+
+, Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 21 
+
+read response asking its value should return the value last written to k made by that transaction. Generating a fault-inducing scenario requires (a) initiating a new transaction with transaction id tid ,(b) successfully performing a write within that transaction, and then (c) subsequently performing a read within tid that yields a different value than the one last written. As the example in 2 implies, using uHat to express the behavior of readRsp enables the synthesis of a test generator that can strategically request a new transaction to initiate triggering the intended violation. A version of the benchmark in which this sequence structure is enforced manually discovers the violation in 53 executions, while Clouseau ’s version can uncover the violation on all of its executions. 
+
+Robustness to Specification Quality. As discussed in Sec. 2, Clouseau ’s effectiveness depends on the quality of user-supplied uHat specifications. To quantify Clouseau ’s robustness to specification quality, we conducted an additional study using variants of the benchmarks in Tables 1 and 2 that keep the SUT and the global property fixed while weakening the uHat specifications of individual operators provided by the SUT. Specifications were weakened in a similar manner to the examples described in Sec. 2: the variant of the IFC benchmark ( IFCLoad W), for example, eliminates the “valid address” constraint (i.e., isAddr ) used in the original specification. Broadly speaking, the weakened specifications can be categorized as either relaxing basic correctness properties of the SUT or removing search biases. Both categories of specifications are lower-quality because they provide less guidance to Clouseau and thus increase the risk that it will synthesize generators misaligned with the SUT’s intended behavior. Table 1 includes the results of this experiment for the three examples from Sec. 2 ( Transaction W,
+
+IFCLoad W, and DeBruijnHO W). 9 Under these weaker specifications, average synthesis time (t total )improves by 18 .18% , and by 78 .07% in the extreme case ( ChainReplication ). This comes at the cost of decreased testing effectiveness, however: 26 .9% (7 out of 26) of the benchmarks now time out; the remaining benchmarks show an elevated retry rate (#Num. Executions), 1.9× on average, and 
+
+7.5× in the worst case ( IFCLoad W). In general, weakening basic correctness properties significantly impacts Clouseau ’s effectiveness, as the resulting generators regularly yield executions that do not align with the intended behavior of the SUT: DeBruijnHO W, for example, generates a large number of “useless” untyped STLC programs that are immediately discarded by the type-checker. Obtaining an informative witness from such a generator may thus require generating many more inputs, and can quickly exhaust the testing time budget. In contrast, weakening the search bias was comparatively benign in our experiments (e.g., the synthesized generator for IFCLoad W still finds EENI violations relatively quickly), and primarily manifested in an increased number of retries before a bug was found. Of course, since weaker specifications can lead to shorter synthesis times, the loss of testing efficiency may sometimes be an acceptable trade-off. 
+
+Discussion. We have anecdotal evidence that the cost to write uHat s is relatively low; the uHat sfor the HashTable and Courseware benchmarks in Table 1 were written by an undergraduate student, and those for Smallbank and Twitter by two first-year PhD students. None of the students had prior exposure to the uHat specification language or Clouseau ’s synthesis algorithm. Nonetheless, each was able to independently encode their knowledge about the SUT as uHat s, requiring only a few person-hours to complete all the benchmarks. One potential area for future work is to provide better developer-facing feedback when synthesis fails. Because our algorithm consists of a refinement loop that maintains a set of candidate generators (see Fig. 6), integrating a refinement and debugging phase as part of the synthesizer and test execution pipeline would be a natural extension.  
+
+> 9The experimental results for the full set of benchmarks are provided in the supplemental material. , Vol. 1, No. 1, Article . Publication date: April 2026. 22 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+
+6 Related Work and Conclusions 
+
+Underapproximate Reasoning. A number of recently proposed logical frameworks provide pro-gram reasoning principles based on under-, rather than over-, approximate abstractions. Incor-rectness Logic [ 33 ] and related variants [ 26 , 36 , 46 ] present compositional proof rules that enable verification of reachability (aka incorrectness) properties of first-order imperative programs; their primary motivation is to enable formal reasoning of (unsound) program analysis tools such as In-fer [ 16 ]. Ideas related to these notions have also been incorporated into type systems [ 21 , 27 , 38 , 44 ]for functional languages, but none of these efforts have considered their application to the synthesis of effectful test generators of the kind proposed in this paper. For example [ 44 ] uses underapprox-imation to typecheck that a PBT generator is complete with respect to the functional inputs it generates to the SUT, while [ 24 ] considers an enumerative repair strategy to patch incomplete generators so that they become complete. In contrast, in this paper, we show how interpreting type specifications from the lens of underapproximation can guide a synthesis procedure to construct bespoke effectful test generators tailored to the property of interest, informed by the behavior of the operators provided by the SUT. As a mechanism to characterize underapproximate behavior, types identify sufficient effectful constraints that any test input sequence produced by the generator 
+
+must satisfy based on these specifications. 
+
+Specializing PBT Generators. There has been significant prior work to make PBT implementations more effective, by providing tools that enable reasoning and customization of effect traces produced by a test generator. For example, Claessen et al. [6] describes a customizable user-level scheduler that uses Quviq QuickCheck’s support for state machine models to implement deterministic replayable test inputs to an Erlang SUT. Concuerror [ 4 ] systematically explores process interleavings in a con-current Erlang program via program instrumentation and preemption bounding. Quickstrom [ 32 ]uses specifications of possible actions expressed in its Specstrom specification language, a dialect of LTL, to dynamically choose the next input that the generator should provide for interactive applications. In contrast, Clouseau ’s type-guided synthesis strategy yields generators influenced by both the global property of interest and the local uHat specifications of the operations used by the SUT. Importantly, the synthesis procedure is guided by the history and future SREs of provided specifications to determine a semantically meaningful ordering of effectful actions. 
+
+Type and Effect Systems. Type and effect systems that target temporal properties on the sequences of effects that a program may produce is a well-studied subject. For example, Skalka and Smith [41] presents a type and effect system for reasoning about the shape of histories (i.e., finite traces) of events embedded in a program. Koskinen and Terauchi [23] present a type and effect system that additionally supports verification properties of infinite traces, specified as Büchi automata. More recently, Sekiyama and Unno [40] have considered how to support richer control flow structures, e.g., delimited continuations, in such an effect system. Closest to our work are Hoare Automata Types (HAT s) [ 45 ], which integrate symbolic finite automata into a refinement type system. HAT senable reasoning about stateful sequential programs structured as a functional core interacting with opaque effectful libraries. uHat s revise HAT s by viewing them as underapproximate specifications - every trace accepted by the future regex in a uHat is justified by a trace accepted by its history. 
+
+Conclusions . This paper proposes Clouseau , a trace-guided synthesizer of effectful PBT genera-tors. Its key innovations are (i) the adaptation of SREs, expressed as types, that define traces of effectful actions that occur before and after the execution of an expression, as underapproximate specifications, and (ii) the synthesis of bespoke test generators derived from these specifications. Experimental results on a wide range of applications show that Clouseau is significantly more effective in identifying test input sequences that falsify a property than the existing state-of-the-art. 
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026.
+
+Trace-Guided Synthesis of Effectful Test Generators 23 
+
+References 
+
+[1] Ranadeep Biswas, Diptanshu Kakwani, Jyothi Vedurada, Constantin Enea, and Akash Lal. MonkeyDB: Effectively Testing Correctness Under Weak Isolation Levels. Proc. ACM Program. Lang. , 5(OOPSLA), October 2021. doi: 10.1145/ 3485546. URL https://doi.org/10.1145/3485546. [2] Rastislav Bodik, Satish Chandra, Joel Galenson, Doug Kimelman, Nicholas Tung, Shaon Barman, and Casey Rodarmor. Programming with Angelic Nondeterminism. In Proceedings of the 37th Annual ACM Symposium on Principles of Programming Languages , POPL ’10, page 339–352, New York, NY, USA, 2010. Association for Computing Machinery. ISBN 9781605584799. [3] Cristiano Calcagno and Dino Distefano. Infer: An Automatic Program Verifier for Memory Safety of C Programs. In 
+
+Proceedings of the Third International Conference on NASA Formal Methods , NFM’11, page 459–465, Berlin, Heidelberg, 2011. Springer-Verlag. ISBN 9783642203978. [4] Maria Christakis, Alkis Gotovos, and Konstantinos Sagonas. Systematic Testing for Detecting Concurrency Errors in Erlang Programs. In 2013 IEEE Sixth International Conference on Software Testing, Verification and Validation , pages 154–163, 2013. doi: 10.1109/ICST.2013.50. [5] Koen Claessen and John Hughes. QuickCheck: A Lightweight Tool for Random Testing of Haskell Programs. In 
+
+Proceedings of the Fifth ACM SIGPLAN International Conference on Functional Programming , ICFP ’00, page 268–279, New York, NY, USA, 2000. Association for Computing Machinery. ISBN 1581132026. doi: 10.1145/351240.351266. URL https://doi.org/10.1145/351240.351266. [6] Koen Claessen, Michal Palka, Nicholas Smallbone, John Hughes, Hans Svensson, Thomas Arts, and Ulf Wiger. Finding Race Conditions in Erlang with QuickCheck and PULSE. In Proceedings of the 14th ACM SIGPLAN International Conference on Functional Programming , page 149–160. Association for Computing Machinery, 2009. [7] Edmund Clarke, Daniel Kroening, and Flavio Lerda. A Tool for Checking ANSI-C Programs . In Kurt Jensen and Andreas Podelski, editors, Tools and Algorithms for the Construction and Analysis of Systems (TACAS 2004) , volume 2988 of Lecture Notes in Computer Science , pages 168–176. Springer, 2004. ISBN 3-540-21299-X. [8] Loris D’Antoni and Margus Veanes. Minimization of Symbolic Automata. SIGPLAN Not. , 49(1):541–553, Jan 2014. ISSN 0362-1340. doi: 10.1145/2578855.2535849. URL https://doi.org/10.1145/2578855.2535849. [9] N.G de Bruijn. Lambda Calculus Notation with Nameless Dummies, A Tool For Automatic Formula Manipulation, With Application to the Church-Rosser Theorem. Indagationes Mathematicae (Proceedings) , 75(5):381–392, 1972. ISSN 1385-7258. doi: https://doi.org/10.1016/1385-7258(72)90034-0. URL https://www.sciencedirect.com/science/article/pii/ 1385725872900340. [10] Giuseppe De Giacomo and Moshe Y. Vardi. Linear Temporal Logic and Linear Dynamic Logic on Finite Traces. In 
+
+Proceedings of the Twenty-Third International Joint Conference on Artificial Intelligence , IJCAI ’13, page 854–860. AAAI Press, 2013. ISBN 9781577356332. [11] Leonardo de Moura and Nikolaj Bjørner. Z3: An Efficient SMT Solver. In C. R. Ramakrishnan and Jakob Rehof, editors, 
+
+Tools and Algorithms for the Construction and Analysis of Systems , pages 337–340, Berlin, Heidelberg, 2008. Springer Berlin Heidelberg. ISBN 978-3-540-78800-3. doi: 10.1007/978-3-540-78800-3_24. [12] Ankush Desai and Shaz Qadeer. P: Modular and Safe Asynchronous Programming. In Shuvendu K. Lahiri and Giles Reger, editors, Runtime Verification - 17th International Conference, RV 2017, Seattle, WA, USA, September 13-16, 2017, Proceedings , volume 10548 of Lecture Notes in Computer Science , pages 3–7. Springer, 2017. doi: 10.1007/978-3-319-67531-2\_1. URL https://doi.org/10.1007/978-3-319-67531-2_1. [13] Ankush Desai, Vivek Gupta, Ethan K. Jackson, Shaz Qadeer, Sriram K. Rajamani, and Damien Zufferey. P: Safe Asynchronous Event-Driven Programming. In Hans-Juergen Boehm and Cormac Flanagan, editors, ACM SIGPLAN Conference on Programming Language Design and Implementation, PLDI ’13, Seattle, WA, USA, June 16-19, 2013 , pages 321–332. ACM, 2013. doi: 10.1145/2491956.2462184. URL https://doi.org/10.1145/2491956.2462184. [14] Ankush Desai, Amar Phanishayee, Shaz Qadeer, and Sanjit A. Seshia. Compositional Programming and Testing of Dynamic Distributed Systems. Proc. ACM Program. Lang. , 2(OOPSLA), October 2018. doi: 10.1145/3276529. URL https://doi.org/10.1145/3276529. [15] Djellel Eddine Difallah, Andrew Pavlo, Carlo Curino, and Philippe Cudre-Mauroux. OLTP-Bench: an Extensible Testbed for Benchmarking Relational Databases. Proc. VLDB Endow. , 7(4):277–288, December 2013. ISSN 2150-8097. doi: 10.14778/2732240.2732246. URL https://doi.org/10.14778/2732240.2732246. [16] Dino Distefano, Manuel Fähndrich, Francesco Logozzo, and Peter W. O’Hearn. Scaling Static Analyses at Facebook. 
+
+Commun. ACM , 62(8):62–70, July 2019. ISSN 0001-0782. [17] Loris D’Antoni and Margus Veanes. The Power of Symbolic Automata and Transducers. In Computer Aided Verification ,pages 47–67. Springer, 2017. [18] Justin Frank, Benjamin Quiring, and Leonidas Lampropoulos. Generating Well-Typed Terms That Are Not "Useless". 
+
+Proc. ACM Program. Lang. , 8(POPL):2318–2339, 2024. doi: 10.1145/3632919. URL https://doi.org/10.1145/3632919. , Vol. 1, No. 1, Article . Publication date: April 2026. 24 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan 
+
+[19] Harrison Goldstein, Joseph W. Cutler, Daniel Dickstein, Benjamin C. Pierce, and Andrew Head. Property-Based Testing in Practice. In Proceedings of the 46th IEEE/ACM International Conference on Software Engineering, ICSE 2024, Lisbon, Portugal, April 14-20, 2024 , pages 187:1–187:13. ACM, 2024. doi: 10.1145/3597503.3639581. URL https: //doi.org/10.1145/3597503.3639581. [20] Catalin Hritcu, John Hughes, Benjamin C. Pierce, Antal Spector-Zabusky, Dimitrios Vytiniotis, Arthur Azevedo de Amorim, and Leonidas Lampropoulos. Testing Noninterference, Quickly. In Proceedings of the 18th ACM SIGPLAN International Conference on Functional Programming , ICFP ’13, page 455–468, New York, NY, USA, 2013. Association for Computing Machinery. ISBN 9781450323260. doi: 10.1145/2500365.2500574. URL https://doi.org/10.1145/2500365. 2500574. [21] Robert Jakob and Peter Thiemann. A Falsification View of Success Typing. In Klaus Havelund, Gerard Holzmann, and Rajeev Joshi, editors, NASA Formal Methods , pages 234–247, Cham, 2015. Springer International Publishing. ISBN 978-3-319-17524-9. [22] Ranjit Jhala and Niki Vazou. Refinement Types: A Tutorial. Found. Trends Program. Lang. , 6(3-4):159–317, 2021. doi: 10.1561/2500000032. URL https://doi.org/10.1561/2500000032. [23] Eric Koskinen and Tachio Terauchi. Local Temporal Reasoning. In Proceedings of the Joint Meeting of the Twenty-Third EACSL Annual Conference on Computer Science Logic (CSL) and the Twenty-Ninth Annual ACM/IEEE Symposium on Logic in Computer Science (LICS) , CSL-LICS ’14, New York, NY, USA, 2014. Association for Computing Machinery. ISBN 9781450328869. doi: 10.1145/2603088.2603138. URL https://doi.org/10.1145/2603088.2603138. [24] Patrick LaFontaine, Zhe Zhou, Ashish Mishra, Suresh Jagannathan, and Benjamin Delaware. We’ve Got You Covered: Type-Guided Repair of Incomplete Input Generators. Proc. ACM Program. Lang. , 9(OOPSLA2), October 2025. [25] Leonidas Lampropoulos, Diane Gallois-Wong, Cătălin Hriţcu, John Hughes, Benjamin C. Pierce, and Li-yao Xia. Beginner’s luck: A Language for Property-Based Generators. In Proceedings of the 44th ACM SIGPLAN Symposium on Principles of Programming Languages , POPL ’17, page 114–129, New York, NY, USA, 2017. Association for Computing Machinery. ISBN 9781450346603. doi: 10.1145/3009837.3009868. URL https://doi.org/10.1145/3009837.3009868. [26] Quang Loc Le, Azalea Raad, Jules Villard, Josh Berdine, Derek Dreyer, and Peter W. O’Hearn. Finding Real Bugs in Big Programs with Incorrectness Logic. Proc. ACM Program. Lang. , 6(OOPSLA):1–27, 2022. doi: 10.1145/3527325. URL https://doi.org/10.1145/3527325. [27] Celia Mengyue Li, Sophie Pull, and Steven Ramsay. A Complementary Approach to Incorrectness Typing. In ACM Symposium on Principles of Programming Languages (POPL) , 2026. [28] Jan Midtgaard. Property-Based Testing of OCaml 5’s Runtime System: Fun and Segfaults with Interpreters and State Transition Functions. In OlivierFest’25 , page 180–193, New York, NY, USA, 2025. Association for Computing Machinery. ISBN 9798400721502. doi: 10.1145/3759427.3760378. URL https://doi.org/10.1145/3759427.3760378. [29] Anders Miltner, Saswat Padhi, Todd D. Millstein, and David Walker. Data-driven Inference of Representation Invariants. In Proceedings of the 41st ACM SIGPLAN International Conference on Programming Language Design and Implementation, PLDI , pages 1–15. ACM, 2020. doi: 10.1145/3385412.3385967. URL https://doi.org/10.1145/3385412.3385967. [30] Federico Mora, Ankush Desai, Elizabeth Polgreen, and Sanjit A. Seshia. Message Chains for Distributed System Verification. Proc. ACM Program. Lang. , 7(OOPSLA2), October 2023. doi: 10.1145/3622876. URL https://doi.org/10.1145/ 3622876. [31] Yoji Nanjo, Hiroshi Unno, Eric Koskinen, and Tachio Terauchi. A Fixpoint Logic and Dependent Effects for Temporal Property Verification. In Proceedings of the 33rd Annual ACM/IEEE Symposium on Logic in Computer Science , LICS ’18, page 759–768, New York, NY, USA, 2018. Association for Computing Machinery. ISBN 9781450355834. doi: 10.1145/3209108.3209204. URL https://doi.org/10.1145/3209108.3209204. [32] Liam O’Connor and Oskar Wickström. Quickstrom: property-based acceptance testing with ltl specifications. In 
+
+Proceedings of the 43rd ACM SIGPLAN International Conference on Programming Language Design and Implementation ,PLDI 2022, page 1025–1038, New York, NY, USA, 2022. Association for Computing Machinery. ISBN 9781450392655. doi: 10.1145/3519939.3523728. URL https://doi.org/10.1145/3519939.3523728. [33] Peter W. O’Hearn. Incorrectness Logic. Proc. ACM Program. Lang. , 4(POPL), 2019. doi: 10.1145/3371078. URL https://doi.org/10.1145/3371078. [34] Michał H. Pałka, Koen Claessen, Alejandro Russo, and John Hughes. Testing an Optimising Compiler by Generating Random Lambda Terms. In Proceedings of the 6th International Workshop on Automation of Software Test , AST ’11, page 91–97, New York, NY, USA, 2011. Association for Computing Machinery. ISBN 9781450305921. doi: 10.1145/1982595.1982615. URL https://doi.org/10.1145/1982595.1982615. [35] QCheck. QuickCheck Inspired Property-Based Testing for Ocaml. https://c-cube.github.io/qcheck/, 2024. URL https://c-cube.github.io/qcheck/. [36] Azalea Raad, Josh Berdine, Hoang-Hai Dang, Derek Dreyer, Peter O’Hearn, and Jules Villard. Local Reasoning About the Presence of Bugs: Incorrectness Separation Logic. In Computer Aided Verification: 32nd International Conference, CAV 2020, Los Angeles, CA, USA, July 21–24, 2020, Proceedings, Part II , page 225–252, Berlin, Heidelberg, 2020. Springer-Verlag. , Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 25 
+
+ISBN 978-3-030-53290-1. doi: 10.1007/978-3-030-53291-8_14. URL https://doi.org/10.1007/978-3-030-53291-8_14. [37] Azalea Raad, Julien Vanegue, Josh Berdine, and Peter O’Hearn. A General Approach to Under-Approximate Reasoning About Concurrent Programs. In Guillermo A. Pérez and Jean-François Raskin, editors, 34th International Conference on Concurrency Theory (CONCUR 2023) , volume 279 of Leibniz International Proceedings in Informatics (LIPIcs) , pages 25:1–25:17, Dagstuhl, Germany, 2023. Schloss Dagstuhl – Leibniz-Zentrum für Informatik. ISBN 978-3-95977-299-0. doi: 10.4230/LIPIcs.CONCUR.2023.25. URL https://drops.dagstuhl.de/opus/volltexte/2023/19019. [38] Steven Ramsay and Charlie Walpole. Ill-Typed Programs Don’t Evaluate. Proc. ACM Program. Lang. , 8(POPL), January 2024. [39] F. P. Ramsey. On a Problem of Formal Logic , pages 1–24. Birkhäuser Boston, Boston, MA, 1987. ISBN 978-0-8176-4842-8. doi: 10.1007/978-0-8176-4842-8_1. URL https://doi.org/10.1007/978-0-8176-4842-8_1. [40] Taro Sekiyama and Hiroshi Unno. Temporal Verification with Answer-Effect Modification: Dependent Temporal Type-and-Effect System with Delimited Continuations. Proc. ACM Program. Lang. , 7(POPL), jan 2023. doi: 10.1145/3571264. URL https://doi.org/10.1145/3571264. [41] Christian Skalka and Scott Smith. History Effects and Verification. In Wei-Ngan Chin, editor, Programming Languages and Systems , pages 107–128, Berlin, Heidelberg, 2004. Springer Berlin Heidelberg. ISBN 978-3-540-30477-7. [42] Margus Veanes. Applications of Symbolic Finite Automata. In Stavros Konstantinidis, editor, Implementation and Application of Automata , pages 16–23, Berlin, Heidelberg, 2013. Springer Berlin Heidelberg. ISBN 978-3-642-39274-0. [43] Robin Webbers, Klaus von Gleissenthall, and Ranjit Jhala. Refinement Type Refutations. Proc. ACM Program. Lang. , 8 (OOPSLA2), October 2024. [44] Zhe Zhou, Ashish Mishra, Benjamin Delaware, and Suresh Jagannathan. Covering All the Bases: Type-Based Verification of Test Input Generators. Proc. ACM Program. Lang. , 7(PLDI), June 2023. doi: 10.1145/3591271. URL https://doi.org/10. 1145/3591271. [45] Zhe Zhou, Qianchuan Ye, Benjamin Delaware, and Suresh Jagannathan. A HAT Trick: Automatically Verifying Representation Invariants using Symbolic Finite Automata. Proc. ACM Program. Lang. , 8(PLDI):1387–1411, 2024. doi: 10.1145/3656433. URL https://doi.org/10.1145/3656433. [46] Noam Zilberstein, Derek Dreyer, and Alexandra Silva. Outcome Logic: A Unifying Foundation for Correctness and Incorrectness Reasoning. Proc. ACM Program. Lang. , 7(OOPSLA1), April 2023. , Vol. 1, No. 1, Article . Publication date: April 2026. 26 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan 
+
+A Outlines of Supplemental Materials 
+
+The supplemental material is organized as follows. The detailed description of STLC example is provided in Appendix B. The complete set of rules for our operational semantics, basic typing, and declarative typing judgments are provided in Appendix C, Appendix D, and Appendix E. The type denotation is presented in Appendix F. Details of the auxiliary functions in our typing algorithm are given in Appendix G. Proofs of the theorems in our paper are provided in Appendix H. Finally, Appendix I presents the benchmark specification explanations, and Appendix J offers detailed results of our experiments. 
+
+B Details in Overview 
+
+We introduce how to use uHat to specify the well-typedness of the De Bruijn STLC example introduced in the overview section.  
+
+> 1
+
+type ty = Int | Arr of ty * ty  
+
+> 2
+
+type serialized_term = Const of int | Var of int | Abs of ty | EndAbs  
+
+> 3
+
+| App | AppL | AppR 
+
+> Fig. 7. STLC terms in a serialized form.
+
+We explicitly define the syntax of the serialized STLC terms in Fig. 7. The definitions of constants and variables are standard, and variables carry their de Bruijn index. However, the usual function abstraction constructor “ Abs of ty ∗ term ” is now represented by two operations, “ Abs of ty ” and “EndAbs ”, where the function body is the term that is generated between them. Similarly, the typical application constructor “ App of term ∗ term ” is now captured by three operations: “ App ”, “ AppL ”, and “ AppR ”. Here, “ App ” begins the application, “ AppL ” marks the beginning of the argument, and “AppR ” signals the end of the application. An example of a serialized STLC term is shown below, where we color the corresponding parts of the term and the serialized term for better readability. STLC term: (𝜆 int .[0]) 3
+
+serialized STLC term: app ; abs (int ); var (0); endAbs ; appL ; const (3); appR 
+
+We denote de Bruijn indices with “ [... ]” to distinguish them from constants. The interpreter accepts a serialized lambda term and evaluates it to a value. In the example above, the input sequence should be reduced as (𝜆 int .[0]) 3 ↩→ 3.The types for STLC operations are shown in Fig. 8. The type for const has no constraint on its prefix trace ( •∗), but records a ty event in the trace that records the type of the output of the 
+
+const expression as Int . The arguments to a ghost event are either serialized terms (like Int ) or ghost variables. Type-checking a trace using ghost events involves solving constraints over their arguments based on algebraic axiomatizations, examples of which are given below. The history and future regex of the appR type in Fig. 8 characterizes both the syntax and well-typing constraints of an STLC function application. It requires that (a) prior to evaluating a function argument ( appL ), the type of the abstraction is Arr(t 1,t 2), i.e., the abstraction being applied is a function type (⟨ty Arr (𝑡 1, 𝑡 2)⟩ ); (b) after the argument is evaluated, its type is determined to be t1 (⟨ty 𝑡 1⟩); and (c) the type of the application’s result is t2 (⟨ty 𝑡 2⟩). The de Bruijn index constraint is captured via the depth operation in the uHat s of the endAbs 
+
+and var operations. In addition to the well-typing constraint, the uHat of the endAbs operation maintains the depth of nested function abstractions using depth . Specifically, its history regex obtains the current depth ( ⟨depth 𝑑 ⟩), increases it by one at the beginning of the function body, and restores it after the endAbs event. On the other hand, a valid index 𝑖 in var must be derived from an 
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026.
+
+Trace-Guided Synthesis of Effectful Test Generators 27 
+
+const : 𝑥 :int  [•∗] unit [⟨const 𝑥 ⟩⟨ ty Int ⟩]
+
+appR : [•∗ ⟨app ⟩• ∗ ⟨ty Arr (𝑡 1, 𝑡 2 ) ⟩⟨ appL ⟩• ∗ ⟨ty 𝑡 1 ⟩] unit [⟨appR ⟩⟨ ty 𝑡 2 ⟩]
+
+endAbs : [•∗ ⟨depth 𝑑 ⟩⟨ abs 𝑡 2 ⟩⟨ depth 𝑑 + 1⟩• ∗ ⟨ty 𝑡 1 ⟩] unit [⟨endAbs ⟩⟨ depth 𝑑 ⟩⟨ putTy Arr (𝑡 1, 𝑡 2 ) ⟩ ]
+
+var : 𝑖 :{𝜈 :int | 𝜈 ≥ 0}𝑢  [•∗ ⟨abs 𝑡 ⟩⟨ depth 𝑑 ⟩ (• \ ⟨ endAbs ⟩) ∗
+
+| {z }    
+
+> type 𝑡 at the 𝑑 level is open
+
+⟨depth 𝑑 + 𝑖 ⟩
+
+| {z }   
+
+> current level is 𝑑 +𝑖
+
+] unit [⟨var 𝑖 ⟩⟨ putTy 𝑡 ⟩• ∗]
+
+Fig. 8. u Hat specifications of STLC operations. 
+
+Handler Semantics 𝛼 ⊨ op (𝑐 ) ⇓ 𝑐 op (𝑐 ) ⇓ 𝑐 Operational Semantics 𝛼 ⊨ 𝑒 𝛼 
+
+↩−→ 𝑒 
+
+𝛼 ⊨ op (𝑐 ) ⇓ 𝑐 ′
+
+StEfOp 
+
+𝛼 ⊨ op 𝑐 [op (𝑐 𝑐 ′ ) ] 
+
+↩−−−−−− → 𝑐 ′
+
+op 𝑐 ⇓ 𝑐 ′
+
+StOp 
+
+𝛼 ⊨ op 𝑐 [] 
+
+↩−→ 𝑐 ′
+
+𝜙 ⇓ ⊤ StAssume 
+
+𝛼 ⊨ assume 𝜙 [] 
+
+↩−→ () 
+
+𝜙 ⇓ ⊤ StAssert 
+
+𝛼 ⊨ assert 𝜙 [] 
+
+↩−→ () 
+
+𝜙 ⇓ ⊥ StAssert 
+
+𝛼 ⊨ assert 𝜙 [] 
+
+↩−→ raise Error 
+
+𝛼 ⊨ 𝑒 1 
+
+> 𝛼 ′
+
+↩−→ 𝑒 ′ 
+
+> 1
+
+StLetE1 
+
+𝛼 ⊨ let 𝑦 = 𝑒 1 in 𝑒 2 
+
+> 𝛼 ′
+
+↩−→ let 𝑦 = 𝑒 ′ 
+
+> 1
+
+in 𝑒 2
+
+StChoice1 
+
+𝛼 ⊨ (𝑒 1 ⊕ 𝑒 2 ) [] 
+
+↩−→ ( 𝑒 1 )
+
+StLetE2 
+
+𝛼 ⊨ let 𝑦 = 𝑣 in 𝑒 2
+
+> []
+
+↩−→ 𝑒 2 [𝑦 ↦ → 𝑣 ]
+
+StChoice2 
+
+𝛼 ⊨ (𝑒 1 ⊕ 𝑒 2 ) [] 
+
+↩−→ ( 𝑒 2 )
+
+StAppLam 
+
+𝛼 ⊨ 𝜆𝑥 :𝑠.𝑒 1 𝑣 𝑥 
+
+> []
+
+↩−→ 𝑒 1 [𝑥 ↦ → 𝑣 𝑥 ]𝑒 2
+
+StAppFix 
+
+𝛼 ⊨ (fix 𝑓 :𝑠.𝜆𝑥 :𝑠 𝑥 .𝑒 1 ) 𝑣 𝑥 
+
+> []
+
+↩−→ ( 𝜆𝑓 :𝑠.𝑒 1 [𝑥 ↦ → 𝑣 𝑥 ] ) ( fix 𝑓 :𝑠.𝜆𝑥 :𝑠 𝑥 .𝑒 1 )
+
+Fig. 9. Full Operational Semantics 
+
+open abstraction at some depth in the prefix trace. The history regex of the var operation precisely characterizes this constraint: the abstraction at depth 𝑑 must be open ( •∗ ⟨abs 𝑡 ⟩⟨ depth 𝑑 ⟩(• \ ⟨endAbs ⟩) ∗), and the current depth must be 𝑑 + 𝑖 .
+
+C Operational Semantics 
+
+The small-step operational semantics of our core language are shown in Fig. 9. 
+
+, Vol. 1, No. 1, Article . Publication date: April 2026. 28 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan 
+
+D Basic Typing Rules 
+
+The basic typing rules of our core language and qualifiers are shown in Fig. 10. We use an auxiliary function Ty to provide a basic type for the primitives of our language, e.g., constants, built-in operators, and data constructors. 
+
+Basic Typing Γ ⊢s 𝑒 : 𝑠 Γ ⊢s op : 𝑠 Γ ⊢s op : 𝑠 
+
+BtConst 
+
+Γ ⊢s 𝑐 : Ty (𝑐 )
+
+Γ (𝑥 ) = 𝑠 BtVar 
+
+Γ ⊢s 𝑥 : 𝑠 
+
+Γ, 𝑥 :𝑏 ⊢s 𝑒 : 𝑠 BtFun 
+
+Γ ⊢s 𝜆𝑥 :𝑏.𝑒 : 𝑏  𝑠 
+
+Γ, 𝑓 :𝑏  𝑠, 𝑥 :𝑏 ⊢s 𝑒 : 𝑠 BtFix 
+
+Γ ⊢s fix 𝑓 :𝑏  𝑠.𝜆𝑥 :𝑏.𝑒 : 𝑏  𝑠 
+
+Ty (op ) = 𝑠 BtEfOp 
+
+Γ ⊢s op : 𝑠 
+
+Ty (op ) = 𝑠 BtPrimOp 
+
+Γ ⊢s op : 𝑠 
+
+Γ ⊢s 𝑒 1 : 𝑠 Γ ⊢s 𝑒 2 : 𝑠 BtChoice 
+
+Γ ⊢s 𝑒 1 ⊕ 𝑒 2 : 𝑠 
+
+Γ ⊢s op : 𝑏 𝑖  𝑏 ∀𝑖. Γ ⊢s 𝑐 𝑖 : 𝑏 𝑖 BtEfOpApp 
+
+Γ ⊢s op 𝑐 𝑖 : 𝑏 
+
+Γ ⊢s op : 𝑠 𝑖  𝑠 ∀𝑖. Γ ⊢s 𝑣 𝑖 : 𝑠 𝑖 
+
+BtPrimOpApp 
+
+Γ ⊢s op 𝑣 𝑖 : 𝑠 
+
+Γ ⊢s 𝜙 : bool BtAssume 
+
+Γ ⊢s assume 𝜙 : unit 
+
+Γ ⊢s 𝜙 : bool BtAssert 
+
+Γ ⊢s assert 𝜙 : unit 
+
+Γ ⊢s 𝑒 : 𝑠 Γ, 𝑦 :𝑠 ⊢s 𝑒 ′ : 𝑠 BtLetE 
+
+Γ ⊢s let 𝑦 = 𝑒 in 𝑒 ′ : 𝑠 
+
+Γ ⊢s 𝑣 1 : 𝑠  𝑠 ′ Γ ⊢s 𝑣 2 : 𝑠 BtApp 
+
+Γ ⊢s 𝑣 1 𝑣 2 : unit 
+
+Basic Qualifier Typing Γ ⊢s 𝜙 : 𝑠 
+
+Ty (𝑐 ) = 𝑠 BtLitConst 
+
+Γ ⊢s 𝑐 : 𝑠 
+
+Γ (𝑥 ) = 𝑠 BtLitVar 
+
+Γ ⊢s 𝑥 : 𝑠 
+
+BtTop 
+
+Γ ⊢s ⊤ : bool BtBot 
+
+Γ ⊢s ⊥ : bool Ty (op ) = 𝑠 𝑖  𝑠 ∀𝑖. Γ ⊢s 𝑙 𝑖 : 𝑠 𝑖 
+
+BtLitOp 
+
+Γ ⊢s op 𝑙 𝑖 : 𝑠 
+
+Γ ⊢s 𝜙 : bool BtNeg 
+
+Γ ⊢s ¬𝜙 : bool 
+
+Γ ⊢s 𝜙 1 : bool Γ ⊢s 𝜙 2 : bool BtAnd 
+
+Γ ⊢s 𝜙 1 ∧ 𝜙 2 : bool 
+
+Γ ⊢s 𝜙 1 : bool Γ ⊢s 𝜙 2 : bool BtOr 
+
+Γ ⊢s 𝜙 1 ∨ 𝜙 2 : bool 
+
+Γ, 𝑥 :𝑏 ⊢s 𝜙 : bool BtForall 
+
+Γ ⊢s ∀𝑥 :𝑏.𝜙 : bool 
+
+Fig. 10. Basic Typing Rules and Qualifier Typing Rules 
+
+, Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 29 
+
+Type Erasure ⌊𝑡 ⌋ ⌊𝜏 ⌋ ⌊Γ⌋
+
+⌊{𝜈 :𝑏 | 𝜙 }𝑢 ⌋  𝑏 ⌊𝑥 :𝑡  𝜏 ⌋  ⌊𝑡 ⌋  ⌊𝜏 ⌋ ⌊𝑥 :𝑏 d 𝑡 ⌋  ⌊𝑡 ⌋ ⌊[𝐻 ] 𝑥 :𝑡 [𝐹 ]⌋  ⌊𝑡 ⌋⌊𝜏 1 ⊓ 𝜏 2 ⌋  ⌊𝜏 1 ⌋ ⌊ ∅ ⌋  ∅ ⌊𝑥 :𝑡, Γ⌋  𝑥 :⌊𝑡 ⌋, ⌊Γ⌋
+
+Ghost Event Erasure ⌈𝛼 ⌉
+
+⌈ [ ] ⌉  [ ] ⌈op (𝑐 ) :: 𝛼 ⌉  op (𝑐 ) :: ⌈𝛼 ⌉ ⌈op (𝑐 ) :: 𝛼 ⌉  ⌈𝛼 ⌉ ⌈𝛼 1 𝛼 2 ⌉  ⌈𝛼 1 ⌉ ⌈𝛼 2 ⌉
+
+Well-formedness Γ ⊢WF 𝐴 Γ ⊢WF 𝜏 Γ ⊢WF 𝑡 
+
+Ty (op ) = 𝑥 𝑖 :𝑏 𝑖  𝑏 ⌊Γ⌋, 𝑥 𝑖 :𝑏 𝑖 , 𝜈 :𝑏 ⊢s 𝜙 : bool WfEvent 
+
+Γ ⊢WF ⟨op 𝑥 𝑖 𝜈 | 𝜙 ⟩
+
+Γ ⊢WF 𝐴 1 Γ ⊢WF 𝐴 2 WfOr 
+
+Γ ⊢WF 𝐴 1 ∨ 𝐴 2
+
+Γ ⊢WF 𝐴 1 Γ ⊢WF 𝐴 2 WfConcat 
+
+Γ ⊢WF 𝐴 1 ·𝐴 2
+
+WfEmpty 
+
+Γ ⊢WF ∅ WfEpsilon 
+
+Γ ⊢WF 𝜖 
+
+Γ ⊢WF 𝐴 WfStar 
+
+Γ ⊢WF 𝐴 ∗
+
+⌊Γ⌋, 𝜈 :𝑏 ⊢s 𝜙 : bool WfPBase 
+
+Γ ⊢WF {𝜈 :𝑏 | 𝜙 }𝑢 
+
+Γ ⊢WF 𝑡 𝑥 Γ, 𝑥 :⌊𝑡 𝑥 ⌋ ⊢ WF 𝑡 WfPArr 
+
+Γ ⊢WF 𝑥 :𝑡 𝑥  𝑡 
+
+Γ, 𝑥 :𝑡 ⊢WF 𝐻 Γ ⊢WF 𝑡 Γ, 𝑥 :𝑡 ⊢WF 𝐹 WfHF 
+
+Γ ⊢WF [𝐻 ] 𝑥 :𝑡 [𝐹 ]
+
+Γ, op :𝑠 ⊢WF 𝑡 WfGEvent 
+
+Γ ⊢WF op : 𝑠 d 𝑡 
+
+Γ ⊢WF 𝜏 Γ, 𝑥 :⌊𝑡 𝑥 ⌋ ⊢ WF 𝜏 WfEfArr 
+
+Γ ⊢WF 𝑥 :𝑡 𝑥  𝜏 
+
+Γ ⊢WF 𝜏 Γ, 𝑥 :𝑏 ⊢WF 𝑡 WfGArr 
+
+Γ ⊢WF 𝑥 :𝑏 d 𝑡 
+
+Γ ⊢WF 𝜏 1 Γ ⊢WF 𝜏 2
+
+⌊𝜏 1 ⌋ = ⌊𝜏 2 ⌋ WFInter 
+
+Γ ⊢WF 𝜏 1 ⊓ 𝜏 2
+
+Fig. 11. Full set of well-formedness typing rules. 
+
+E Declarative Typing Rules 
+
+The full set of rules for our auxiliary typing relations are shown in Fig. 11 and Fig. 12. The full set of declarative typing rules are shown in Fig. 13. We elide the basic typing relation ( ∅ ⊢ s 𝑒 : 𝑠 ) in the premises of the rules in Fig. 13; all of these rules assume any terms they reference have a basic type. 
+
+, Vol. 1, No. 1, Article . Publication date: April 2026. 30 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan 
+
+Automata Inclusion Γ ⊢ 𝐴 ⊆ 𝐴 Subtyping Γ ⊢ 𝑡 <: 𝑡 Γ ⊢ 𝜏 <: 𝜏 
+
+∀𝜎 2 ∈ JΓK.∃𝜎 1 ∈ JΓK.J𝜎 2 (𝐴 2 )K ⊆ J𝜎 1 (𝐴 1 )K SubAutomata 
+
+Γ ⊢ 𝐴 1 ⊆ 𝐴 2
+
+Γ ⊢ 𝑡 1 <: 𝑡 2 Γ, 𝑥 :𝑡 1 ⊢ 𝐹 2 ⊆ 𝐹 1
+
+Γ, 𝑥 :𝑡 1 ⊢ 𝐻 1 ⊆ 𝐻 2 SubHF 
+
+Γ ⊢ [𝐻 1] 𝑥 :𝑡 1 [𝐹 1] <: [𝐻 2] 𝑥 :𝑡 2 [𝐹 2]
+
+SubIntLL 
+
+Γ ⊢ 𝜏 1 ⊓ 𝜏 2 <: 𝜏 1
+
+SubIntLR 
+
+Γ ⊢ 𝜏 1 ⊓ 𝜏 2 <: 𝜏 2
+
+Γ ⊢ 𝜏 <: 𝜏 1 Γ ⊢ 𝜏 <: 𝜏 2 SubIntR 
+
+Γ ⊢ 𝜏 <: 𝜏 1 ⊓ 𝜏 2
+
+Γ ⊢ 𝑡 2 <: 𝑡 1
+
+Γ, 𝑥 :𝑡 2 ⊢ 𝜏 1 <: 𝜏 2 SubArr 
+
+Γ ⊢ 𝑥 :𝑡 1  𝜏 1 <: 𝑥 :𝑡 2  𝜏 2
+
+Γ, 𝑥 :{𝜈 :𝑏 | ⊤ }𝑢 ⊢ 𝑡 1 <: 𝑡 2 SubGRight 
+
+Γ ⊢ 𝑡 1 <: 𝑥 :𝑏 d 𝑡 2
+
+Γ ⊢WF 𝑡 [𝑥 ↦ → 𝑣 ] SubG 
+
+Γ ⊢ 𝑥 :𝑏 d 𝑡 <: 𝑡 [𝑥 ↦ → 𝑣 ]
+
+Γ ⊢ 𝑡 1 <: 𝑡 2 SubGEvent 
+
+Γ ⊢ op : 𝑠 d 𝑡 1 <: op : 𝑠 d 𝑡 2
+
+∀𝜎 2 ∈ JΓK.∃𝜎 1 ∈ JΓK.𝜎 1 (𝜙 2 ) =⇒ 𝜎 2 (𝜙 2 ) SubPBase 
+
+Γ ⊢ {𝜈 :𝑏 | 𝜙 1}𝑢 <: {𝜈 :𝑏 | 𝜙 2}𝑢 
+
+Γ ⊢ 𝑡 2 <: 𝑡 1 Γ, 𝑥 :𝑡 2 ⊢ 𝜏 1 <: 𝜏 2 SubPArr 
+
+Γ ⊢ 𝑥 :𝑡 1  𝜏 1 <: 𝑥 :𝑡 2  𝜏 2
+
+Fig. 12. Full set of subtyping rules. 
+
+Auxiliary Typing Γ ⊢WF 𝜏 Γ ⊢ 𝐴 ⊆ 𝐴 Γ ⊢ 𝜏 <: 𝜏 Typing Γ ⊢ op : 𝑡 Γ ⊢ 𝑣 : 𝑡 Γ ⊢ 𝑒 : 𝜏 
+
+Γ ⊢ 𝑣 : 𝑡 TRet 
+
+Γ ⊢ 𝑣 : [𝐻 ] 𝑡 [𝜖 ]
+
+Δ(op ) = 𝑡 TOpCtx 
+
+Γ ⊢ op : 𝑡 
+
+Γ ⊢ op : 𝑥 𝑖 :𝑡 𝑖  [𝐻 ] 𝑡 [⟨op 𝑥 𝑖 ⟩· 𝐹 ] ∀𝑖. Γ ⊢ 𝑣 𝑖 : 𝑡 𝑖 TEffOp 
+
+Γ ⊢ op 𝑣 𝑖 : [𝐻 ] 𝑡 [⟨op 𝑣 𝑖 ⟩· 𝐹 ]
+
+Γ ⊢ 𝑒 1 : 𝜏 1 Γ ⊢ 𝑒 2 : 𝜏 2 TChoice 
+
+Γ ⊢ 𝑒 1 ⊕ 𝑒 2 : 𝜏 1 ⊓ 𝜏 2
+
+Γ ⊢ 𝑒 1 : [𝐻 ] 𝑥 :𝑡 𝑥 [𝐹 1] Γ, 𝑥 :𝑡 𝑥 ⊢ 𝑒 2 : [𝐻 ·𝐹 1] 𝑡 [𝐹 2] TLet 
+
+Γ ⊢ let 𝑥 = 𝑒 1 in 𝑒 2 : [𝐻 ] 𝑡 [𝐹 1 ·𝐹 2]
+
+Γ, 𝑥 :𝑡 𝑥 ⊢ 𝑒 : 𝜏 TFun 
+
+Γ ⊢ 𝜆𝑥 .𝑒 : 𝑥 :𝑡 𝑥  𝜏 
+
+TFixBase 
+
+Γ ⊢ fix 𝑓 .𝜆𝑥 .𝑒 : 𝑥 :𝑠  [𝐻 ] { 𝜈 :𝑏 | ⊥ }𝑢 [∅]
+
+Γ ⊢ fix 𝑓 .𝜆𝑥 .𝑒 : 𝑡 
+
+Γ, 𝑓 :𝑡 ⊢ 𝜆𝑥 .𝑒 : 𝑡 ′
+
+TFixInd 
+
+Γ ⊢ fix 𝑓 .𝜆𝑥 .𝑒 : 𝑡 ′
+
+⌊Γ⌋ ⊢ s 𝑐 : 𝑏 TConst 
+
+Γ ⊢ 𝑐 : {𝜈 :𝑏 | 𝜈 = 𝑐 }𝑢 
+
+⌊Γ⌋ ⊢ s 𝑥 : 𝑏 TVar 
+
+Γ ⊢ 𝑥 : {𝜈 :𝑏 | 𝜈 = 𝑥 }𝑢 
+
+Γ𝑣 1 : 𝑥 :𝑡 2  𝜏 Γ ⊢ 𝑣 2 : 𝑡 2 TAppEff 
+
+Γ ⊢ 𝑣 1𝑣 2 : 𝜏 [𝑥 ↦ → 𝑣 2 ]
+
+Γ ⊢ op : 𝑦 :𝑡 𝑖  𝑡 ∀𝑖. Γ ⊢ 𝑣 𝑖 : 𝑡 𝑖 
+
+TOpApp 
+
+Γ ⊢ op 𝑣 : 𝑡 
+
+Δ(op ) = 𝑡 TPureOp 
+
+Γ ⊢ op : 𝑡 
+
+Γ ⊢ 𝑣 : 𝑡 
+
+Γ ⊢ 𝑡 <: 𝑡 ′
+
+TPureSub 
+
+Γ ⊢ 𝑣 : 𝑡 ′
+
+Γ ⊢ 𝑒 : 𝜏 
+
+Γ ⊢ 𝜏 <: 𝜏 ′
+
+TSub 
+
+Γ ⊢ 𝑒 : 𝜏 ′
+
+Γ ⊢ op : 𝑥 :𝑡 𝑥  [𝐻 ] 𝑡 [𝐹 ]
+
+Γ, 𝑥 :𝑡 𝑥 ⊢ 𝐻 ′ ⊆ 𝐻 
+
+Γ, 𝑥 :𝑡 𝑥 ⊬ 𝐻 ′ ⊆ ∅ TOpHis 
+
+Γ ⊢ op : 𝑥 :𝑡 𝑥  [𝐻 ′] 𝑡 [𝐹 ]
+
+Fig. 13. Full set of typing rules. 
+
+F Type Denotation 
+
+, Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 31 
+
+Well-Formed Event and Trace ⊢WF 𝑚 ⊢WF 𝛼 
+
+∅ ⊢ s op : 𝑏 𝑖  𝑏 ∅ ⊢ s 𝑐 ′ : 𝑏 ∀𝑖. ∅ ⊢ s 𝑐 𝑖 : 𝑏 𝑖 WfEvent 
+
+⊢WF op (𝑐 𝑖 𝑐 ′)
+
+WfNil 
+
+⊢WF [] ⊢WF 𝑚 ⊢WF 𝛼 WfCons 
+
+⊢WF 𝑚 :: 𝛼 
+
+Trace Language J𝐴 K ∈ P ( 𝛼 )
+
+J∅K  ∅ J𝜖 K  { [ ] } 
+
+J⟨op 𝑥 | 𝜙 ⟩K  { [ op (𝑐 ) ] | ⊢ WF [op (𝑐 ) ] ∧ 𝜙 [𝑥 ↦ → 𝑐 ] } J𝐴 ∨ 𝐴 ′K  J𝐴 K ∨ J𝐴 ′KJ𝐴 ·𝐴 ′K  {𝛼 1 𝛼 2 | 𝛼 1 ∈ J𝐴 K ∧ 𝛼 2 ∈ J𝐴 ′K} J𝐴 ∗K  {𝛼 1 𝛼 2 · · · 𝛼 𝑛 | 𝛼 𝑖 ∈ J𝐴 K ∧ 𝑛 ≥ 0}
+
+Type Denotation J𝑡 K ∈ P ( 𝑐 ) J𝜏 K ∈ P ( 𝑒 )
+
+J{𝜈 :𝑏 | 𝜙 }𝑢 K  {𝑒 | ∅ ⊢ s 𝑒 : 𝑏 ∧ ∀ 𝑣.𝜙 [𝜈 ↦ → 𝑣 ] =⇒ [ ] ⊨ 𝑒 [ ] 
+
+↩−→∗ 𝑣 }
+
+J𝑥 :{𝜈 :𝑏 | 𝜙 }𝑢  𝑡 K  {𝑒 | ∅ ⊢ s 𝑒 : 𝑏  ⌊𝑡 ⌋ ∧ ∀ 𝑣. 𝜙 [𝜈 ↦ → 𝑣 ] =⇒ 𝑒 𝑣 ∈ J𝑡 [𝑥 ↦ → 𝑣 ]K}
+
+J𝑥 :{𝜈 :𝑏 | 𝜙 }𝑢  𝜏 K  {𝑒 | ∅ ⊢ s 𝑒 : 𝑏  ⌊𝜏 ⌋ ∧ ∀ 𝑣. 𝜙 [𝜈 ↦ → 𝑣 ] =⇒ 𝑒 𝑣 ∈ J𝜏 [𝑥 ↦ → 𝑣 ]K}
+
+J𝑥 :𝑡 𝑥  𝑡 K  {𝑒 | ∅ ⊢ s 𝑒 : ⌊𝑡 𝑥  𝑡 ⌋ ∧ ∀ 𝑣 𝑥 ∈ J𝑡 𝑥 K. 𝑒 𝑣 𝑥 ∈ J𝑡 [𝑥 ↦ → 𝑣 𝑥 ]K} (if 𝑡 𝑥 is a function type) 
+
+J𝑥 :𝑡 𝑥  𝜏 K  {𝑒 | ∅ ⊢ s 𝑒 : ⌊𝑡 𝑥  𝜏 ⌋ ∧ ∀ 𝑣 𝑥 ∈ J𝑡 𝑥 K. 𝑒 𝑣 𝑥 ∈ J𝜏 [𝑥 ↦ → 𝑣 𝑥 ]K} (if 𝑡 𝑥 is a function type) 
+
+J𝑥 :𝑏 d 𝑡 K  {𝑒 | ∅ ⊢ s 𝑒 : ⌊𝑡 ⌋ ∧ ∀ 𝑐 :𝑏.𝑒 ∈ J𝑡 [𝑥 ↦ → 𝑐 ]K}
+
+Jop :𝑠 d 𝑡 K  {𝑒 | ∅ ⊢ s 𝑒 : ⌊𝑡 ⌋ ∧ 𝑒 ∈ J𝑡 K}
+
+J[𝐻 ] 𝑥 :{𝜈 :𝑏 | 𝜙 }𝑢 [𝐹 ]K  {𝑒 | ∅ ⊢ s 𝑒 : 𝑏 ∧ ∀ 𝑣 :𝑏.𝜙 [𝑥 ↦ → 𝑣 ] =⇒ ∀ 𝛼 𝑓 ∈ J𝐹 [𝑥 ↦ → 𝑣 ]K.∃𝛼 ℎ ∈ J𝐻 [𝑥 ↦ → 𝑣 ]K.⌈𝛼 ℎ ⌉ ⊨ 𝑒 ⌈𝛼 𝑓 ⌉
+
+↩−−− →∗ 𝑣 }
+
+J[𝐻 ] 𝑥 :𝑡 [𝐹 ]K  {𝑒 | ∅ ⊢ s 𝑒 : ⌊𝑡 ⌋ ∧ ∀ 𝑣 ∈ J𝑡 K.∀𝛼 𝑓 ∈ J𝐹 K.∃𝛼 ℎ ∈ J𝐻 K.⌈𝛼 ℎ ⌉ ⊨ 𝑒 ⌈𝛼 𝑓 ⌉
+
+↩−−− →∗ 𝑣 }
+
+J𝜏 1 ⊓ 𝜏 2K  J𝜏 1K ∩ J𝜏 2K
+
+Type Context Denotation JΓK ∈ P ( 𝜎 )
+
+J∅K  { ∅ } J𝑥 :{𝜈 :𝑏 | 𝜙 }𝑢 K  {𝜎 [𝑥 ↦ → 𝑣 ] | 𝜙 [𝜈 ↦ → 𝑣 ], 𝜎 ∈ JΓ[𝑥 ↦ → 𝑣 ]K} J𝑥 :𝑡, ΓK  JΓK (if 𝑡 is not a base type) 
+
+Fig. 14. Type denotations in 𝝀 𝐶 
+
+G Auxiliary Functions for Synthesis 
+
+This section describes three auxiliary functions used for generator synthesis. The first of these, 
+
+Norm , converts a SRE formula into a set of abstract traces. The second, TermDerive , generates test generators from a set of abstract traces. The third, termTrace , generates a straightline program from a single refined abstract trace. 
+
+Normalization. The SRE normalization function Norm , shown in Algorithm 3, first perform a standard symbolic automaton minimization step to remove intersections and complements, and then recursively translates an input SRE into a set of abstract traces. It divides 𝐴 ∨ 𝐴 ′ into multiple abstract traces, and leaves the Kleene star over multiple singleton events unchanged. 
+
+Lemma G.1. [Normalization is sound] The normalized result has the same denotation as the input SRE, that is, for all SRE 𝐴 and set of traces {𝜋 }, J𝐴 K = Ð𝑖 J𝜋 𝑖 K
+
+Term Derivation. The term derivation function TermDerive is shown in Algorithm 4. It first converts the input type context into assume statements that use the type qualifiers attached to each variable (line 5), and then derives the abstract trace with the help of the DeriveTrace , which recursively transforms the abstract trace into a straightline generator program. Any Kleene stars are dropped (line 9), ghost events are converted into assume expressions (line 14), and concrete events are converted into effectful operations (line 16-21). Note that the arguments of the effectful 
+
+, Vol. 1, No. 1, Article . Publication date: April 2026. 32 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan 
+
+Algorithm 3: Abstract Trace Normalization  
+
+> 1
+
+Procedure Norm (𝐴 ) := 
+
+> 2
+
+𝐴 ← Minimize (𝐴 ); 
+
+> 3
+
+match 𝐴 : 
+
+> 4
+
+case ∅ do return ∅ ; 
+
+> 5
+
+case 𝜖 do return {𝜖 } ; 
+
+> 6
+
+case ⟨op | 𝜙 ⟩ do return {⟨ op | 𝜙 ⟩⊥ } ; 
+
+> 7
+
+case 𝐴 1·𝐴 2 do return {𝜋 1·𝜋 2 | 𝜋 1 ∈ Norm (𝐴 1) ∧ 𝜋 2 ∈ Norm (𝐴 2)} ; 
+
+> 8
+
+case 𝐴 1 ∨ 𝐴 2 do return Norm (𝐴 1) ∪ Norm (𝐴 2); 
+
+> 9
+
+case 𝐴 ∗ do  
+
+> 10
+
+match Norm (𝐴 ): 
+
+> 11
+
+case ∅ do return ∅ ; 
+
+> 12
+
+case Ð ⟨op | 𝜙 ⟩ do return {[⟨ op | 𝜙 ⟩⊥]∗ } ; 
+
+> 13
+
+case Π do return {𝜋 1 𝜋 2 · · · 𝜋 𝑛 | 𝜋 𝑖 ∈ Π} ;
+
+operation are provided by assume and the values they return are always checked by assert (line 21). 
+
+Recursion Synthesis. Kleene stars ( Π∗) in abstract traces are interpreted as recursion points. The synthesis algorithm can synthesize a recursive program by expanding the Kleene star using recursion. As shown in Algorithm 5, we employ a template-based strategy, in which the algorithm matches the given abstract trace with a template 𝑇 , together with a set of abstract traces {𝜋 𝑖 } that are matched from the orginal trace. As dictated by TFixInd , the algorithm unrolls the recursive body up to a bounded depth and invokes refinement loop (lines 3 in Algorithm 5) to ensure that the unrolled abstract traces are well-typed. Finally, the synthesized program is instantiated by the template with derived programs from these abstract traces. 
+
+Example G.2 (Recursion Template). A representative template is a non-deterministic loop, whose form is 𝑇  let 𝑓 = fix 𝑓 .𝜆 () . () ⊕ 𝑒 1 ; 𝑓 () ; 𝑒 2 in 𝑒 3 ; 𝑓 () ; 𝑒 4 , allowing Π∗ in the abstract trace to be matched. For instance, consider the abstract trace 𝜋 stack shown in Example 4.2: 
+
+Π∗ 
+
+> noI
+
+⟨pushI 𝑚 𝑦 ⟩⟨ popI 𝑚 𝑦 ⟩Π∗
+
+> noI
+
+| {z }
+
+> 𝑒 3
+
+⟨push 𝑥 ⟩⟨ pushI 𝑛 𝑥 ⟩
+
+| {z }
+
+> 𝑒 1
+
+Π∗
+
+> noI
+
+|{z} 
+
+> recursion
+
+⟨pop 𝑥 ⟩⟨ popI 𝑛 𝑥 ⟩
+
+| {z }
+
+> 𝑒 2
+
+Π∗
+
+> noI
+
+|{z} 
+
+> 𝑒 4
+
+Here, 𝜋 stack is divided into five parts, corresponding to the four placeholders and the self-recursive call (i.e., 𝑓 () ) in the template. The synthesizer then re-refines the abstract trace for 𝑖 -fold recursion unrolling after erasing all qualifiers from the abstract trace: 
+
+Π∗ 
+
+> anyA
+
+⟨pushI ⟩⟨ popI ⟩ 𝜖 Π∗ 
+
+> anyA
+
+(0-fold unrolling) 
+
+Π∗ 
+
+> anyA
+
+⟨pushI ⟩⟨ popI ⟩Π∗ 
+
+> anyA
+
+⟨pushI ⟩⟨ push ⟩⟨ popI ⟩⟨ pop ⟩ Π∗ 
+
+> anyA
+
+(1-fold unrolling) 
+
+Π∗ 
+
+> anyA
+
+⟨pushI ⟩⟨ popI ⟩Π∗ 
+
+> anyA
+
+⟨pushI ⟩⟨ push ⟩⟨ pushI ⟩⟨ push ⟩⟨ popI ⟩⟨ pop ⟩⟨ popI ⟩⟨ pop ⟩ Π∗ 
+
+> anyA
+
+(2-fold unrolling) 
+
+This refinement ensures that multiple unfoldings remain well-typed, which disallows an incorrect recursion template instantiation, as shown below: 
+
+Π∗ 
+
+> noI
+
+⟨pushI 𝑚 𝑦 ⟩⟨ popI 𝑚 𝑦 ⟩Π∗ 
+
+> noI
+
+⟨push 𝑥 ⟩⟨ pushI 𝑛 𝑥 ⟩
+
+| {z }
+
+> 𝑒 3
+
+Π∗
+
+> noI
+
+|{z} 
+
+> 𝑒 1
+
+Π∗
+
+> noI
+
+|{z} 
+
+> recursion
+
+⟨pop 𝑥 ⟩⟨ popI 𝑛 𝑥 ⟩
+
+| {z }
+
+> 𝑒 2
+
+Π∗
+
+> noI
+
+|{z} 
+
+> 𝑒 4
+
+This instantiation will repeatedly perform pop events without any push events; its two-fold recur-sion unrolling will therefore be rejected. The final recursive program is assembled by composing 
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026.
+
+Trace-Guided Synthesis of Effectful Test Generators 33 
+
+Algorithm 4: Term Derivation  
+
+> 1
+
+Procedure TermDerive (𝐶 ) := 
+
+> 2
+
+𝐸 ← ∅ ; 
+
+> 3
+
+foreach (Γ, 𝜋 ) ∈ 𝐶 do  
+
+> 4
+
+𝑒 1 ← DeriveTrace (Γ, 𝜋 ); 
+
+> 5
+
+𝑒 2 ← SynRecursion (Γ, 𝜋, UnrollingBound ); 
+
+> 6
+
+𝐸 ← 𝐸 ∪ { 𝑒 1, 𝑒 2 }; 
+
+> 7
+
+return É  
+
+> 𝑒 ∈𝐸
+
+𝑒 ; 
+
+> 8
+
+Procedure DeriveTrace (Γ, 𝜋 ) := 
+
+> 9
+
+match Γ: 
+
+> 10
+
+case [] do return DeriveTraceAux (𝜋 ) ; 
+
+> 11
+
+case 𝑥 :{𝜈 :𝑏 | 𝜙 }𝑢 :: Γ′ do  
+
+> 12
+
+return let 𝑥 = assume 𝜙 [𝜈 ↦ → 𝑥 ] in DeriveTrace (Γ′, 𝜋 ); 
+
+> 13
+
+Procedure DeriveTraceAux (Π) := 
+
+> 14
+
+match Π: 
+
+> 15
+
+case 𝜖 do return () ; 
+
+> 16
+
+case Π∗·𝜋 ′ do return DeriveTraceAux (𝜋 ′) ; 
+
+> 17
+
+case ⟨op 𝑥 | 𝜙 ⟩· 𝜋 ′ do  
+
+> 18
+
+𝑥 ′ ← GetFreshNames (𝑥 ); 
+
+> 19
+
+𝜙 1 ← 𝜙 [𝑥 ↦ → 𝑥 ′]; 
+
+> 20
+
+𝑒 ← DeriveTraceAux (𝜋 ′); 
+
+> 21
+
+return let 𝑥 ′ = assume 𝜙 1 in 𝑒  
+
+> 22
+
+case ⟨op 𝑥 𝑦 | 𝜙 ⟩· 𝜋 ′ do  
+
+> 23
+
+𝑥 ′ ← GetFreshNames (𝑥 ); 
+
+> 24
+
+𝑦 ′ ← GetFreshName (𝑦 ); 
+
+> 25
+
+𝜙 1 ← ∃ 𝑦.𝜙 [𝑥 ↦ → 𝑥 ′]; 
+
+> 26
+
+𝜙 2 ← 𝜙 [𝑥 ↦ → 𝑥 ′] [ 𝑦 ↦ → 𝑦 ′]; 
+
+> 27
+
+𝑒 ← DeriveTraceAux (𝜋 ′); 
+
+> 28
+
+return let 𝑥 ′ = assume 𝜙 1 in let 𝑦 ′ = op 𝑥 ′ in assert 𝜙 2; 𝑒 
+
+Algorithm 5: Synthesis of Recursive Programs  
+
+> 1
+
+Procedure SynRecursion (Γ, Π, UnrollingBound ) := 
+
+> 2
+
+(𝑇 , {𝜋 𝑖 }) ← MatchTemplate (Π); 
+
+> 3
+
+if ∀𝑖. 0 ≤ 𝑖 < UnrollingBound .∃𝜏 . Γ ⊢ Unroll (𝑇 , {𝜋 𝑖 }, 𝑖 ) : 𝜏 then  
+
+> 4
+
+𝑒 𝑖 ← DeriveTrace (𝜋 𝑖 ); 
+
+> 5
+
+return 𝑇 (𝑒 𝑖 )
+
+synthesized programs from these traces to populate the template placeholders, thereby yielding the following program:  
+
+> 1
+
+let rec f () =  
+
+> 2
+
+() ⊕ 
+
+> 3
+
+let (x: int ) = int_gen () in push x; (* e1 *)  
+
+> 4
+
+f ();  
+
+> 5
+
+let (z: int ) = pop () in assert (x == z) (*e2 *) 
+
+, Vol. 1, No. 1, Article . Publication date: April 2026. 34 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan  
+
+> 6
+
+in f () 
+
+, Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 35 
+
+H Proofs 
+
+We omit the completely standard proof that basic typing ⊢s 𝑒 : 𝑠 is sound, assuming that all terms and qualifiers in our typing rules and theorems are type-safe. Before presenting the proof of the fundamental theorem and type soundness, we introduce several useful lemmas. 
+
+H.1 Lemmas 
+
+H.1.1 Denotations. 
+
+Lemma H.1. [Denotation of singleton modality] For all symbolic event ⟨op 𝑥 𝑖 | 𝜙 ⟩ and values 𝑣 𝑖 ,            
+
+> 𝜙 [𝑥 𝑖 ↦→𝑣 𝑖 ]=⇒[op (𝑣 𝑖 )] ∈ J⟨op 𝑥 𝑖 |𝜙 ⟩K
+
+Lemma H.2. [Denotation of concatenation] For all automata 𝐴 1 and 𝐴 2 and trace 𝛼 ,                
+
+> 𝛼 ∈J𝐴 1·𝐴 2K⇐⇒ (∃ 𝛼 1𝛼 2.𝛼 =𝛼 1𝛼 2∧𝛼 1∈J𝐴 1K∧𝛼 2∈J𝐴 2K)
+
+Lemma H.3. [Denotation of pure computation] For all term 𝑒 1 and 𝑒 2 and Pret 𝜏 ,            
+
+> (∀ 𝛼 .𝛼 ⊨𝑒 [ ]
+> ↩−→∗𝑒 ′)=⇒𝑒 ′∈J𝜏 K=⇒𝑒 ∈J𝜏 K
+
+H.1.2 Subtyping. 
+
+Lemma H.4. [Pure Subtyping Soundness] For Given type context Γ and well-formed pure refinement type 𝑡 1 and 𝑡 2: Γ ⊢ 𝑡 1 <: 𝑡 2 =⇒ ∀ 𝜎 2 ∈ JΓK.∃𝜎 1 ∈ JΓK.J𝜎 2 (𝑡 2)K ⊆ J𝜎 1 (𝑡 1)K
+
+Lemma H.5. [Inclusion] For Given type context Γ and well-formed regex 𝐻 1 and 𝐻 2: Γ ⊢ 𝐻 1 ⊆
+
+𝐻 2 =⇒ ∀ 𝜎 2 ∈ JΓK.∃𝜎 1 ∈ JΓK.J𝜎 2 (𝐻 2)K ⊆ J𝜎 1 (𝐻 1)K
+
+Lemma H.6. [Subtyping Soundness] For Given type context Γ and well-formed Pret 𝜏 1 and 𝜏 2:
+
+Γ ⊢ 𝜏 1 <: 𝜏 2 =⇒ ∀ 𝜎 2 ∈ JΓK.∃𝜎 1 ∈ JΓK.J𝜎 2 (𝜏 2)K ⊆ J𝜎 1 (𝜏 1)K
+
+H.1.3 Substitution. 
+
+Lemma H.7 (Substitution Lemma). For Given type context Γ, variable 𝑥 , well-formed pure refinement type 𝑡 ,Pret 𝜏 and term 𝑒 : Γ, 𝑥 :𝑡 ⊢ 𝑒 : 𝜏 =⇒ ∀ 𝑣. Γ ⊢ 𝑣 : 𝑡 =⇒ Γ, 𝑥 :𝑡 ⊢ 𝑒 [𝑥 ↦ → 𝑣 ] : 𝜏 [𝑥 ↦ → 𝑣 ]
+
+H.1.4 Type Contexts. In the Sec. 3, we defined the well-formedness of effectful operator typing context, we also define the well-formedness of pure operator typing context. 
+
+Definition H.8 (Well-formed pure operator typing context). The operator typing context Δ is well-formed iff the semantics of every pure operator op is consistent with the type 𝑥 :𝑏 x d 𝑦 :𝑡 y  𝑡 
+
+provided by Δ.                 
+
+> ∀𝑥 :𝑏 x.∀𝑦 ∈J𝑡 yK.∀𝑐 ∈J𝑡 K.𝑐 ′∈J𝑡 x[𝑦 ↦→𝑐 ]K=⇒op (𝑐 ) ⇓ 𝑐 ′
+
+The typing relation is defined mutually recursively between values, terms and operators, that is: 
+
+Theorem H.9. [Pure Fundamental Theorem] For Given type context Γ, term 𝑒 and value 𝑣 : Γ ⊢ 𝑣 :
+
+𝑡 =⇒ ∀𝜎 ∈ JΓK.𝜎 (𝑣 ) ∈ J𝜎 (𝑡 )K and Γ ⊢ 𝑒 : 𝜏 =⇒ ∀𝜎 ∈ JΓK.𝜎 (𝑒 ) ∈ J𝜎 (𝜏 )K and Γ ⊢ op : 𝑡 =⇒∀𝜎 ∈ JΓK.𝜎 (𝜆𝑥 . op 𝑥 ) ∈ J𝜎 (𝑡 )K and Γ ⊢ op : 𝑦 :𝑡 𝑖  𝑡 =⇒ ∀ 𝜎 ∈ JΓK.𝜎 (𝜆𝑥 . op 𝑥 ) ∈ J𝜎 (𝑡 )K.
+
+Proof. We proceed by induction over our type judgment Γ ⊢ 𝑒 : 𝜏 and Γ ⊢ 𝑣 : 𝑡 , which has cases proved as following: Case : ⌊Γ⌋ ⊢ s 𝑐 : 𝑏 TConst         
+
+> Γ⊢𝑐 :{𝜈 :𝑏 |𝜈 =𝑐 }𝑢
+
+Since the constant 𝑐 is closed, we have 𝜎 (𝑐 ) = 𝑐 for any substitution 𝜎 . By the seman-tics of evaluation, 𝛼 ⊨ 𝑐 [ ] 
+
+↩−→∗ 𝑐 holds trivially. Therefore, 𝑐 ∈ J{𝜈 :𝑏 | 𝜈 = 𝑐 }𝑢 K directly by the definition of type denotation. This concludes the case. 
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026.
+
+36 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan 
+
+Case : ⌊Γ⌋ ⊢ s 𝑥 : 𝑏 TVar 
+
+Γ ⊢ 𝑥 : {𝜈 :𝑏 | 𝜈 = 𝑥 }𝑢 
+
+Since the variable 𝑥 is will typed under the context Γ in the basic type system, thus there exists a pure refinement type 𝑡 such that (𝑥, 𝑡 ) ∈ Γ. The denotation of Γ will always contains a substitution 𝜎 such that 𝜎 = 𝜎 ′ [𝑥 ↦ → 𝑣 ] where 𝑣 ∈ J𝜎 (𝑡 )K. Therefore, 𝜎 (𝑥 ) = 𝑣 , and 
+
+𝜎 (𝑥 ) ∈ J{𝜈 :𝑏 | 𝜈 = 𝑣 }𝑢 K. This concludes the case. Case : Γ, 𝑥 :𝑡 𝑥 ⊢ 𝑒 : 𝜏 TFun 
+
+Γ ⊢ 𝜆𝑥 .𝑒 : 𝑥 :𝑡 𝑥  𝜏 
+
+According to the assumption of this case and the hypothesis, we know: 
+
+Γ, 𝑥 :𝑡 𝑥 ⊢ 𝑒 : 𝜏 (assumption) (1) 
+
+∀𝜎 ∈ JΓ, 𝑥 :𝑡 𝑥 K.𝜎 (𝑒 ) ∈ J𝜎 (𝜏 )K (induction hypothesis) (2) 
+
+𝜎 = 𝜎 ′ [𝑥 ↦ → 𝑣 ] where 𝜎 ′JΓK ∧ 𝑣 ∈ J𝜎 ′ (𝑡 𝑥 )K (denotation of type context and 2) (3) 
+
+𝜎 ′ (𝑒 [𝑥 ↦ → 𝑣 ] ) ∈ J𝜎 (𝜏 )K (by 2 and 3 and Lemma H.7) (4) 
+
+∀𝛼 .𝛼 ⊨ 𝜆𝑥 .𝑒 𝑣 [] 
+
+↩−→∗ 𝑒 [𝑥 ↦ → 𝑣 ] (by the semantics of evaluation) (5) 
+
+𝜎 ′ (𝜆𝑥 .𝑒 𝑣 ) ∈ J𝜎 (𝜏 )K (by 4 and 5 and Lemma H.3) (6) 
+
+Then, the conclusion is consistent with the denotation definition, thus the case is proved. Case : TFixBase 
+
+Γ ⊢ fix 𝑓 .𝜆𝑥 .𝑒 : 𝑥 :𝑠  [𝐻 ] { 𝜈 :𝑏 | ⊥ }𝑢 [∅]
+
+Any function can have a empty return type for free, thus the case is proved. Case : 
+
+Γ ⊢ fix 𝑓 .𝜆𝑥 .𝑒 : 𝑡 
+
+Γ, 𝑓 :𝑡 ⊢ 𝜆𝑥 .𝑒 : 𝑡 ′
+
+TFixInd 
+
+Γ ⊢ fix 𝑓 .𝜆𝑥 .𝑒 : 𝑡 ′
+
+We inline the recursion function 𝑓 within its body, then this case is reduced to the case of function typing. Case : Γ ⊢ 𝑣 : 𝑡 TRet 
+
+Γ ⊢ 𝑣 : [𝐻 ] 𝑡 [𝜖 ]
+
+According to the assumption of this case and the hypothesis, we know: 
+
+Γ ⊢ 𝑣 : 𝑡 (assumption) (1) 
+
+∀𝜎 ∈ JΓK.𝜎 (𝑣 ) ∈ J𝜎 (𝑡 )K (induction hypothesis) (2) 
+
+∀𝛼 .𝛼 ⊨ 𝑣 [] 
+
+↩−→∗ 𝑣 (by the semantics of evaluation) (3) 
+
+Then, the conclusion is consistent with the denotation definition, thus the case is proved. Case : Γ ⊢ 𝑒 1 : 𝜏 1 Γ ⊢ 𝑒 2 : 𝜏 2 TChoice 
+
+Γ ⊢ 𝑒 1 ⊕ 𝑒 2 : 𝜏 1 ⊓ 𝜏 2
+
+, Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 37 
+
+According to the assumption of this case and the hypothesis, we know: 
+
+Γ ⊢ 𝑒 1 : 𝜏 1 (assumption) (1) 
+
+∀𝜎 ∈ JΓK.𝜎 (𝑒 1 ) ∈ J𝜎 (𝜏 1 )K (induction hypothesis) (2) 
+
+Γ ⊢ 𝑒 2 : 𝜏 2 (assumption) (3) 
+
+∀𝜎 ∈ JΓK.𝜎 (𝑒 2 ) ∈ J𝜎 (𝜏 2 )K (induction hypothesis) (4) 
+
+∀𝛼 .𝛼 ⊨ 𝑒 1 ⊕ 𝑒 2
+
+> []
+
+↩−→∗ 𝑒 1 (by the semantics of evaluation) (5) 
+
+∀𝛼 .𝛼 ⊨ 𝑒 1 ⊕ 𝑒 2
+
+> []
+
+↩−→∗ 𝑒 2 (by the semantics of evaluation) (6) 
+
+𝜎 (𝑒 1 ⊕ 𝑒 2 ) ∈ J𝜎 (𝜏 1 )K (by 2 and 5 and Lemma H.3) (7) 
+
+𝜎 (𝑒 1 ⊕ 𝑒 2 ) ∈ J𝜎 (𝜏 2 )K (by 4 and 6 and Lemma H.3) (8) 
+
+𝜎 (𝑒 1 ⊕ 𝑒 2 ) ∈ J𝜎 (𝜏 1 ⊓ 𝜏 2 )K (by definition of denotation) (9) 
+
+Then, the conclusion is consistent with the denotation definition, thus the case is proved. Case : 
+
+Γ ⊢ 𝑣 : 𝑡 
+
+Γ ⊢ 𝑡 <: 𝑡 ′
+
+TPureSub 
+
+Γ ⊢ 𝑣 : 𝑡 ′
+
+According to the assumption of this case and the hypothesis, we know: 
+
+Γ ⊢ 𝑣 : 𝑡 (assumption) (1) 
+
+∀𝜎 ∈ JΓK.𝜎 (𝑣 ) ∈ J𝜎 (𝑡 )K (induction hypothesis) (2) 
+
+Γ ⊢ 𝑡 <: 𝑡 ′ (assumption) (3) 
+
+𝜎 (𝑣 ) ∈ J𝜎 (𝑡 ′ )K (by 2 and 3 and Lemma H.4) (4) 
+
+Then, the conclusion is consistent with the denotation definition, thus the case is proved. Case : 
+
+Γ ⊢ 𝑒 : 𝜏 
+
+Γ ⊢ 𝜏 <: 𝜏 ′
+
+TSub 
+
+Γ ⊢ 𝑒 : 𝜏 ′
+
+According to the assumption of this case and the hypothesis, we know: 
+
+Γ ⊢ 𝑒 : 𝜏 (assumption) (1) 
+
+∀𝜎 ∈ JΓK.𝜎 (𝑒 ) ∈ J𝜎 (𝜏 )K (induction hypothesis) (2) 
+
+Γ ⊢ 𝜏 <: 𝜏 ′ (assumption) (3) 
+
+𝜎 (𝑒 ) ∈ J𝜎 (𝜏 ′ )K (by 2 and 3 and Lemma H.6) (4) 
+
+Then, the conclusion is consistent with the denotation definition, thus the case is proved. Case : 
+
+Γ ⊢ op : 𝑥 :𝑡 𝑥  [𝐻 ] 𝑡 [𝐹 ]
+
+Γ, 𝑥 :𝑡 𝑥 ⊢ 𝐻 ′ ⊆ 𝐻 
+
+Γ, 𝑥 :𝑡 𝑥 ⊬ 𝐻 ′ ⊆ ∅ TOpHis 
+
+Γ ⊢ op : 𝑥 :𝑡 𝑥  [𝐻 ′] 𝑡 [𝐹 ]
+
+According to the assumption of this case and the hypothesis, we know: 
+
+Γ ⊢ op : 𝑥 :𝑡 𝑥  [𝐻 ] 𝑡 [𝐹 ] (assumption) (1) 
+
+∀𝜎 ∈ JΓK.𝜎 (𝜆𝑥 . op 𝑥 ) ∈ J𝜎 (𝑥 :𝑡 𝑥  [𝐻 ] 𝑡 [𝐹 ])K (induction hypothesis) (2) 
+
+Γ, 𝑥 :𝑡 𝑥 ⊢ 𝐻 ′ ⊆ 𝐻 (assumption) (3) 
+
+∀𝜎 ∈ JΓK.𝜎 (𝐻 ′ ) ⊆ 𝜎 (𝐻 ) (by 3 and Lemma H.5) (4) 
+
+𝜎 (𝜆𝑥 . op 𝑥 ) ∈ J𝜎 (𝑥 :𝑡 𝑥  [𝐻 ′] 𝑡 [𝐹 ])K (by 2 and 5 and definition 3.3 ) (5) 
+
+Then, the conclusion is consistent with the denotation definition, thus the case is proved. Case : Δ(op ) = 𝑡 TPureOp 
+
+Γ ⊢ op : 𝑡 
+
+, Vol. 1, No. 1, Article . Publication date: April 2026. 38 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan 
+
+Can be derived directly from the definition of well-formedness of pure operator typing context (Definition H.8). Case : Δ(op ) = 𝑡 TOpCtx 
+
+Γ ⊢ op : 𝑡 
+
+Can be derived directly from the definition of well-formedness of operator typing context (Definition 3.3). Case : Γ ⊢ op : 𝑥 𝑖 :𝑡 𝑖  [𝐻 ] 𝑡 [⟨op 𝑥 𝑖 ⟩· 𝐹 ] ∀𝑖. Γ ⊢ 𝑣 𝑖 : 𝑡 𝑖 TEffOp 
+
+Γ ⊢ op 𝑣 𝑖 : [𝐻 ] 𝑡 [⟨op 𝑣 𝑖 ⟩· 𝐹 ]
+
+According to the assumption of this case and the hypothesis, we know: 
+
+Γ ⊢ op : 𝑥 𝑖 :𝑡 𝑖  [𝐻 ] 𝑡 [⟨op 𝑥 𝑖 ⟩· 𝐹 ] (assumption) (1) 
+
+∀𝜎 ∈ JΓK.𝜎 (𝜆𝑥 . op 𝑥 ) ∈ J𝜎 (𝑥 𝑖 :𝑡 𝑖  [𝐻 ] 𝑡 [⟨op 𝑥 𝑖 ⟩· 𝐹 ])K (induction hypothesis) (2) 
+
+∀𝑖. Γ ⊢ 𝑣 𝑖 : 𝑡 𝑖 (assumption) (3) 
+
+∀𝑖. ∀𝜎 ∈ JΓK.𝜎 (𝑣 𝑖 ) ∈ J𝜎 (𝑡 𝑖 )K (induction hypothesis) (4) 
+
+∀𝛼 .𝛼 ⊨ (𝜆𝑥 . op 𝑥 ) 𝑣 𝑖 
+
+> []
+
+↩−→∗ op 𝑣 𝑖 (by the semantics of evaluation) (5) 
+
+𝜎 ( ( 𝜆𝑥 . op 𝑥 ) 𝑣 𝑖 ) ∈ J𝜎 ([𝐻 ] 𝑡 [⟨op 𝑣 𝑖 ⟩· 𝐹 ])K (by 5 and denotation definition) (6) 
+
+𝜎 (op 𝑣 𝑖 ) ∈ J𝜎 ([𝐻 ] 𝑡 [⟨op 𝑣 𝑖 ⟩· 𝐹 ])K (by 5 and 6 and Lemma H.3) (7) 
+
+Then, the conclusion is consistent with the denotation definition, thus the case is proved. Case : Γ ⊢ op : 𝑦 :𝑡 𝑖  𝑡 ∀𝑖. Γ ⊢ 𝑣 𝑖 : 𝑡 𝑖 
+
+TOpApp 
+
+Γ ⊢ op 𝑣 : 𝑡 
+
+According to the assumption of this case and the hypothesis, we know: 
+
+Γ ⊢ op : 𝑦 :𝑡 𝑖  𝑡 (assumption) (1) 
+
+∀𝜎 ∈ JΓK.𝜎 (𝜆𝑥 . op 𝑥 ) ∈ J𝜎 (𝑦 :𝑡 𝑖  𝑡 )K (induction hypothesis) (2) 
+
+∀𝑖. Γ ⊢ 𝑣 𝑖 : 𝑡 𝑖 (assumption) (3) 
+
+∀𝑖. ∀𝜎 ∈ JΓK.𝜎 (𝑣 𝑖 ) ∈ J𝜎 (𝑡 𝑖 )K (induction hypothesis) (4) 
+
+∀𝛼 .𝛼 ⊨ (𝜆𝑦. op 𝑦 ) 𝑣 𝑖 
+
+> []
+
+↩−→∗ op 𝑣 𝑖 (by the semantics of evaluation) (5) 
+
+𝜎 ( ( 𝜆𝑦. op 𝑦 ) 𝑣 𝑖 ) ∈ J𝜎 (𝑡 )K (by 5 and denotation definition) (6) 
+
+𝜎 (op 𝑣 𝑖 ) ∈ J𝜎 (𝑡 )K (by 5 and 6 and Lemma H.3) (7) 
+
+Then, the conclusion is consistent with the denotation definition, thus the case is proved. Case : Γ𝑣 1 : 𝑥 :𝑡 2  𝜏 Γ ⊢ 𝑣 2 : 𝑡 2 TAppEff 
+
+Γ ⊢ 𝑣 1𝑣 2 : 𝜏 [𝑥 ↦ → 𝑣 2 ]
+
+According to the assumption of this case and the hypothesis, we know: 
+
+Γ ⊢ 𝑣 1 : 𝑥 :𝑡 2  𝜏 (assumption) (1) 
+
+∀𝜎 ∈ JΓK.𝜎 (𝑣 1 ) ∈ J𝜎 (𝑥 :𝑡 2  𝜏 )K (induction hypothesis) (2) 
+
+Γ ⊢ 𝑣 2 : 𝑡 2 (assumption) (3) 
+
+∀𝜎 ∈ JΓK.𝜎 (𝑣 2 ) ∈ J𝜎 (𝑡 2 )K (induction hypothesis) (4) 
+
+𝜎 (𝑣 1 𝑣 2 ) ∈ J𝜎 (𝜏 [𝑥 ↦ → 𝑣 2 ] ) K (by definition of denotation land Lemma H.7) (5) 
+
+Then, the conclusion is consistent with the denotation definition, thus the case is proved. 
+
+□
+
+H.2 Type Soundness 
+
+The type soundness can be proved by fundamental theorem directly. 
+
+, Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 39 
+
+Corollary H.10 (Type Soundness). A generator 𝑒 that satisfies ∅ ⊢ 𝑒 : [𝜖 ] unit [𝐹 ] must produce all traces accepted by 𝐹 , i.e., ∀𝛼 ∈ J𝐹 K.[] ⊨ 𝑒 ⌈𝛼 ⌉
+
+↩−−→∗ () .
+
+Proof. According to the fundamental theorem, we have                                                  
+
+> ∅ ⊢ 𝑒 :[𝜖 ]unit [𝐹 ](assumption) (1)
+> ∀𝜎 ∈J∅K.𝜎 (𝑒 ) ∈ J𝜎 ([𝜖 ]unit [𝐹 ])K(by Theorem H.9 and 1) (2)
+> ∀𝛼 𝑓 ∈J𝐹 K.∃𝛼 ℎ∈J𝜖 K.𝛼 ℎ⊨𝑒 ⌈𝛼 𝑓 ⌉
+> ↩−−− →∗() (by 2 and denotation definition) (3)
+> 𝛼 𝑓 ∈J𝜖 K⇐⇒ 𝛼 𝑓 =[ ] (by denotation definition) (4)
+> ∀𝛼 𝑓 ∈J𝐹 K.𝜖 ⊨𝑒 ⌈𝛼 𝑓 ⌉
+> ↩−−− →∗() (by 3 and 4 and denotation definition) (5)
+
+The the soundness is proved. □
+
+H.3 Synthesis is Sound 
+
+As discussed in Sec. 4, our synthesis algorithm first refines the input property to a set of realizable abstract traces and then uses the TermDerive function to translate these traces into a controller program. We introduce a concept of realizability of abstract traces which stand as a bridge between Algorithm 2 and Algorithm 4. 
+
+Definition H.11 (Symbolic event consistent with trace). A symbolic event ⟨op | 𝜙 ⟩ in abstract trace 
+
+𝜋 (i.e., 𝜋 = 𝜋 ℎ ·⟨ op | 𝜙 ⟩· 𝜋 ·· 𝜋 𝑓 , where 𝜋 is a sequence of ghost events) is consistent with the trace, denoted as Γ ⊢𝑅 ⟨op | 𝜙 ⟩ ∈ 𝜋 , iff 
+
+Γ ⊢ op : 𝑥 :𝑡 𝑥  [𝜋 ℎ ] 𝑥 : 𝑡 [⟨op | 𝜙 ⟩· 𝜋 ]
+
+Definition H.12 (Realizability). An abstract trace 𝜋 is realizable under type context Γ iff all concrete events in 𝜋 are consistent with 𝜋 under context Γ, denoted as Γ ⊢𝑅 𝜋 .We now prove that the refined event in Algorithm 2 is consistent with the trace. 
+
+Lemma H.13 (Refined event is consistent with trace). The refined event in Algorithm 2 is consistent with the trace. 
+
+Proof. Assume Algorithm 2 refines the event ⟨op | 𝜙 ⟩ in the trace 𝜋 ℎ ·⟨ op | 𝜙 ⟩· 𝜋 ·· 𝜋 𝑓 . We then have 𝜋 ℎ ⊆ 𝐻 and ⟨op | 𝜙 ⟩· 𝜋 ⊆ 𝐹 (line 4 and line 5 in Algorithm 2), where 𝐻 and 𝐹 are the history and future regex of the uHat of op . According to the rule TOpHis , which allows for a smaller history regex, and the rule TSub , which allows for a smaller future regex, we have that ⟨op | 𝜙 ⟩ is consistent with the trace. □
+
+Next, we show that all results of Algorithm 2 are realizable traces. 
+
+Lemma H.14 (Refined traces are realizable). Assume (Γ, 𝜋 ) is a result of Algorithm 2. Then 𝜋 
+
+is realizable under Γ, denoted as Γ ⊢𝑅 𝜋 .
+
+Proof. By contradiction. If 𝜋 is not realizable under Γ, then there exists a concrete event in 𝜋 
+
+that is not consistent with Γ. However, according to Lemma H.13, the refined event is consistent with the trace, which leads to a contradiction. □
+
+Now we prove the derived program is type-safe if the refined trace is realizable. 
+
+Lemma H.15 (Result of TraceDerive is type-safe). The program derived by TraceDerive is type-safe if the input trace 𝜋 is realizable under the input type context Γ. 
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. 40 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+
+Proof. Assume the synthesized program is 𝑒 . Since TraceDerive drops ghost events, we have 
+
+∀𝛼. 𝛼 ⊨ 𝑒 [ ] 
+
+↩−→∗ () . Therefore, there exists a trace 𝛼 ′ that fills the ghost events back into 𝛼 and is also consistent with the abstract trace 𝜋 :
+
+∃𝛼 ′. ⌈𝛼 ′⌉ = 𝛼 ∧ ∃ 𝜎 ∈ JΓK. 𝛼 ′ ∈ 𝜎 (𝜋 )
+
+Then, we know 𝑒 ∈ J𝜎 [𝜖 ] unit [𝜋 ]K. Thus, according to the fundamental theorem, the derived program is type-safe. □
+
+Theorem H.16 (Derived program of TermDerive is type-safe). If the recursion template is type-safe, then the program derived by ( TermDerive ) is type-safe if all input traces are realizable under their corresponding input type contexts. 
+
+Proof. Since every program derived by TraceDerive is type-safe, and the recursion template guarantees that the template after filling the holes is also type-safe, each program derived by 
+
+TermDerive is type-safe. According to the rule TChoice , the union ( ⊕) of all derived programs is also type-safe. □
+
+Theorem H.17 (Synthesis is Sound). Every generator synthesized by Algorithm 1 is type-safe with respect to our declarative typing system. 
+
+Proof. According to Lemma H.14 and Lemma H.15, all refined traces are realizable and all derived programs are type-safe. Then, by Theorem H.16, the synthesized program is type-safe. □ 
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 41
+
+I Benchmark Specifications Explanation 
+
+This appendix lists the global safety property and the uHat s for every benchmark used in our evaluation. Each of them consistent of a short description, the global property, uHat , and the weakened uHat .
+
+Weakening strategy. We tie this appendix to Sec. 2 and to the weakening study in our evaluation: we fix the SUT and the global property, and relax uHat s to measure how “lower-quality” specs affect Clouseau . We use two weakening strategies: 
+
+• weakening qualifiers directly: For a refinement type {𝜈 :𝑏 | 𝜙 }𝑢 or a symbolic event ⟨ev | 𝜙 ⟩,we replace the qualifier 𝜙 with a weaker 𝜙 ′ such that 𝜙 ′ =⇒ 𝜙 . Concretely, this can drop conjuncts or weaken predicates to ⊤.
+
+• merge intersected types: In uHat , we use intersection types to represent different situations an operation may face. For example, an initialized system (i.e., 𝐻 1 = •∗·⟨ init ·⟩• ∗) and an uninitialized system (i.e., 𝐻 2 = (• \ ⟨ init )⟩ ∗) yield two intersected uHat s with different history automata: 
+
+[𝐻 1] { 𝜈 :𝑏 | 𝜙 1}𝑢 [𝐹 1] ⊓ [𝐻 2] { 𝜈 :𝑏 | 𝜙 2}𝑢 [𝐹 2]
+
+One weakening step merges them into a single case: 
+
+[𝐻 1 ∨ 𝐻 2] { 𝜈 :𝑏 | 𝜙 1 ∨ 𝜙 2}𝑢 [𝐹 1 ∨ 𝐹 2]
+
+This approach is sound because it additionally allows “when 𝐻 1 holds, 𝐹 2 happens” and “when 
+
+𝐻 2 holds, 𝐹 1 happens”, compared to the original intersected uHat s. The weakened uHat s are presented in the following sections according to these two patterns; thus, we omit most of the details of the weakening process. 
+
+Representation conventions. For synchronous benchmarks we often split one logical operation 
+
+ev (args , return ) into evReq (args ) and evRsp (return ), matching request/response APIs. Global prop-erties are given in the form that the test generator is instructed to falsify (negated safety). Futures in each clause relate events across the trace and carry search bias; see Stack for a concrete instance.  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. 42 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+
+Stack. Consider an effectful stack implemented with a fixed-size array. An incorrect implementation that fails to grow the array when the stack is full may drop push operations. To expose this bug, we ask whether traces of the following form raise an exception: 
+
+push (0); push (4); push (7); pop (7); pop (4); pop (_) Exception! The implementation uses an underlying array of length 2 and mistakenly raises an “stack is empty” exception even though element 0 should still be on the stack. In this benchmark we split 
+
+pop into popReq and popRsp ; push has no return value, so we only model pushReq and omit 
+
+pushRsp . The global property characterizes popping “away” a pushed value 𝑦 without observing 
+
+⟨popRsp | elem = 𝑦 ⟩, and then observing an empty stack—modeling loss of the last pushed element. 
+
+•∗·⟨ pushReq | elem = 𝑦 ⟩·  (• \ ⟨ popRsp | elem = 𝑦 ⟩) ∗·⟨ isEmpRsp | isEmpty ⟩
+
+The uHat comprises the following clauses: 
+
+pushReq : 𝑦 :int  [•∗] unit [⟨pushReq | elem = 𝑦 ⟩·• ∗·⟨ popReq | true ⟩·• ∗]
+
+initStackReq : [•∗] unit [⟨initStackReq | true ⟩·• ∗]
+
+popReq : [•∗] unit [⟨popReq | true ⟩·⟨ popRsp | true ⟩·• ∗]
+
+popRsp : 𝑥 :int  [•∗] { 𝜈 :int | elem = 𝑥 }𝑢 [ (• \ ⟨ pushReq | true ⟩) ∗]
+
+isEmpReq : [•∗] unit [⟨isEmpReq | true ⟩·⟨ isEmpRsp | true ⟩·• ∗]
+
+isEmpRsp : 𝑧 :bool  [•∗] { 𝜈 :bool | isEmpty = 𝑧 }𝑢 [⟨isEmpRsp | isEmpty = 𝑧 ⟩·• ∗]
+
+The future automaton in the pushReq uHat describes not only pushReq itself, but also obligates a later popReq . That encodes a pairing constraint between push and pop , and acts as a search bias for this benchmark. Similarly, the future of popRsp forbids any later pushReq , so along such traces the stack depth changes monotonically. The weakened uHat drops these biases, yielding specifications that give the synthesizer less guidance.  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 43
+
+Set. This benchmark shares a similar setting with Stack , where we have an effectful set implemented with a fixed-size array. An incorrect implementation that fails to grow the array when the set is full may drop insert operations. In this benchmark, we use a ghost event to explicitly track the size of the set. Then, the error is that, after initialization and insertion of 𝑦 , a mismatched delete request (¬( elem = 𝑦 )) should not appear in a realistic violation scenario tied to size discipline; the global property targets a bad delete-generation path right after insert. Precisely, the global property is given by the following: 
+
+⟨initSet | true ⟩·• ∗·⟨ insert | elem = 𝑦 ⟩·• ∗·⟨ delReq | ¬( elem = 𝑦 )⟩·• ∗
+
+The uHat are shown below: 
+
+initSet : [•∗] unit [⟨initSet | true ⟩·⟨ size | sz = 0⟩·• ∗]
+
+insert : 𝑥 :int  [ (• \ ⟨ insert | elem ≥ 𝑥 ⟩) ∗·⟨ size | sz = 𝑖 ⟩] unit 
+
+[⟨insert | elem = 𝑥 ⟩·• ∗·⟨ delReq | elem = 𝑥 ⟩·• ∗]
+
+delReq : 𝑥 :int  [ (• \ ⟨ delReq | elem = 𝑥 ⟩) ∗·⟨ insert | elem = 𝑥 ⟩·  (• \ ⟨ delReq | elem = 𝑥 ⟩) ∗·⟨size | sz = 𝑖 + 1⟩] unit [⟨delReq | elem = 𝑥 ⟩·⟨ delRsp | true ⟩·⟨ size | sz = 𝑖 ⟩·• ∗]
+
+delRsp : 𝑟 :bool  [•∗] { 𝜈 :bool | res = 𝑟 }𝑢 [•∗]
+
+isEmpReq : [•∗] unit [⟨isEmpReq | true ⟩·⟨ isEmpRsp | true ⟩·• ∗]
+
+size : 𝑖 :int  [•∗] { 𝜈 :int | sz = 𝑖 }𝑢 [•∗]
+
+isEmpRsp : 𝑏 :bool  [•∗] { 𝜈 :bool | isEmpty = 𝑏 }𝑢 [⟨isEmpRsp | isEmpty = 𝑏 ⟩·• ∗]
+
+The weakened uHat drops much of the delReq precondition chain: histories no longer enforce the fine-grained “no repeated delete / size bookkeeping” pattern, and a typical relaxation widens the precondition to •∗·⟨ insert | elem = 𝑥 ⟩·• ∗. 
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. 44 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+
+Filesystem. Consider a path-tree API with create/delete/exists operations. Here deleting a non-empty directory reportedly succeeds, yet a child path still appears to exist—a path-metadata inconsistency our property surfaces. Thus, the global property is given by the following: 
+
+•∗·⟨ delReq | path = parent (chp )⟩·⟨ delRsp | succ ⟩·• ∗·⟨extReq | path = chp ⟩·⟨ extRsp | exists ⟩·• ∗
+
+The uHat is defined as follows: 
+
+initReq : [•∗] unit [⟨initReq ⟩·  (• \ ⟨ initReq | true ⟩) ∗]
+
+crtReq : 𝑝 :Path d 𝑐 :{𝜈 :Byte | isRoot (parent (𝑝 )) }𝑢 
+
+[ (• \ ⟨ crtReq | path = parent (𝑝 ) ∧ isDir (content )⟩) ∗] unit 
+
+[⟨crtReq 𝑝 𝑐 ⟩·⟨ crtRsp | ¬ succ ⟩·• ∗] ⊓
+
+𝑝 :Path d 𝑐 :{𝜈 :Byte | ¬ isRoot (𝑝 )}𝑢 
+
+[⟨initReq ⟩·  (• \ ⟨ delReq 𝑝 ⟩) ∗·⟨ crtReq | path = 𝑝 ⟩·⟨ crtRsp | succ ⟩·  (• \ ⟨ delReq 𝑝 ⟩) ∗] unit 
+
+[⟨crtReq 𝑝 𝑐 ⟩·⟨ crtRsp | ¬ succ ⟩·• ∗] ⊓
+
+𝑝 :Path d 𝑐 :{𝜈 :Byte | ¬ isRoot (parent (𝑝 )) }𝑢 
+
+[•∗·⟨ crtReq | path = parent (𝑝 ) ∧ isDir (content )⟩·⟨ crtRsp | succ ⟩· 
+
+ (• \ ⟨ delReq | path = parent (𝑝 )⟩) ∗] unit [⟨crtReq 𝑝 𝑐 ⟩·⟨ crtRsp | succ ⟩·• ∗·⟨ delReq 𝑝 ⟩·• ∗] ⊓
+
+𝑝 :Path d 𝑐 :{𝜈 :Byte | isRoot (parent (𝑝 )) }𝑢 
+
+[•∗] unit [⟨crtReq 𝑝 𝑐 ⟩·⟨ crtRsp | succ ⟩·• ∗·⟨ crtReq | path = parent (𝑝 )⟩·• ∗·⟨ delReq 𝑝 ⟩·• ∗]
+
+crtRsp : 𝑠 :bool  [•∗] { 𝜈 :bool | succ = 𝑠 }𝑢 [•∗]
+
+delReq : 𝑝 :{𝜈 :Path | isRoot (𝑝 )}𝑢  [•∗] unit [⟨delReq 𝑝 ⟩·⟨ delRsp | ¬ succ ⟩·• ∗] ⊓
+
+𝑝 :{𝜈 :Path | ¬ isRoot (𝑝 )}𝑢 
+
+[•∗·⟨ delReq 𝑝 ⟩·  (• \ ⟨ crtReq | path = 𝑝 ⟩) ∗] unit [⟨delReq 𝑝 ⟩·⟨ delRsp | ¬ succ ⟩·• ∗] ⊓
+
+𝑝 :{𝜈 :Path | ¬ isRoot (𝑝 )}𝑢 
+
+[⟨initReq ⟩·  (• \ ⟨ delReq 𝑝 ⟩) ∗·⟨ crtReq | path = 𝑝 ⟩·⟨ crtRsp | succ ⟩·  (• \ ⟨ delReq 𝑝 ⟩) ∗] unit 
+
+[⟨delReq 𝑝 ⟩·⟨ delRsp | succ ⟩·  (• \ ⟨ crtReq | true ⟩) ∗]
+
+delRsp : 𝑠 :bool  [•∗] { 𝜈 :bool | succ = 𝑠 }𝑢 [•∗]
+
+extReq : 𝑝 :{𝜈 :Path | isRoot (𝑝 )}𝑢  [•∗] unit [⟨extReq 𝑝 ⟩·⟨ extRsp | exists ⟩·• ∗] ⊓
+
+𝑝 :{𝜈 :Path | ¬ isRoot (𝑝 )}𝑢 
+
+[•∗·⟨ delReq 𝑝 ⟩·  (• \ ⟨ crtReq | path = 𝑝 ⟩) ∗] unit [⟨extReq 𝑝 ⟩·⟨ extRsp | ¬ exists ⟩·• ∗] ⊓
+
+𝑝 :{𝜈 :Path | ¬ isRoot (𝑝 )}𝑢 
+
+[•∗·⟨ crtReq | path = 𝑝 ⟩·⟨ crtRsp | succ ⟩·  (• \ ⟨ delReq 𝑝 ⟩) ∗] unit [⟨extReq 𝑝 ⟩·⟨ extRsp | exists ⟩·• ∗]
+
+extRsp : 𝑒 :bool  [•∗] { 𝜈 :bool | exists = 𝑒 }𝑢 [•∗]
+
+The weakened uHat merges intersected types across the create/delete/exists clauses and drops or weakens predicates such as isDir (content ) on paths, paralleling the weakened study in the evaluation.  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 45
+
+Graph. Consider a dynamic graph with fresh nodes and directed edges. Two edges 𝑥 →𝑦 and 𝑦 →𝑧 
+
+are added (with side conditions on isStart ). A bug in the underlying program can only be detected on a connected graph, which is captured by the following global property: 
+
+•∗·⟨ addE | st = 𝑥 ∧ ed = 𝑦 ∧ ¬ isStart (st )⟩·• ∗·⟨addE | st = 𝑦 ∧ ed = 𝑧 ⟩·• ∗·⟨ isConnReq | true ⟩·⟨ isConnRsp | isConn ⟩
+
+The uHat comprises the following clauses: 
+
+init : [•∗] unit [ (• \ ⟨ init | true ⟩) ∗]
+
+newNReq : [⟨init | true ⟩·• ∗] unit [⟨newNReq | true ⟩·⟨ newNRsp | true ⟩·• ∗]
+
+newNRsp : 𝑥 :int  [ (• \ ⟨ newNRsp | true ⟩) ∗] { 𝜈 :int | nid = 𝑥 ∧ isStart (𝑥 )}𝑢 [•∗] ⊓
+
+𝑥 :int  [ (• \ ⟨ newNRsp | true ⟩) ∗·⟨ newNRsp | ¬( nid = 𝑥 )⟩·  (• \ ⟨ newNRsp | nid = 𝑥 ⟩) ∗]{𝜈 :int | nid = 𝑥 ∧ ¬ isStart (𝑥 )}𝑢 [•∗·⟨ addE | ed = 𝑥 ⟩·• ∗]
+
+addE : 𝑥 :int d 𝑦 :{𝜈 :int | 𝑥 ≠ 𝑦 }𝑢  [•∗·⟨ newNRsp | nid = 𝑥 ⟩·• ∗·⟨ newNRsp | nid = 𝑦 ⟩·• ∗] unit 
+
+[⟨addE | st = 𝑥 ∧ ed = 𝑦 ∧ ¬ isStart (𝑦 )⟩·  (• \ ⟨ addE | st = 𝑥 ∧ ed = 𝑦 ⟩) ∗]
+
+isConnReq : [•∗] unit [⟨isConnReq | true ⟩·⟨ isConnRsp | true ⟩·• ∗]
+
+isConnRsp : 𝑣 :bool  [•∗] { 𝜈 :bool | isConn = 𝑣 }𝑢 [⟨isConnRsp | isConn = 𝑣 ⟩·• ∗]
+
+The uHat requires a node is either the initial node, or connected from another node. The weakened 
+
+uHat merges two intersected types of newNRsp and loosens nid /isStart constraints.  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. 46 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+
+NFA. This benchmark has a similar setting to Graph but requires the graph to be a well-formed NFA with at least three edges. Then, the global property is: 
+
+•∗·⟨ addE | true ⟩·• ∗·⟨ addE | true ⟩·• ∗·⟨ addE | true ⟩·• ∗·⟨ isNFARsp | isNFA ⟩
+
+The uHat is: 
+
+init : [•∗] unit [ (• \ ⟨ init | true ⟩) ∗]
+
+newNReq : [⟨init | true ⟩·• ∗] unit [⟨newNReq | true ⟩·⟨ newNRsp | true ⟩·• ∗]
+
+newNRsp : 𝑥 :int  [ (• \ ⟨ newNRsp | true ⟩) ∗] { 𝜈 :int | nid = 𝑥 }𝑢 [•∗] ⊓
+
+𝑥 :int  [ (• \ ⟨ newNRsp | true ⟩) ∗·⟨ newNRsp | ¬( nid = 𝑥 )⟩·  (• \ ⟨ newNRsp | nid = 𝑥 ⟩) ∗]{𝜈 :int | nid = 𝑥 }𝑢 [•∗·⟨ addE | ed = 𝑥 ⟩·• ∗]
+
+setInitN : 𝑥 :int  [•∗·⟨ newNRsp | nid = 𝑥 ⟩·• ∗] unit [⟨setInitN | nid = 𝑥 ⟩·  (• \ ⟨ setInitN | true ⟩) ∗]
+
+setFinalN : 𝑥 :int  [•∗·⟨ newNRsp | nid = 𝑥 ⟩·• ∗] unit [⟨setFinalN | nid = 𝑥 ⟩·  (• \ ⟨ setFinalN | true ⟩) ∗]
+
+addE : 𝑥 :int d 𝑐 :{𝜈 :char | true }𝑢 d 𝑦 :{𝜈 :int | 𝑥 ≠ 𝑦 }𝑢 
+
+[•∗·⟨ newNRsp | nid = 𝑥 ⟩·• ∗·⟨ newNRsp | nid = 𝑦 ⟩·• ∗·⟨ addE | ed = 𝑥 ⟩] unit 
+
+[⟨addE | st = 𝑥 ∧ ch = 𝑐 ∧ ed = 𝑦 ⟩·  (• \ ⟨ addE | st = 𝑥 ∧ ch = 𝑐 ⟩) ∗] ⊓
+
+𝑥 :int d 𝑐 :{𝜈 :char | true }𝑢 d 𝑦 :{𝜈 :int | 𝑥 ≠ 𝑦 }𝑢 
+
+[•∗·⟨ setInitN | nid = 𝑥 ⟩·• ∗·⟨ newNRsp | nid = 𝑦 ⟩·• ∗] unit 
+
+[⟨addE | st = 𝑥 ∧ ch = 𝑐 ∧ ed = 𝑦 ⟩·  (• \ ⟨ addE | st = 𝑥 ∧ ch = 𝑐 ⟩) ∗] ⊓
+
+𝑥 :int d 𝑐 :{𝜈 :char | true }𝑢 d 𝑦 :{𝜈 :int | 𝑥 ≠ 𝑦 }𝑢 
+
+[•∗·⟨ newNRsp | nid = 𝑦 ⟩·• ∗·⟨ newNRsp | nid = 𝑥 ⟩·• ∗·⟨ addE | ed = 𝑥 ⟩] unit 
+
+[⟨addE | st = 𝑥 ∧ ch = 𝑐 ∧ ed = 𝑦 ⟩·  (• \ ⟨ addE | st = 𝑥 ∧ ch = 𝑐 ⟩) ∗]
+
+isNFAReq : [•∗] unit [⟨isNFAReq | true ⟩·⟨ isNFARsp | true ⟩·• ∗]
+
+isNFARsp : 𝑣 :bool  [•∗·⟨ setFinalN | true ⟩·• ∗] { 𝜈 :bool | isNFA = 𝑣 }𝑢 [•∗]
+
+The weakened uHat merges intersected types of newNRsp and addE , and relaxes ordering con-straints on ⟨addE | ·⟩ . 
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 47
+
+IFC. As introduced in Sec. 2, we would like to test the ENNI property, where we are interested in the implementation of the IFC machine over different operators; thus, the global properties vary the offending primitive ( store /add /load ) across three goals. Then, the global properties are 
+
+•∗·⟨ store | true ⟩·• ∗·⟨ enniRsp | enni ⟩•∗·⟨ add | true ⟩·• ∗·⟨ enniRsp | enni ⟩•∗·⟨ load | true ⟩·• ∗·⟨ enniRsp | enni ⟩
+
+The uHat is defined as (here addr abbreviates isAddr ): 
+
+push : 𝑙 :bool d 𝑥 :{𝜈 :int | true }𝑢 d 𝑦 :{𝜈 :int | true }𝑢  [ (• \ ⟨ depth | true ⟩) ∗] unit 
+
+[⟨push low e l er | low = 𝑙 ∧ el = 𝑥 ∧ er = 𝑦 ∧ addr (el ) ∧ addr (er )⟩·⟨ depth | depth = 1⟩·• ∗] ⊓
+
+𝑑 :int d 𝑙 :bool d 𝑥 :{𝜈 :int | true }𝑢 d 𝑦 :{𝜈 :int | true }𝑢  [•∗·⟨ depth | depth = 𝑑 ⟩] unit 
+
+[⟨push low e l er | low = 𝑙 ∧ el = 𝑥 ∧ er = 𝑦 ∧ addr (el ) ∧ addr (er )⟩·⟨ depth | depth = 𝑑 + 1⟩·• ∗]
+
+pop : 𝑑 :{𝜈 :int | 𝑑 > 0}𝑢  [•∗·⟨ depth | depth = 𝑑 ∧ 𝑑 > 0⟩] unit [⟨pop | true ⟩·⟨ depth | depth = 𝑑 − 1⟩·• ∗]
+
+load : 𝑑 :{𝜈 :int | 𝑑 > 0}𝑢  [•∗·⟨ store | true ⟩·⟨ push | true ⟩·⟨ depth | depth = 𝑑 ∧ 𝑑 > 0⟩] unit 
+
+[⟨load | true ⟩·⟨ depth | depth = 𝑑 ⟩·• ∗·⟨ store | true ⟩·• ∗]
+
+store : 𝑑 :{𝜈 :int | 𝑑 > 1}𝑢  [•∗·⟨ push | true ⟩·⟨ depth | depth = 𝑑 ∧ 𝑑 > 1⟩] unit 
+
+[⟨store | true ⟩·⟨ depth | depth = 𝑑 − 2⟩·• ∗] ⊓
+
+𝑑 :{𝜈 :int | 𝑑 > 1}𝑢  [•∗·⟨ depth | depth = 𝑑 ∧ 𝑑 > 1⟩] unit 
+
+[⟨store | true ⟩·⟨ depth | depth = 𝑑 − 2⟩·• ∗]
+
+add : 𝑑 :{𝜈 :int | 𝑑 > 1}𝑢  [•∗·⟨ depth | depth = 𝑑 ∧ 𝑑 > 1⟩] unit 
+
+[⟨add | true ⟩·⟨ depth | depth = 𝑑 − 1⟩·• ∗]
+
+enniReq : [•∗] unit [⟨enniReq | true ⟩·⟨ enniRsp | enni ⟩·• ∗]
+
+enniRsp : 𝑣 :bool  [•∗] { 𝜈 :bool | enni = 𝑣 }𝑢 [•∗]
+
+depth : 𝑑 :int  [•∗] { 𝜈 :int | depth = 𝑑 }𝑢 [•∗]
+
+Here we use a ghost event depth to record the current depth of the IFC stack. The weakened 
+
+uHat relaxes the low /el /er coupling on ⟨push · · · | · · ·⟩ toward weaker implications and merges the intersected types of the two store clauses under looser stack-depth premises. 
+
+DeBruijn STLC. The setting of this benchmark is already discussed in the beginning of this appendix (cf. Appendix B). The weakened uHat removes all type-related constraints to enable the generator to produce all untyped STLC programs.  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. 48 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+
+Hashtable. Consider a string-keyed hash table with find/replace that is accessible to multiple threads; we want to detect the concurrency error. Concretely, there is a situation that, after 
+
+⟨repReq | key = 𝑘, vl = 𝑣 2⟩ with no further addReq /repReq on 𝑘 , a findRsp may still disagree with 𝑣 2—the property captures that mismatch. Then, the global property is defined as: 
+
+•∗·⟨ repReq | key = 𝑘 ∧ vl = 𝑣 2⟩· 
+
+ • \ (⟨ addReq | key = 𝑘 ⟩ ∪ ⟨ repReq | key = 𝑘 ⟩) ∗·⟨ findRsp | key = 𝑘 ∧ ¬( vl = 𝑣 2)⟩ 
+
+The uHat comprises the following clauses: 
+
+addReq : 𝑘 :int , 𝑣 :int  [⟨initReq | true ⟩·• ∗] unit [⟨addReq | key = 𝑘 ∧ vl = 𝑣 ⟩·• ∗]
+
+findReq : 𝑘 :int  [•∗·⟨ repReq | key = 𝑘 ∧ vl = 𝑣 1⟩· 
+
+ • \ (⟨ rmReq | key = 𝑘 ⟩ ∪ ⟨ clReq | true ⟩ ∪ ⟨ repReq | key = 𝑘 ⟩ ∪ ⟨ addReq | key = 𝑘 ⟩) ∗]
+
+unit [⟨findReq | key = 𝑘 ⟩·⟨ findRsp | key = 𝑘 ∧ vl = 𝑣 1⟩·• ∗]
+
+repReq : 𝑘 :int , 𝑣 :int  [•∗·⟨ addReq | key = 𝑘 ⟩·  (• \ ⟨ rmReq | key = 𝑘 ⟩) ∗] unit 
+
+[⟨repReq | key = 𝑘 ∧ vl = 𝑣 ⟩·• ∗]
+
+The weakened uHat shortens findReq / repReq precondition chains substantially. 
+
+Transaction. As explained in the read atomicity example in Sec. 2.  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 49
+
+DataBase Setting. The four benchmarks below share the same assumption about the underlying database. We adopt the weak isolation levels of MonkeyDB [1], which exposes four APIs: 
+
+begin : unit  tid 
+
+put : tid  key  value  unit 
+
+commit : tid  cid 
+
+get : tid  key  tid × cid × value 
+
+Calling begin starts a new transaction, and the engine returns a fresh transaction identifier. Each of put , get , and commit takes that tid so the store can tell which transaction is running. The put 
+
+operation updates the value stored at a key in the usual way. The commit operation closes the transaction named by the supplied id; the engine assigns a monotonic commit id cid that records commit order. For get , the result bundles the read value with the ( tid ,cid ) pair of the writer whose commit produced it; tracking cid is what lets us state weak isolation. Under causal consistency (CC), for example, reads must be justified by a transaction that commits before the reader commits. Concretely, CC is captured by: 
+
+begin : 𝑖 :int  [ (• \ ⟨ begin | tid ≥ 𝑖 ⟩) ∗] unit [⟨begin | tid = 𝑖 ⟩·• ∗]
+
+put : 𝑖 :int  𝑘 :Key  𝑧 :Value  [•∗·⟨ begin | tid = 𝑖 ⟩·  (• \ ⟨ commit | tid = 𝑖 ⟩) ∗]
+
+unit [⟨put | tid = 𝑖 ∧ key = 𝑘 ∧ vl = 𝑧 ⟩·• ∗]
+
+commit : 𝑗 :int d 𝑖 :int  [ (• \ ⟨ commit | tid = 𝑖 ∨ cid ≥ 𝑗 ⟩) ∗·⟨ begin | tid = 𝑖 ⟩·  (• \ ⟨ commit | tid = 𝑖 ∨ cid ≥ 𝑗 ⟩) ∗]
+
+unit [⟨commit | tid = 𝑖 ∧ cid = 𝑗 ⟩·  • \ (⟨ put | tid = 𝑖 ⟩ ∪ ⟨ get | tid = 𝑖 ⟩) ∗]
+
+(Causal Consistency: )
+
+get : 𝑝 :int d 𝑞 :int d 𝑧 :Value d 𝑖 :int  𝑘 :Key 
+
+[•∗·⟨ put 𝑝 𝑘 𝑧 ⟩·  (• \ ⟨ put | tid = 𝑖 ∧ key = 𝑘 ⟩) ∗·⟨ commit 𝑝 𝑞 ⟩·  (• \ ⟨ put | tid = 𝑖 ∧ key = 𝑘 ⟩) ∗]
+
+unit [⟨get | tid = 𝑖 ∧ key = 𝑘 ∧ prevTid = 𝑝 ∧ prevCid = 𝑞 ∧ vl = 𝑧 ⟩·  (• \ ⟨ commit | tid = 𝑖 ∧ cid < 𝑝 ⟩) ∗]
+
+These clauses force tid and cid to increase monotonically, allow commit only after the matching 
+
+begin , and pair commits with transactions. Weak isolation shows up chiefly in get : its history automaton may justify a read from any earlier committed writer, not necessarily the latest. If the current transaction 𝑇 𝑖 observes writer 𝑇 𝑝 at commit id 𝑞 , the future automaton blocks committing 
+
+𝑇 𝑖 with any cid < 𝑞 , so 𝑇 𝑖 cannot commit ahead of 𝑇 𝑝 . Read committed (RC) keeps the same surface API but weakens the uHat for get :
+
+(Read Committed: )
+
+get : 𝑝 :int d 𝑞 :int d 𝑧 :Value d 𝑖 :int  𝑘 :Key 
+
+[•∗·⟨ put 𝑝 𝑘 𝑧 ⟩·  (• \ ⟨ put | tid = 𝑖 ∧ key = 𝑘 ⟩) ∗·⟨ commit 𝑝 𝑞 ⟩·  (• \ ⟨ commit | true ⟩) ∗]
+
+unit [⟨get | tid = 𝑖 ∧ key = 𝑘 ∧ prevTid = 𝑝 ∧ prevCid = 𝑞 ∧ vl = 𝑧 ⟩·• ∗]
+
+Here the history forces 𝑇 𝑝 to be the latest committed writer on the key (nothing commits after 
+
+⟨commit 𝑝 𝑞 ⟩). Unlike CC, the future adds no further restriction. In the four benchmarks below we take CC as the default uHat ; weakening yields RC.  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. 50 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+
+Shopping cart. This is a benchmark from MonkeyDB [ 1 ], which is a simple shopping cart system. The system allows users to add and delete items to their cart, and the cart is stored in the database. The global property is committing ⟨put | key = 𝑥, vl = 𝑦 ⟩ should rule out a later ⟨get | ·⟩ that reads a stale list ( ¬( vl = 𝑦 )), that is 
+
+•∗·⟨ put | key = 𝑥 ∧ vl = 𝑦 ⟩·  (• \ ⟨ put | key = 𝑥 ⟩) ∗·⟨ get | key = 𝑥 ∧ ¬( vl = 𝑦 )⟩·• ∗
+
+The uHat comprises the following clauses ( emp , cons , and remove are the axiomatized list opera-tions): 
+
+(Causal Consistency Specification is omitted )
+
+addItemReq : 𝑖 :int d 𝑙 :int list d 𝑥 :int  𝑦 :int  [•∗] unit 
+
+[⟨addItemReq | user = 𝑥 ∧ item = 𝑦 ⟩·⟨ begin | tid = 𝑖 ⟩·• ∗·⟨get | tid = 𝑖 ∧ key = 𝑥 ∧ vl = 𝑙 ⟩·• ∗·⟨ put | tid = 𝑖 ∧ key = 𝑥 ∧ vl = cons (𝑦, 𝑙 )⟩· 
+
+ (• \ ⟨ put | key = 𝑥 ⟩) ∗·⟨ commit | tid = 𝑖 ⟩·⟨ addItemRsp | true ⟩·• ∗[] 
+
+addItemRsp : [•∗] unit [•∗]
+
+deleteItemReq : : int d 𝑙 :int list d 𝑥 :int  𝑦 :int  [•∗] unit 
+
+[⟨deleteItemReq | user = 𝑥 ∧ item = 𝑦 ⟩·⟨ begin | tid = 𝑖 ⟩·• ∗·⟨get | tid = 𝑖 ∧ key = 𝑥 ∧ vl = 𝑙 ⟩·• ∗·⟨ put | tid = 𝑖 ∧ key = 𝑥 ∧ vl = remove (𝑦, 𝑙 )⟩· 
+
+ (• \ ⟨ put | key = 𝑥 ⟩) ∗·⟨ commit | tid = 𝑖 ⟩·⟨ deleteItemRsp | true ⟩·• ∗]
+
+deleteItemRsp : [•∗] unit [•∗]
+
+These clauses encode the underlying database steps used by addItem and deleteItem : read the prior cart (a list of item ids) and write back an update. The •∗ gaps between those operations admit other trace events (e.g. put from concurrent transactions). They also forbid two uncommitted transactions from updating the same key —the same “write-write conflict” that InnoDB-style engines reject. The constraint appears in the future as the pattern “ ⟨put | key = 𝑥 ∧ . . . ⟩  (• \ ⟨ put | key = 𝑥 ⟩) ∗ ⟨commit | . . . ⟩”: after one transaction touches key 𝑥 , no second transaction may write 𝑥 until the first commits. For the weakened uHat , we switch the MonkeyDB layer to RC as above; the cart operations themselves are unchanged.  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 51
+
+Courseware. This is a benchmark from MonkeyDB [ 1 ], where courseware is a system allow student to add and drop courses. The global property is the violation of strong consistency: 
+
+•∗·⟨ put | key = 𝑥 ∧ vl = 𝑦 ⟩·  (• \ ⟨ put | key = 𝑥 ⟩) ∗·⟨ get | key = 𝑥 ∧ ¬( vl = 𝑦 )⟩·• ∗
+
+The uHat is defined as follows ( emp , cons , and remove are as in the Shopping cart benchmark): 
+
+(Causal Consistency Specification is omitted )
+
+regStuReq : 𝑖 :int d 𝑥 :int  [ • \ (⟨ regStuReq | true ⟩ ∪ ⟨ get | key = 𝑥 ⟩ ∪ ⟨ put | key = 𝑥 ⟩) ∗] unit 
+
+[⟨regStuReq | user = 𝑥 ⟩·⟨ begin | tid = 𝑖 ⟩·• ∗·⟨ put | tid = 𝑖 ∧ key = 𝑥 ∧ emp (vl )⟩·• ∗·⟨put | tid = 𝑖 ∧ key = 𝑥 ∧ vl ⟩·⟨ commit | tid = 𝑖 ⟩·• ∗·⟨ regStuRsp | true ⟩· 
+
+ (• \ ⟨ regStuReq | true ⟩) ∗]
+
+regStuRsp : [•∗] unit [•∗]
+
+crtCourseReq : 𝑖 :int , 𝑥 :int  [•∗] unit [⟨crtCourseReq | course _id = 𝑥 ⟩·⟨ begin | tid = 𝑖 ⟩·• ∗·⟨putCourses | tid = 𝑖 ∧ key = 𝑥 ∧ vl ⟩·• ∗·⟨ commit | tid = 𝑖 ⟩·⟨ crtCourseRsp | true ⟩·• ∗]
+
+crtCourseRsp : [•∗] unit [•∗]
+
+enrStuReq : 𝑖 :int d 𝑙 :int list d 𝑥 :int  𝑦 :int  [•∗] unit 
+
+[⟨enrStuReq | user = 𝑥 ∧ item = 𝑦 ⟩·⟨ begin | tid = 𝑖 ⟩·• ∗·⟨get | tid = 𝑖 ∧ key = 𝑥 ∧ vl = 𝑙 ⟩·• ∗·⟨ put | tid = 𝑖 ∧ key = 𝑥 ∧ vl = cons (𝑦, 𝑙 )⟩· 
+
+ (• \ ⟨ put | key = 𝑥 ⟩) ∗·⟨ commit | tid = 𝑖 ⟩·⟨ enrStuRsp | true ⟩·• ∗]
+
+enrStuRsp : [•∗] unit [•∗]
+
+unenrStuReq : 𝑖 :int d 𝑙 :int list d 𝑥 :int  𝑦 :int  [•∗] unit 
+
+[⟨unenrStuReq | user = 𝑥 ∧ item = 𝑦 ⟩·⟨ begin | tid = 𝑖 ⟩·• ∗·⟨get | tid = 𝑖 ∧ key = 𝑥 ∧ vl = 𝑙 ⟩·• ∗·⟨ put | tid = 𝑖 ∧ key = 𝑥 ∧ vl = remove (𝑦, 𝑙 )⟩· 
+
+ (• \ ⟨ put | key = 𝑥 ⟩) ∗·⟨ commit | tid = 𝑖 ⟩·⟨ unenrStuRsp | true ⟩·• ∗]
+
+unenrStuRsp : [•∗] unit [•∗]
+
+These clauses encode the underlying database steps used by courseware’s API, which is similar to the Shopping benchmark. They also forbid two uncommitted transactions from updating the same key —the same “write-write conflict” that InnoDB-style engines reject. For the weakened uHat , we switch the MonkeyDB layer to RC as above; the cart operations themselves are unchanged.  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. 52 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+
+Twitter. This is a benchmark from MonkeyDB [ 1], modeling social follow sets and timelines on top of the transactional store. The global property is a violation of strong consistency: after observing follows list ℓ for user 𝑢 , with no further put between, a later get may read a different set. 
+
+•∗·⟨ get | user = 𝑢 ∧ fls = ℓ⟩·  (• \ ⟨ put | user = 𝑢 ⟩) ∗·⟨ get | user = 𝑢 ∧ ¬( fls = ℓ)⟩·• ∗
+
+The uHat is defined as follows ( emp , cons , and remove are as in the Shopping cart benchmark): 
+
+(Causal Consistency Specification is omitted )
+
+followReq : 𝑖 :int , d ℓ:int list d 𝑢 :int  𝑓 :int  [•∗] unit 
+
+[⟨followReq | user = 𝑢 ∧ follow _o = 𝑓 ⟩·⟨ begin | tid = 𝑖 ⟩·⟨ get | tid = 𝑖 ∧ user = 𝑢 ∧ fls = ℓ⟩·• ∗·⟨put | tid = 𝑖 ∧ user = 𝑢 ∧ fls = cons (𝑓 , ℓ )⟩·  (• \ ⟨ put | user = 𝑢 ⟩) ∗·⟨commit | tid = 𝑖 ⟩·⟨ followRsp | true ⟩·• ∗]
+
+followRsp : [•∗] unit [•∗]
+
+unfollowReq : 𝑖 :int , d ℓ:int list d 𝑢 :int  𝑓 :int  [•∗] unit 
+
+[⟨unfollowReq | user = 𝑢 ∧ unfollow _o = 𝑓 ⟩·⟨ begin | tid = 𝑖 ⟩· ⟨get | tid = 𝑖 ∧ user = 𝑢 ∧ fls = ℓ⟩·• ∗·⟨put | tid = 𝑖 ∧ user = 𝑢 ∧ fls = remove (𝑓 , ℓ )⟩·  (• \ ⟨ put | user = 𝑢 ⟩) ∗·⟨commit | tid = 𝑖 ⟩·⟨ unfollowRsp | true ⟩·• ∗]
+
+unfollowRsp : [•∗] unit [•∗]
+
+postTweetReq : 𝑖 :int , d ℓ:int list d 𝑢 :int  𝑓 :int  [•∗] unit 
+
+[⟨postTweetReq | user = 𝑢 ∧ tweet = 𝜏 ⟩·⟨ begin | tid = 𝑖 ⟩· ⟨getT | tid = 𝑖 ∧ user = 𝑢 ∧ tweets = ℓ⟩·• ∗·⟨putT | tid = 𝑖 ∧ user = 𝑢 ∧ tweets = cons (𝜏, ℓ )⟩·  (• \ ⟨ putT | user = 𝑢 ⟩) ∗·⟨commit | tid = 𝑖 ⟩·⟨ postTweetRsp | true ⟩·• ∗]
+
+postTweetRsp : [•∗] unit [•∗]
+
+timelineReq : 𝑖 :int , d ℓ:int list d 𝑢 :int  [•∗] unit 
+
+[⟨timelineReq | user = 𝑢 ⟩·⟨ begin | tid = 𝑖 ⟩·⟨ getT | tid = 𝑖 ∧ user = 𝑢 ∧ tweets = ℓ⟩· ⟨timelineRsp | tweets = ℓ⟩·• ∗]
+
+timelineRsp : [•∗] unit [•∗]
+
+These specifications mirror the Shopping-style pattern: each API issues begin /commit around reads and updates of the underlying rows, with  (• \ ⟨ put | user = 𝑢 ⟩) ∗ /  (• \ ⟨ putT | user = 𝑢 ⟩) ∗
+
+forbidding write–write conflicts on those projections. For the weakened uHat , we switch the MonkeyDB layer to RC as above; the Twitter operations themselves are unchanged.  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 53
+
+SmallBank. This is a benchmark from MonkeyDB [ 1], implementing the SmallBank workload (accounts, checking, and savings) on the transactional store. The global property is a violation of strong consistency: two reads of checking balance 𝑏 for customer 𝑐 with no ⟨putC | cm = 𝑐 ⟩ in between should agree, yet a later read may disagree. 
+
+•∗·⟨ getC | cm = 𝑐 ∧ bal = 𝑏 ⟩·  (• \ ⟨ putC | cm = 𝑐 ⟩) ∗·⟨ getC | cm = 𝑐 ∧ ¬( bal = 𝑏 )⟩·• ∗
+
+The uHat is defined as follows: 
+
+(Causal Consistency Specification is omitted )
+
+openAReq : 𝑖 :int , 𝑛 :int , 𝑐 :int  [ • \ (⟨ openAReq | name = 𝑛 ⟩ ∪ ⟨ openAReq | cm = 𝑐 ⟩) ∗] unit 
+
+[⟨openAReq | name = 𝑛 ∧ cm = 𝑐 ⟩·⟨ begin | tid = 𝑖 ⟩·⟨ putA | tid = 𝑖 ∧ name = 𝑛 ∧ cm = 𝑐 ⟩· ⟨putS | tid = 𝑖 ∧ cm = 𝑐 ∧ bal = 0⟩·⟨ putC | tid = 𝑖 ∧ cm = 𝑐 ∧ bal = 0⟩· ⟨commit | tid = 𝑖 ⟩·⟨ openARsp | true ⟩·• ∗]
+
+openARsp : [•∗] unit [•∗]
+
+amalReq : 𝑖 :int , 𝑐 0:int , 𝑐 1:int  [•∗·⟨ openAReq | cm = 𝑐 0 ∨ cm = 𝑐 1⟩·• ∗·⟨ openAReq | cm = 𝑐 0 ∨ cm = 𝑐 1⟩·• ∗] unit 
+
+[⟨amalReq | cm0 = 𝑐 0 ∧ cm1 = 𝑐 1⟩·⟨ begin | tid = 𝑖 ⟩·⟨ getS | tid = 𝑖 ∧ cm = 𝑐 0⟩· ⟨getC | tid = 𝑖 ∧ cm = 𝑐 0⟩·⟨ getC | tid = 𝑖 ∧ cm = 𝑐 1⟩·• ∗·⟨putS | tid = 𝑖 ∧ cm = 𝑐 0 ∧ bal = 0⟩·⟨ putC | tid = 𝑖 ∧ cm = 𝑐 0 ∧ bal = 0⟩·⟨ putC | tid = 𝑖 ∧ cm = 𝑐 1⟩· 
+
+ • \ (⟨ putS | cm = 𝑐 0⟩ ∪ ⟨ putC | cm = 𝑐 0⟩ ∪ ⟨ putC | cm = 𝑐 1⟩) ∗·⟨ commit | tid = 𝑖 ⟩·⟨ amalRsp | true ⟩·• ∗]
+
+amalRsp : [•∗] unit [•∗]
+
+balanceReq : 𝑖 :int , 𝑛 :int , 𝑐 :int , 𝑏 𝑠 :int , 𝑏 𝑐 :int  [•∗·⟨ openAReq | name = 𝑛 ∧ cm = 𝑐 ⟩·• ∗] unit 
+
+[⟨balanceReq | name = 𝑛 ⟩·⟨ begin | tid = 𝑖 ⟩·⟨ getA | tid = 𝑖 ∧ name = 𝑛 ∧ cm = 𝑐 ⟩· ⟨getS | tid = 𝑖 ∧ cm = 𝑐 ∧ bal = 𝑏 𝑠 ⟩·⟨ getC | tid = 𝑖 ∧ cm = 𝑐 ∧ bal = 𝑏 𝑐 ⟩·• ∗·⟨commit | tid = 𝑖 ⟩·⟨ balanceRsp | bal = 𝑏 𝑠 + 𝑏 𝑐 ⟩·• ∗]
+
+balanceRsp : [•∗] unit [•∗]
+
+depositReq : 𝑖 :int , 𝑛 :int , 𝑐 :int , 𝑏 :int , 𝑎 :int  [•∗·⟨ openAReq | name = 𝑛 ∧ cm = 𝑐 ⟩·• ∗] unit 
+
+[⟨depositReq | name = 𝑛 ∧ amt = 𝑎 ⟩·⟨ begin | tid = 𝑖 ⟩·⟨ getA | tid = 𝑖 ∧ name = 𝑛 ∧ cm = 𝑐 ⟩· ⟨getC | tid = 𝑖 ∧ cm = 𝑐 ∧ bal = 𝑏 ⟩·• ∗·⟨ putC | tid = 𝑖 ∧ cm = 𝑐 ⟩· 
+
+ (• \ ⟨ putC | cm = 𝑐 ⟩) ∗·⟨ commit | tid = 𝑖 ⟩·⟨ depositRsp | true ⟩·• ∗]
+
+depositRsp : [•∗] unit [•∗]
+
+sendReq : 𝑖 :int , 𝑠 :int , 𝑑 :int , 𝑏 𝑠 :int , 𝑏 𝑑 :int , 𝑎 :int 
+
+[•∗·⟨ openAReq | cm = 𝑠 ∨ cm = 𝑑 ⟩·• ∗·⟨ openAReq | cm = 𝑠 ∨ cm = 𝑑 ⟩·• ∗] unit 
+
+[⟨sendReq | srcid = 𝑠 ∧ destid = 𝑑 ∧ amt = 𝑎 ⟩·⟨ begin | tid = 𝑖 ⟩· ⟨getC | tid = 𝑖 ∧ cm = 𝑠 ∧ bal = 𝑏 𝑠 ⟩·⟨ getC | tid = 𝑖 ∧ cm = 𝑑 ∧ bal = 𝑏 𝑑 ⟩·• ∗·⟨putC | tid = 𝑖 ∧ cm = 𝑠 ∧ bal = 𝑏 𝑠 − 𝑎 ⟩·⟨ putC | tid = 𝑖 ∧ cm = 𝑑 ∧ bal = 𝑏 𝑑 + 𝑎 ⟩· 
+
+ • \ (⟨ putC | cm = 𝑠 ⟩ ∪ ⟨ putC | cm = 𝑑 ⟩ ∪ ·) ∗ ⟨commit | tid = 𝑖 ⟩·⟨ sendRsp | true ⟩·• ∗]
+
+sendRsp : [•∗] unit [•∗] 
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. 54 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+
+transReq : 𝑖 :int , 𝑛 :int , 𝑐 :int , 𝑏 :int , 𝑎 :int  [•∗·⟨ openAReq | name = 𝑛 ∧ cm = 𝑐 ⟩·• ∗] unit 
+
+[⟨transReq | name = 𝑛 ∧ amt = 𝑎 ⟩·⟨ begin | tid = 𝑖 ⟩·⟨ getA | tid = 𝑖 ∧ name = 𝑛 ∧ cm = 𝑐 ⟩· ⟨getS | tid = 𝑖 ∧ cm = 𝑐 ∧ bal = 𝑏 ⟩·• ∗·⟨ putS | tid = 𝑖 ∧ cm = 𝑐 ∧ bal = 𝑏 + 𝑎 ⟩· 
+
+ (• \ ⟨ putS | cm = 𝑐 ⟩) ∗·⟨ commit | tid = 𝑖 ⟩·⟨ transRsp | true ⟩·• ∗]
+
+transRsp : [•∗] unit [•∗]
+
+writeCReq : 𝑖 :int , 𝑛 :int , 𝑐 :int , 𝑎 :int  [•∗·⟨ openAReq | name = 𝑛 ∧ cm = 𝑐 ⟩·• ∗] unit 
+
+[⟨writeCReq | name = 𝑛 ∧ amt = 𝑎 ⟩·⟨ begin | tid = 𝑖 ⟩·⟨ getA | tid = 𝑖 ∧ name = 𝑛 ∧ cm = 𝑐 ⟩· ⟨getS | tid = 𝑖 ∧ cm = 𝑐 ⟩·⟨ getC | tid = 𝑖 ∧ cm = 𝑐 ⟩·• ∗·⟨putC | tid = 𝑖 ∧ cm = 𝑐 ⟩·  (• \ ⟨ putC | cm = 𝑐 ⟩) ∗·⟨ commit | tid = 𝑖 ⟩·⟨ writeCRsp | true ⟩·• ∗]
+
+writeCRsp : [•∗] unit [•∗]
+
+Each scenario threads begin /commit with the same write–write gaps on the relevant account rows (e.g.  (• \ ⟨ putC | cm = 𝑐 ⟩) ∗ before commit) as in Shopping . For the weakened uHat , we switch the MonkeyDB layer to RC as above; the SmallBank scenarios themselves are unchanged. 
+
+P Language Benchmarks 
+
+The remaining models are asynchronous message-passing protocols drawn from PBench. As in 
+
+Stack and the synchronous benchmarks above, we give a short scenario, the global property as an SRE, the operation-wise uHat clauses (where futures often encode protocol order and search bias), and a note on weakening. 
+
+Database. This model is a simplified database with APIs: writeReq /writeRsp and readReq /readRsp .It must satisfy the Read-Your-Writes (RYW) policy: reads should respect the last completed write unless another write slips in between; the generator therefore chases a successful read that never-theless returns 𝑦 ≠ 𝑥 right after ⟨writeRsp | va = 𝑥 ⟩ and with no further ⟨writeRsp | true ⟩ in the gap. Thus, the global property is: 
+
+•∗·⟨ writeRsp | va = 𝑥 ⟩·  (• \ ⟨ writeRsp | true ⟩) ∗·⟨ readRsp | va = 𝑦 ∧ 𝑥 ≠ 𝑦 ∧ st ⟩·• ∗
+
+The uHat comprises the following clauses: 
+
+readReq : 𝑥 :int  [•∗·⟨ writeReq | va = 𝑥 ⟩·  (• \ ⟨ writeReq | true ⟩) ∗] unit [⟨readRsp | va = 𝑥 ∧ st ⟩] ⊓
+
+[ (• \ ⟨ writeReq | true ⟩) ∗] unit [⟨readRsp | ¬ st ⟩]
+
+writeReq : 𝑥 :int  [•∗] unit [⟨writeReq | va = 𝑥 ⟩·⟨ writeRsp | va = 𝑥 ⟩]
+
+writeRsp : 𝑥 :int  [•∗] { 𝜈 :int | va = 𝑥 }𝑢 [•∗]
+
+readRsp : 𝑥 :int d 𝑠 :bool  [•∗] { 𝜈 :int | va = 𝑥 ∧ st = 𝑠 }𝑢 [•∗]
+
+The history on readReq ties a successful read to a matching prior writeReq (the Kleene gap excludes stray writes), which biases generation toward read-your-writes-shaped traces. The weakened uHat 
+
+relaxes those payload ties on writeRsp and readRsp by weakening the qualifier directly.  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 55
+
+Firewall. The firewall divides the nodes into “internal nodes” and “external nodes”; external nodes cannot send messages to internal nodes until they are recorded on the “white list” of the firewall. To add an external node to the white list, at least one internal node must send it a message. The firewall under test has incorrect white list recording, which leads to an error described by the following global property: 
+
+ • \ (⟨ eExReq | node = 𝑛 ⟩ ∪ ⟨ eFwReq | node = 𝑛 ⟩) ∗·⟨ eInReq | node = 𝑛 ⟩·• ∗·⟨ eExRsp | node = 𝑛 ∧ ¬ stat ⟩·• ∗
+
+The uHat comprises the following clauses: 
+
+eStart : 𝑛 :Node  [•∗] unit [⟨eStart | node = 𝑛 ⟩·⟨ eInReq | node = 𝑛 ⟩]
+
+eInReq : 𝑛 :Node  [ • \ (⟨ eExReq | node = 𝑛 ⟩ ∪ ⟨ eInReq | node = 𝑛 ⟩ ∪ ⟨ eFwReq | node = 𝑛 ⟩) ∗] unit 
+
+[⟨eFwReq | node = 𝑛 ⟩]
+
+eFwReq : 𝑛 :Node  [ (• \ ⟨ eFwReq | node = 𝑛 ⟩) ∗] unit [⟨eExReq | node = 𝑛 ⟩]
+
+eExReq : 𝑛 :Node  [•∗·⟨ eInReq | node = 𝑛 ⟩·  (• \ ⟨ eInReq | true ⟩) ∗] unit 
+
+[⟨eExReq | node = 𝑛 ⟩·⟨ eExRsp | node = 𝑛 ∧ stat ⟩] ⊓
+
+𝑛 :Node  [•∗·⟨ eInReq | ¬( node = 𝑛 )⟩·  (• \ ⟨ eInReq | true ⟩) ∗] unit 
+
+[⟨eExReq | node = 𝑛 ⟩·⟨ eExRsp | node = 𝑛 ∧ ¬ stat ⟩]
+
+eExRsp : 𝑛 :Node d 𝑠 :bool  [•∗] { 𝜈 :bool | stat = 𝑠 }𝑢 [•∗]
+
+Histories on eInReq and eFwReq rule out re-entrant forwarding noise before the next hop, sharp-ening the causal shape the tester must satisfy. The weakened uHat merges the intersected eExReq 
+
+cases and weakens guards on those events. 
+
+RingLeaderElection. Processes ring-elect a leader using eWakeup and eNom , with outcomes published as ⟨eWon | ld = · · ·⟩ ; at most one leader value should ultimately win. The search targets two eWon 
+
+announcements that contradict each other on ld . The global property is: 
+
+•∗·⟨ eWon | ld = ℓ⟩·• ∗·⟨ eWon | ¬( ld = ℓ)⟩·• ∗
+
+The uHat comprises the following clauses ( next is axiomatized on ring nodes): 
+
+eWakeup : 𝑛 :Node  [ (• \ ⟨ eWon | true ⟩) ∗] unit [⟨eNom | node = 𝑛 ∧ ld = 𝑛 ⟩]
+
+eNom : 𝑛 :Node d ℓ:{𝜈 :Node | ℓ ≠ 𝑛 }𝑢  [•∗] unit [⟨eNom | node = 𝑛 ∧ ld = ℓ⟩·⟨ eWon | ld = ℓ⟩] ⊓
+
+𝑛 :Node d ℓ:{𝜈 :Node | ℓ = 𝑛 }𝑢  [•∗] unit [⟨eNom | node = 𝑛 ∧ ld = ℓ⟩· ⟨eNom | node = next (𝑛 ) ∧ ld = ℓ⟩]
+
+eWon : ℓ:Node  [•∗] unit [⟨eWon | ld = ℓ⟩]
+
+The future on eWakeup forbids any earlier ⟨eWon | true ⟩, steering traces toward elections that have not yet closed; that is the main search bias for this benchmark. The weakened uHat drops these guard constraints on eWakeup and eWon . 
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. 56 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+
+Bankserver. The bank server sequences balance reads and updates around wdReq and eWDRsp ;withdrawals are meant to stay within available funds. The buggy server still reports a failed withdrawal on ac (¬status ) in a situation where the recorded balances should have sufficed. The global property is: 
+
+•∗·⟨ eWDRsp | acId = ac ∧ ¬ status ⟩·• ∗
+
+The uHat comprises the following clauses ( aid /rid are phantom account/request ids): 
+
+initAc : 𝑎𝑐 :aid d 𝑏𝑎 :{𝜈 :int | 𝑏𝑎 > 0}𝑢  [ (• \ ⟨ initAc | acId = 𝑎𝑐 ⟩) ∗] unit [⟨initAc | acId = 𝑎𝑐 ∧ bal = 𝑏𝑎 ⟩]
+
+wdReq : 𝑖𝑑 :rid d 𝑎𝑐 :aid d 𝑎𝑚 :{𝜈 :int | 𝑎𝑚 > 0}𝑢  [•∗] unit 
+
+[⟨wdReq | rId = 𝑖𝑑 ∧ acId = 𝑎𝑐 ∧ amt = 𝑎𝑚 ⟩·⟨ read | rId = 𝑖𝑑 ∧ acId = 𝑎𝑐 ∧ amt = 𝑎𝑚 ⟩]
+
+read : 𝑏𝑎 :int d 𝑖𝑑 :rid d 𝑎𝑚 : d 𝑎𝑐 :aid 
+
+[•∗·⟨ initAc | acId = 𝑎𝑐 ∧ bal = 𝑏𝑎 ⟩·  • \ (⟨ read | acId = 𝑎𝑐 ⟩ ∪ ⟨ initAc | acId = 𝑎𝑐 ⟩) ∗] unit 
+
+[⟨read | rId = 𝑖𝑑 ∧ amt = 𝑎𝑚 ∧ acId = 𝑎𝑐 ⟩·⟨ readRsp | rId = 𝑖𝑑 ∧ amt = 𝑎𝑚 ∧ acId = 𝑎𝑐 ∧ bal = 𝑏𝑎 ⟩]
+
+readRsp : 𝑖𝑑 :rid d 𝑎𝑚 : d 𝑎𝑐 :aid d 𝑏𝑎 :{𝜈 :int | 𝑏𝑎 > 0 ∧ 𝑏𝑎 > 𝑎𝑚 }𝑢 
+
+[ • \ (⟨ readRsp | true ⟩ ∪ ⟨ read | true ⟩) ∗·⟨ wdReq | rId = 𝑖𝑑 ∧ acId = 𝑎𝑐 ∧ amt = 𝑎𝑚 ⟩· 
+
+ (• \ ⟨ wdReq | true ⟩) ∗] unit 
+
+[⟨readRsp | acId = 𝑎𝑐 ∧ bal = 𝑏𝑎 ⟩·⟨ update | acId = 𝑎𝑐 ∧ bal = 𝑏𝑎 − 𝑎𝑚 ⟩· ⟨eWDRsp | rId = 𝑖𝑑 ∧ acId = 𝑎𝑐 ∧ bal = 𝑏𝑎 − 𝑎𝑚 ∧ status ⟩]
+
+𝑖𝑑 :rid d 𝑎𝑚 : d 𝑎𝑐 :aid d 𝑏𝑎 :{𝜈 :int | 𝑏𝑎 > 0 ∧ 𝑏𝑎 ≤ 𝑎𝑚 }𝑢  [•∗] unit 
+
+[⟨readRsp | rId = 𝑖𝑑 ∧ amt = 𝑎𝑚 ∧ acId = 𝑎𝑐 ∧ bal = 𝑏𝑎 ⟩·⟨ eWDRsp | rId = 𝑖𝑑 ∧ acId = 𝑎𝑐 ∧ ¬ status ⟩]
+
+update : 𝑎𝑐 :aid d 𝑏𝑎 :{𝜈 :int | 𝑏𝑎 > 0}𝑢  [•∗] unit [⟨update | acId = 𝑎𝑐 ∧ bal = 𝑏𝑎 ⟩]
+
+eWDRsp : 𝑖𝑑 :rid d 𝑎𝑐 :aid d 𝑏𝑎 :int , 𝑠𝑡 :bool  [•∗] { 𝜈 :unit | rId = 𝑖𝑑 ∧ acId = 𝑎𝑐 ∧ bal = 𝑏𝑎 ∧ status = 𝑠𝑡 }𝑢 [•∗]
+
+The successful branch requires bal > amt at the read response so the backend can emit update ;the failing branch skips the update. The weakened uHat simplifies response/update qualifiers and widens read-query intersected types.  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 57
+
+Simplified2pc. The SUT is a simplified two-phase commit client: committed state should read atomically, so after a write response commits 𝑥 and no further write completes in the middle, a read response should not return 𝑦 ≠ 𝑥 . In SRE form this is a committed writeRsp , a Kleene stretch with no further successful writeRsp , a readRsp that mismatches the written value, and a final stretch with no further readRsp or writeRsp . The global property is: 
+
+•∗·⟨ writeRsp | va = 𝑥 ∧ stat ⟩·  (• \ ⟨ writeRsp | stat ⟩) ∗·⟨ readRsp | va = 𝑦 ∧ 𝑥 ≠ 𝑦 ⟩· 
+
+ • \ (⟨ readRsp | true ⟩ ∪ ⟨ writeRsp | true ⟩) ∗
+
+The uHat is: 
+
+readReq : [•∗] unit [⟨readReq | true ⟩·⟨ getReq | true ⟩]
+
+getReq : [ (• \ ⟨ commit | true ⟩) ∗] unit [⟨readRsp | va = −1⟩]
+
+readRsp : 𝑥 :int  [•∗] { 𝜈 :int | va = 𝑥 }𝑢 [•∗]
+
+writeReq : 𝑥 :{𝜈 :int | 𝑥 ≥ 0}𝑢  [•∗] unit [⟨writeReq | va = 𝑥 ⟩·⟨ putReq | va = 𝑥 ⟩]
+
+putReq : 𝑥 :int  [•∗] unit [⟨putReq | va = 𝑥 ⟩·⟨ putRsp | va = 𝑥 ⟩]
+
+putRsp : 𝑥 :int d 𝑠 :bool  [•∗] unit [⟨putRsp | va = 𝑥 ∧ stat ⟩·⟨ writeRsp | va = 𝑥 ∧ stat = 𝑠 ⟩·⟨ commit | true ⟩]
+
+𝑥 :int d 𝑠 :bool  [•∗] unit [⟨putRsp | va = 𝑥 ∧ stat = 𝑠 ⟩·⟨ writeRsp | va = 𝑥 ∧ ¬ stat ⟩·⟨ abort | true ⟩]
+
+writeRsp : 𝑥 :int d 𝑠 :bool  [•∗] { 𝜈 :int | va = 𝑥 ∧ stat = 𝑠 }𝑢 [•∗]
+
+commit : [•∗] unit [⟨commit | true ⟩]
+
+abort : [•∗] unit [⟨abort | true ⟩]
+
+The weakened uHat drops non-negative value constraints on writeReq ; many putRsp , writeRsp ,and readRsp payload tests become true .
+
+Heartbeat. The heartbeat failure detector should align “nodes down” announcements with ac-tual shutdowns. Note that messages can be lost due to network issues. The system has a time-out retry limit as 3 (i.e., trial ). The bug class is a false alarm: eNotifyNodesDown fires while 
+
+⟨eShutDown | true ⟩ never appears on either side in the exhibited pattern. The global property is: 
+
+ (• \ ⟨ eShutDown | true ⟩) ∗·⟨ eNotifyNodesDown | true ⟩·  (• \ ⟨ eShutDown | true ⟩) ∗
+
+The uHat comprises the following clauses: 
+
+eNotifyNodesDown : [ (• \ ⟨ eNotifyNodesDown | true ⟩) ∗] unit [•∗]
+
+eNetworkError : 𝑡𝑙 :int  [•∗·⟨ ePong | trial = 𝑡𝑙 ⟩·• ∗] unit [⟨ePongLost | trial = 𝑡𝑙 ⟩]
+
+ePing : 𝑡𝑙 :int  [ (• \ ⟨ eShutDown | true ⟩) ∗] unit [⟨ePong | trial = 𝑡𝑙 ⟩]
+
+eShutDown : [ (• \ ⟨ eShutDown | true ⟩) ∗] unit [⟨eShutDown | true ⟩]
+
+eStart : [ • \ (⟨ ePing | true ⟩ ∪ ⟨ ePongLost | true ⟩ ∪ ⟨ eStart | true ⟩) ∗] unit [⟨ePing | trial = 1⟩]
+
+ePong : 𝑡𝑙 :int  [ (• \ ⟨ ePongLost | trial = 𝑡𝑙 ⟩) ∗] unit [•∗]
+
+ePongLost : 𝑡𝑙 :{𝜈 :int | 𝑡𝑙 = 1}𝑢  [ (• \ ⟨ ePongLost | trial = 𝑡𝑙 ⟩) ∗] unit [⟨ePing | trial = 2⟩]
+
+𝑡𝑙 :{𝜈 :int | 𝑡𝑙 = 2}𝑢  [ (• \ ⟨ ePongLost | trial = 𝑡𝑙 ⟩) ∗] unit [⟨ePing | trial = 3⟩]
+
+𝑡𝑙 :{𝜈 :int | 𝑡𝑙 = 3}𝑢  [•∗] unit [⟨eNotifyNodesDown | true ⟩]
+
+The weakened uHat keeps the trial-level structure but softens side conditions.  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. 58 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+
+Chainreplication. Chain-replicated storage ought to make completed writes visible to later successful reads on the same key. This chain is simplified to only have three nodes: the head node, middle node, and tail node; since the Chain Replication protocol has three different policies for these three kinds of nodes. Here a client still reads a stale value: the write on key = 𝑘 finishes ( writeRsp ), yet the next successful read ( st ) returns 𝑦 ≠ 𝑥 although no further ⟨writeRsp | true ⟩ occurs between them. The global property is: 
+
+•∗·⟨ writeReq | key = 𝑘 ∧ va = 𝑥 ⟩·  (• \ ⟨ writeRsp | true ⟩) ∗·⟨ readRsp | key = 𝑘 ∧ va = 𝑦 ∧ 𝑦 ≠ 𝑥 ∧ st ⟩· 
+
+ (• \ ⟨ writeRsp | true ⟩) ∗
+
+The uHat comprises the following clauses ( mid1 /mid2 axiomatize mid vs. tail nodes): 
+
+writeReq : 𝑘 :Key d 𝑥 :int  [•∗] unit [⟨writeReq | key = 𝑘 ∧ va = 𝑥 ⟩· ⟨writeToMid | key = 𝑘 ∧ va = 𝑥 ∧ mid1 (node )⟩ ]
+
+writeToMid : 𝑘 :Key d 𝑥 :int 
+
+𝑛 :{𝜈 :Node | mid2 (𝑛 )}𝑢  [•∗] { 𝜈 :unit | key = 𝑘 ∧ va = 𝑥 ∧ node = 𝑛 }𝑢 
+
+[⟨writeToTail | key = 𝑘 ∧ va = 𝑥 ⟩] ⊓
+
+𝑘 :Key d 𝑥 :int 
+
+𝑛 :{𝜈 :Node | mid1 (𝑛 )}𝑢  [•∗] { 𝜈 :unit | key = 𝑘 ∧ va = 𝑥 ∧ node = 𝑛 }𝑢 
+
+[⟨writeToMid | key = 𝑘 ∧ va = 𝑥 ∧ node = next (𝑛 )⟩ ]
+
+writeToTail : 𝑘 :Key d 𝑥 :int  [ (• \ ⟨ crashTail | true ⟩) ∗] { 𝜈 :unit | key = 𝑘 ∧ va = 𝑥 }𝑢 [•∗] ⊓
+
+𝑘 :Key d 𝑥 :int  [ (• \ ⟨ crashTail | true ⟩) ∗] { 𝜈 :unit | key = 𝑘 ∧ va = 𝑥 }𝑢 
+
+[⟨writeRsp | key = 𝑘 ∧ va = 𝑥 ⟩]
+
+writeRsp : 𝑘 :Key d 𝑥 :int  [•∗] { 𝜈 :unit | key = 𝑘 ∧ va = 𝑥 }𝑢 [•∗]
+
+readReq : 𝑘 :Key  [ • \ (⟨ crashTail | true ⟩ ∪ ⟨ writeToTail | key = 𝑘 ⟩) ∗] unit [⟨readRsp | key = 𝑘 ∧ ¬ st ⟩] ⊓
+
+𝑥 :int d 𝑘 :Key  [ (• \ ⟨ crashTail | true ⟩) ∗·⟨ crashTail | true ⟩· 
+
+ (• \ ⟨ crashTail | true ⟩) ∗·⟨ writeToMid | key = 𝑘 ∧ va = 𝑥 ∧ mid2 (node )⟩· 
+
+ • \ (⟨ crashTail | true ⟩ ∪ ⟨ writeToMid | key = 𝑘 ∧ va = 𝑥 ∧ mid2 (node )⟩) ∗] unit 
+
+[⟨readRsp | key = 𝑘 ∧ va = 𝑥 ∧ st ⟩] ⊓
+
+𝑥 :int d 𝑘 :Key  [ (• \ ⟨ crashTail | true ⟩) ∗·⟨ writeToMid | key = 𝑘 ∧ va = 𝑥 ∧ mid2 (node )⟩· 
+
+ • \ (⟨ crashTail | true ⟩ ∪ ⟨ writeToMid | key = 𝑘 ∧ mid2 (node )⟩) ∗·⟨ crashTail | true ⟩· 
+
+ • \ (⟨ crashTail | true ⟩ ∪ ⟨ writeToMid | key = 𝑘 ∧ mid2 (node )⟩) ∗] unit 
+
+[⟨readRsp | key = 𝑘 ∧ va = 𝑥 ∧ st ⟩] ⊓
+
+𝑥 :int d 𝑘 :Key  [ • \ (⟨ crashTail | true ⟩ ∪ ⟨ writeToMid | key = 𝑘 ∧ mid2 (node )⟩) ∗·⟨crashTail | true ⟩·  • \ (⟨ crashTail | true ⟩ ∪ ⟨ writeToMid | key = 𝑘 ∧ mid2 (node )⟩) ∗] unit 
+
+[⟨readRsp | key = 𝑘 ∧ ¬ st ⟩] ⊓
+
+𝑥 :int d 𝑘 :Key  [ (• \ ⟨ crashTail | true ⟩) ∗·⟨ writeToTail | key = 𝑘 ∧ va = 𝑥 ⟩· 
+
+ • \ (⟨ crashTail | true ⟩ ∪ ⟨ writeToTail | true ⟩) ∗] unit [⟨readRsp | key = 𝑘 ∧ va = 𝑥 ∧ st ⟩]
+
+readRsp : 𝑘 :Key d 𝑥 :int d 𝑠 :bool  [•∗] { 𝜈 :int | key = 𝑘 ∧ va = 𝑥 ∧ st = 𝑠 }𝑢 [•∗]
+
+crashTail : [•∗] unit [•∗]
+
+The weakened uHat merges intersected readReq types into fewer success/failure skeletons.  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 59
+
+Paxos. Paxos exposes an observable learner eLearn that ought to settle on a single replicated value. We use ∗Lost ∗ to simulate the network issue as introduced in the HeartBeat benchmark. The stress trace lets the learner emit two learns with different payloads 𝑥 and 𝑦 (𝑥 ≠ 𝑦 ). The global property is: 
+
+•∗·⟨ eLearn | va = 𝑥 ⟩·• ∗·⟨ eLearn | va = 𝑦 ∧ 𝑥 ≠ 𝑦 ⟩·• ∗
+
+The uHat comprises the following clauses ( pr1 /pr2 partition proposers and acc1 /acc2 partition acceptors): 
+
+eStart : 𝑝 :Node d 𝑥 :tVal  [•∗·⟨ eLostPrepReq | proposer = 𝑝 ∧ acc2 (acceptor )⟩·• ∗]
+
+unit [⟨ePrepReq | proposer = 𝑝 ∧ acc1 (acceptor ) ∧ va = 𝑥 ⟩] ⊓
+
+𝑝 :Node d 𝑥 :tVal  [•∗·⟨ eLostPrepReq | proposer = 𝑝 ∧ acc1 (acceptor )⟩·• ∗]
+
+unit [⟨ePrepReq | proposer = 𝑝 ∧ acc2 (acceptor ) ∧ va = 𝑥 ⟩]
+
+eLearn : 𝑥 :tVal  [•∗] { 𝜈 :unit | va = 𝑥 }𝑢 [•∗]
+
+eLostPrepReq : 𝑝 :Node d 𝑎𝑐 :Node  [•∗] { 𝜈 :unit | proposer = 𝑝 ∧ acceptor = 𝑎𝑐 }𝑢 [•∗]
+
+ePrepReq : 𝑝 :{𝜈 :Node | pr2 (𝑝 )}𝑢 d 𝑎𝑐 :Node d 𝑥 :tVal 
+
+[ • \ (⟨ ePrepReq | acceptor = 𝑎𝑐 ⟩ ∪ ⟨ eAcReq | true ⟩) ∗·⟨ePrepReq | pr1 (proposer ) ∧ acceptor = 𝑎𝑐 ⟩·  • \ (⟨ ePrepReq | acceptor = 𝑎𝑐 ⟩ ∪ ⟨ eAcReq | true ⟩) ∗]{𝜈 :unit | proposer = 𝑝 ∧ acceptor = 𝑎𝑐 ∧ va = 𝑥 }𝑢 
+
+[⟨ePrepRsp | acceptor = 𝑎𝑐 ∧ promised = 𝑝 ∧ va = 𝑥 ⟩] ⊓
+
+𝑝 :Node d 𝑎𝑐 :Node d 𝑥 :tVal  [ • \ (⟨ ePrepReq | acceptor = 𝑎𝑐 ⟩ ∪ ⟨ eAcReq | true ⟩) ∗]{𝜈 :unit | proposer = 𝑝 ∧ acceptor = 𝑎𝑐 ∧ va = 𝑥 }𝑢 
+
+[⟨ePrepRsp | acceptor = 𝑎𝑐 ∧ promised = 𝑝 ∧ va = 𝑥 ⟩] ⊓
+
+𝑝 :Node d 𝑎𝑐 :Node d 𝑥 :tVal  [•∗·⟨ eLostPrepRsp | acceptor = 𝑎𝑐 ∧ promised = 𝑝 ⟩·• ∗]{𝜈 :unit | proposer = 𝑝 ∧ acceptor = 𝑎𝑐 ∧ va = 𝑥 }𝑢 [•∗]
+
+eLostPrepRsp : 𝑎𝑐 :Node d 𝑝 :Node  [•∗] { 𝜈 :unit | acceptor = 𝑎𝑐 ∧ promised = 𝑝 }𝑢 [•∗]
+
+ePrepRsp : 𝑎𝑐 :Node d 𝑝 :Node d 𝑥 :tVal d 𝑎𝑝 :Node 
+
+[ (• \ ⟨ ePrepRsp | promised = 𝑝 ⟩) ∗]{𝜈 :unit | acceptor = 𝑎𝑐 ∧ promised = 𝑝 ∧ va = 𝑥 ∧ nAccepted = 𝑎𝑝 }𝑢 
+
+[⟨eAcReq | acceptor = 𝑎𝑐 ∧ proposer = 𝑝 ∧ va = 𝑥 ⟩] ⊓
+
+𝑎𝑐 :Node d 𝑝 :Node d 𝑥 :tVal d 𝑎𝑝 :Node 
+
+[ (• \ ⟨ ePrepRsp | promised = 𝑝 ⟩) ∗]{𝜈 :unit | acceptor = 𝑎𝑐 ∧ promised = 𝑝 ∧ va = 𝑥 ∧ nAccepted = 𝑎𝑝 }𝑢 
+
+[⟨eAcReq | acc1 (acceptor ) ∧ proposer = 𝑝 ∧ va = 𝑥 ⟩· ⟨eAcReq | acc2 (acceptor ) ∧ proposer = 𝑝 ∧ va = 𝑥 ⟩] ⊓
+
+𝑎𝑐 :Node d 𝑝 :Node d 𝑥 :tVal d 𝑎𝑝 :Node 
+
+[•∗·⟨ eLostAcReq | acceptor = 𝑎𝑐 ∧ proposer = 𝑝 ⟩·• ∗]{𝜈 :unit | acceptor = 𝑎𝑐 ∧ promised = 𝑝 ∧ va = 𝑥 ∧ nAccepted = 𝑎𝑝 }𝑢 [•∗] ⊓
+
+𝑎𝑐 :Node d 𝑝 :Node d 𝑥 :tVal d 𝑎𝑝 :Node 
+
+[ (• \ ⟨ ePrepRsp | promised = 𝑝 ⟩) ∗]{𝜈 :unit | acceptor = 𝑎𝑐 ∧ promised = 𝑝 ∧ va = 𝑥 ∧ nAccepted = 𝑎𝑝 }𝑢 
+
+[⟨eAcReq | acceptor = 𝑎𝑐 ∧ proposer = 𝑝 ∧ va = 𝑥 ⟩] 
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. 60 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+
+eLostAcReq : 𝑝 :Node d 𝑎𝑐 :Node  [•∗] { 𝜈 :unit | proposer = 𝑝 ∧ acceptor = 𝑎𝑐 }𝑢 [•∗]
+
+eAcReq : 𝑝 :{𝜈 :Node | pr2 (𝑝 )}𝑢 d 𝑎𝑐 :Node d 𝑥 :tVal 
+
+[ (• \ ⟨ eAcReq | acceptor = 𝑎𝑐 ⟩) ∗·⟨ eAcReq | pr1 (proposer ) ∧ acceptor = 𝑎𝑐 ⟩· 
+
+ (• \ ⟨ eAcReq | acceptor = 𝑎𝑐 ⟩) ∗]{𝜈 :unit | proposer = 𝑝 ∧ acceptor = 𝑎𝑐 ∧ va = 𝑥 }𝑢 
+
+[⟨eAcRsp | proposer = 𝑝 ∧ acceptor = 𝑎𝑐 ∧ accepted = 𝑝 ∧ va = 𝑥 ⟩] ⊓
+
+𝑝 :Node d 𝑎𝑐 :Node d 𝑥 :tVal 
+
+[ (• \ ⟨ eAcReq | acceptor = 𝑎𝑐 ⟩) ∗] { 𝜈 :unit | proposer = 𝑝 ∧ acceptor = 𝑎𝑐 ∧ va = 𝑥 }𝑢 
+
+[⟨eAcRsp | proposer = 𝑝 ∧ acceptor = 𝑎𝑐 ∧ accepted = 𝑝 ∧ va = 𝑥 ⟩] ⊓
+
+𝑝 :Node d 𝑎𝑐 :Node d 𝑥 :tVal 
+
+[•∗·⟨ eLostAcRsp | proposer = 𝑝 ∧ acceptor = 𝑎𝑐 ⟩·• ∗]{𝜈 :unit | proposer = 𝑝 ∧ acceptor = 𝑎𝑐 ∧ va = 𝑥 }𝑢 [•∗]
+
+eLostAcRsp : 𝑝 :Node d 𝑎𝑐 :Node  [•∗] { 𝜈 :unit | proposer = 𝑝 ∧ acceptor = 𝑎𝑐 }𝑢 [•∗]
+
+eAcRsp : 𝑝 :Node d 𝑎𝑐 :Node d 𝑎𝑝 :{𝜈 :Node | 𝑎𝑝 = 𝑝 }𝑢 d 𝑥 :tVal 
+
+[ (• \ ⟨ ePrepRsp | true ⟩) ∗·⟨ eAcRsp | proposer = 𝑝 ∧ accepted = 𝑎𝑝 ⟩·• ∗]{𝜈 :unit | proposer = 𝑝 ∧ acceptor = 𝑎𝑐 ∧ accepted = 𝑎𝑝 ∧ va = 𝑥 }𝑢 [⟨eLearn | va = 𝑥 ⟩] ⊓
+
+𝑝 :Node d 𝑎𝑐 :Node d 𝑎𝑝 :{𝜈 :Node | 𝑎𝑝 = 𝑝 }𝑢 d 𝑥 :tVal 
+
+[ (• \ ⟨ eAcRsp | proposer = 𝑝 ∧ accepted = 𝑎𝑝 ⟩) ∗]{𝜈 :unit | proposer = 𝑝 ∧ acceptor = 𝑎𝑐 ∧ accepted = 𝑎𝑝 ∧ va = 𝑥 }𝑢 [⟨eLearn | va = 𝑥 ⟩]
+
+The weakened uHat merges intersected prepare/accept types and turns many payload tests into 
+
+true . 
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 61
+
+Raft. This two-node Raft sketch pressures leader election under faults. Node 𝑛 1 appends 𝑥 and becomes leader, then 𝑛 2 becomes leader while the suffix skips the usual vote traffic ( eVoteReq ,
+
+eVoteRsp , eBeLeader ), exposing brittle election dynamics. The global property is: 
+
+•∗·⟨ eAppEntry | node = 𝑛 1 ∧ va = 𝑥 ⟩·• ∗·⟨ eBeLeader | ld = 𝑛 1 ∧ 𝑛 1 ≠ 𝑛 2⟩·• ∗·⟨eBeLeader | ld = 𝑛 2⟩·  • \ (⟨ eBeLeader | true ⟩ ∪ ⟨ eVoteReq | true ⟩ ∪ ⟨ eVoteRsp | true ⟩) ∗
+
+The uHat comprises the following clauses: 
+
+eStart : [ (• \ ⟨ eShutDown | true ⟩) ∗] unit [•∗]
+
+eClientPutRsp : 𝑥 :tVal d 𝑠𝑡 :bool  [•∗] { 𝜈 :unit | va = 𝑥 ∧ stat = 𝑠𝑡 }𝑢 [•∗]
+
+eClientPut : 𝑥 :tVal  [•∗] unit [⟨eAppEntry | nodeId (node ) = 1 ∧ va = 𝑥 ⟩· ⟨eAppEntry | nodeId (node ) = 2 ∧ va = 𝑥 ⟩]
+
+eAppEntry : 𝑛 :Node d 𝑥 :tVal  [•∗] { 𝜈 :unit | node = 𝑛 ∧ va = 𝑥 }𝑢 [•∗]
+
+eShutDown : [•∗] { 𝜈 :unit | true }𝑢 [⟨eTimeout | nodeId (dest ) = 1⟩][•∗] { 𝜈 :unit | true }𝑢 [⟨eTimeout | nodeId (dest ) = 2⟩]
+
+eTimeout : 𝑑 :Node  [•∗] { 𝜈 :unit | dest = 𝑑 }𝑢 [⟨eVoteReq | src = 𝑑 ∧ leader = 𝑑 ∧ dest = next (𝑑 )⟩ ]
+
+eVoteReq : 𝑠 :Node d 𝑑 :Node d 𝑙𝑑 :{𝜈 :Node | 𝑙𝑑 = 𝑑 }𝑢 
+
+[•∗] { 𝜈 :unit | src = 𝑠 ∧ dest = 𝑑 ∧ leader = 𝑙𝑑 }𝑢 [⟨eVoteRsp | src = 𝑑 ∧ dest = 𝑠 ∧ ¬ stat ⟩] ⊓
+
+𝑠 :Node d 𝑑 :Node d 𝑙𝑑 :{𝜈 :Node | 𝑙𝑑 ≠ 𝑑 }𝑢 
+
+[•∗] { 𝜈 :unit | src = 𝑠 ∧ dest = 𝑑 ∧ leader = 𝑙𝑑 }𝑢 
+
+[⟨eVoteRsp | src = 𝑑 ∧ dest = 𝑠 ∧ stat = (nodeId (𝑑 ) < nodeId (𝑙𝑑 ))⟩ ]
+
+eVoteRsp : 𝑠 :Node d 𝑑 :{𝜈 :Node | 𝑑 ≠ 𝑠 }𝑢 d 𝑠𝑡 :bool 
+
+[•∗] { 𝜈 :unit | src = 𝑠 ∧ dest = 𝑑 ∧ stat = 𝑠𝑡 }𝑢 [⟨eBeLeader | ld = 𝑑 ⟩]
+
+eBeLeader : 𝑙𝑑 :Node  [•∗] { 𝜈 :unit | ld = 𝑙𝑑 }𝑢 [•∗]
+
+The weakened uHat relaxes most payloads to true while keeping vote-control branching.  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. 62 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan
+
+Anonreadatomicity. The setting of this benchmark is already explained in Sec. 5. The global property is: 
+
+•∗·⟨ eUpdateRsp | gid = id ∧ key = 𝑘 ∧ vl = 𝑣 1 ∧ 𝑣 1 ≠ 𝑣 2 ∧ ok (status )⟩· 
+
+ (• \ ⟨ eUpdateRsp | gid = id ∧ key = 𝑘 ∧ ok (status )⟩) ∗·⟨eReadRsp | gid = id ∧ key = 𝑘 ∧ vl = 𝑣 2 ∧ 𝑣 2 ≠ 𝑣 1 ∧ ok (status )⟩·• ∗
+
+The uHat is defined as: 
+
+eStartTxnReq : 𝑖𝑑 :tGid  [•∗] unit [⟨eStartTxnRsp | gid = 𝑖𝑑 ⟩]
+
+eStartTxnRsp : 𝑖𝑑 :tGid  [ (• \ ⟨ eStartTxnRsp | gid = 𝑖𝑑 ⟩) ∗] { 𝜈 :unit | gid = 𝑖𝑑 }𝑢 
+
+[ (• \ ⟨ eStartTxnRsp | gid = 𝑖𝑑 ⟩) ∗]
+
+eReadReq : 𝑖𝑑 :tGid d 𝑘 :Key  [•∗·⟨ eStartTxnRsp | gid = 𝑖𝑑 ⟩·• ∗] unit 
+
+[⟨eShardReadKeyReq | gid = 𝑖𝑑 ∧ key = 𝑘 ⟩]
+
+eReadRsp : 𝑖𝑑 :tGid d 𝑘 :Key d 𝑣𝑎 :tVal d 𝑠𝑡 :tCmdStatus 
+
+[•∗] { 𝜈 :unit | gid = 𝑖𝑑 ∧ key = 𝑘 ∧ value = 𝑣𝑎 ∧ status = 𝑠𝑡 }𝑢 [•∗]
+
+eUpdateReq : 𝑖𝑑 :tGid d 𝑘 :Key d 𝑣𝑎 :tVal 
+
+[•∗·⟨ eStartTxnRsp | gid = 𝑖𝑑 ⟩·• ∗] unit 
+
+[⟨eShardUpdateKeyReq | gid = 𝑖𝑑 ∧ key = 𝑘 ∧ value = 𝑣𝑎 ⟩]
+
+eUpdateRsp : 𝑖𝑑 :tGid d 𝑘 :Key d 𝑣𝑎 :tVal d 𝑠𝑡 :tCmdStatus 
+
+[•∗] { 𝜈 :unit | gid = 𝑖𝑑 ∧ key = 𝑘 ∧ value = 𝑣𝑎 ∧ status = 𝑠𝑡 }𝑢 [•∗]
+
+eCommitTxnReq : 𝑖𝑑 :tGid  [•∗·⟨ eStartTxnRsp | gid = 𝑖𝑑 ⟩·• ∗] unit [⟨eShardPrepReq | gid = 𝑖𝑑 ⟩]
+
+eCommitTxnRsp : 𝑖𝑑 :tGid d 𝑡𝑥𝑛𝑠𝑡 :tTxnStatus  [•∗] { 𝜈 :unit | gid = 𝑖𝑑 ∧ txnstatus = 𝑡𝑥𝑛𝑠𝑡 }𝑢 [•∗]
+
+eRollbackTxnReq : 𝑖𝑑 :tGid  [•∗·⟨ eStartTxnRsp | gid = 𝑖𝑑 ⟩·• ∗] unit 
+
+[⟨eShardAbortTxn | gid = 𝑖𝑑 ⟩·⟨ eCommitTxnRsp | gid = 𝑖𝑑 ∧ aborted (txnstatus )⟩ ]
+
+eShardReadKeyReq : 𝑣𝑎 :tVal d 𝑖𝑑 :tGid d 𝑘 :Key 
+
+[•∗·⟨ eShardUpdateKeyReq | ¬( gid = 𝑖𝑑 ) ∧ key = 𝑘 ∧ value = 𝑣𝑎 ⟩·• ∗·⟨eStartTxnRsp | gid = 𝑖𝑑 ⟩·• ∗] { 𝜈 :unit | gid = 𝑖𝑑 ∧ key = 𝑘 }𝑢 
+
+[⟨eShardReadKeyRsp | gid = 𝑖𝑑 ∧ key = 𝑘 ∧ value = 𝑣𝑎 ∧ ok (status )⟩ ] ⊓
+
+𝑣𝑎 :tVal d 𝑖𝑑 :tGid d 𝑘 :Key 
+
+[•∗·⟨ eStartTxnRsp | gid = 𝑖𝑑 ⟩·• ∗·⟨eShardUpdateKeyReq | gid = 𝑖𝑑 ∧ key = 𝑘 ∧ value = 𝑣𝑎 ⟩·• ∗]{𝜈 :unit | gid = 𝑖𝑑 ∧ key = 𝑘 }𝑢 
+
+[⟨eShardReadKeyRsp | gid = 𝑖𝑑 ∧ key = 𝑘 ∧ value = 𝑣𝑎 ∧ ok (status )⟩ ] ⊓
+
+𝑖𝑑 :tGid d 𝑘 :Key  [•∗·⟨ eShardAbortTxn | gid = 𝑖𝑑 ⟩·• ∗]{𝜈 :unit | gid = 𝑖𝑑 ∧ key = 𝑘 }𝑢 
+
+[⟨eShardReadKeyRsp | gid = 𝑖𝑑 ∧ key = 𝑘 ∧ abort (status )⟩ ]
+
+eShardReadKeyRsp : 𝑖𝑑 :tGid d 𝑘 :Key d 𝑣𝑎 :tVal d 𝑠𝑡 :tCmdStatus 
+
+[•∗] { 𝜈 :unit | gid = 𝑖𝑑 ∧ key = 𝑘 ∧ value = 𝑣𝑎 ∧ status = 𝑠𝑡 }𝑢 
+
+[⟨eReadRsp | gid = 𝑖𝑑 ∧ key = 𝑘 ∧ value = 𝑣𝑎 ∧ status = 𝑠𝑡 ⟩] 
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 63
+
+eShardUpdateKeyReq : 𝑖𝑑 :tGid d 𝑘 :Key d 𝑣𝑎 :tVal 
+
+[•∗·⟨ eStartTxnRsp | gid = 𝑖𝑑 ⟩·• ∗] { 𝜈 :unit | gid = 𝑖𝑑 ∧ key = 𝑘 ∧ value = 𝑣𝑎 }𝑢 
+
+[⟨eShardUpdateKeyRsp | gid = 𝑖𝑑 ∧ key = 𝑘 ∧ value = 𝑣𝑎 ∧ ok (status )⟩ ]
+
+𝑖𝑑 :tGid d 𝑘 :Key d 𝑣𝑎 :tVal 
+
+[•∗·⟨ eShardAbortTxn | gid = 𝑖𝑑 ⟩·• ∗] { 𝜈 :unit | gid = 𝑖𝑑 ∧ key = 𝑘 ∧ value = 𝑣𝑎 }𝑢 
+
+[⟨eShardUpdateKeyRsp | gid = 𝑖𝑑 ∧ key = 𝑘 ∧ value = 𝑣𝑎 ∧ abort (status )⟩ ] ⊓
+
+eShardUpdateKeyRsp : 𝑖𝑑 :tGid d 𝑘 :Key d 𝑣𝑎 :tVal d 𝑠𝑡 :tCmdStatus 
+
+[•∗] { 𝜈 :unit | gid = 𝑖𝑑 ∧ key = 𝑘 ∧ value = 𝑣𝑎 ∧ status = 𝑠𝑡 }𝑢 
+
+[⟨eUpdateRsp | gid = 𝑖𝑑 ∧ key = 𝑘 ∧ value = 𝑣𝑎 ∧ status = 𝑠𝑡 ⟩]
+
+eShardCommitTxn : 𝑖𝑑 :tGid  [•∗] { 𝜈 :unit | gid = 𝑖𝑑 }𝑢 [•∗]
+
+eShardAbortTxn : 𝑖𝑑 :tGid  [•∗] { 𝜈 :unit | gid = 𝑖𝑑 }𝑢 [•∗]
+
+eShardPrepReq : 𝑖𝑑 :tGid 
+
+[ (• \ ⟨ eShardPrepReq | gid = 𝑖𝑑 ⟩) ∗·⟨ eShardAbortTxn | gid = 𝑖𝑑 ⟩· 
+
+ (• \ ⟨ eShardPrepReq | gid = 𝑖𝑑 ⟩) ∗] { 𝜈 :unit | as ⟨eShardUpdateKeyReq | gid = 𝑖𝑑 ⟩}𝑢 
+
+[⟨eShardPrepRsp | gid = 𝑖𝑑 ∧ ¬ bstatus ⟩]
+
+𝑖𝑑 :tGid 
+
+[ (• \ ⟨ eShardPrepReq | gid = 𝑖𝑑 ⟩) ∗·⟨ eStartTxnRsp | gid = 𝑖𝑑 ⟩· 
+
+ • \ (⟨ eShardAbortTxn | gid = 𝑖𝑑 ⟩ ∪ ⟨ eShardPrepReq | gid = 𝑖𝑑 ⟩) ∗] { 𝜈 :unit | gid = 𝑖𝑑 }𝑢 
+
+[⟨eShardPrepRsp | gid = 𝑖𝑑 ∧ bstatus ⟩]
+
+eShardPrepRsp : 𝑖𝑑 :tGid 
+
+[•∗] { 𝜈 :unit | gid = 𝑖𝑑 ∧ ¬ bstatus }𝑢             
+
+> [⟨eCommitTxnRsp |gid =𝑖𝑑 ∧aborted (txnstatus ) ⟩·⟨ eShardAbortTxn |gid =𝑖𝑑 ⟩]
+
+𝑖𝑑 :tGid 
+
+[•∗] { 𝜈 :unit | gid = 𝑖𝑑 ∧ bstatus }𝑢             
+
+> [⟨eCommitTxnRsp |gid =𝑖𝑑 ∧committed (txnstatus ) ⟩·⟨ eShardCommitTxn |gid =𝑖𝑑 ⟩]
+
+The weakened uHat turns many response/shard guards into true and merges intersected types of read/update shard requests. 
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026.
+
+64 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan 
+
+Table 3. Detailed results of table 1. 
+
+Benchmark #op #qualifier #var #eff #assert # Num. Executions ttotal (s) #SMT #refine uHAT goal Clouseau Random Manual 
+
+Stack [45] 6 12 3 12 15 4 1.0 31 .9 - 0.60 98 4
+
+Set [45] 7 22 3 7 12 4 1.0 22 .1 - 1.28 255 12 
+
+Filesystem [45] 7 67 4 11 13 8 1.3 2812 .1 - 6.02 853 14 
+
+Graph [45] 6 24 4 5 16 5 1.0 TO - 16 .61 2114 16 
+
+NFA [45] 8 50 4 7 26 6 1.0 TO - 21 .85 5080 6
+
+IFCAdd [20] 8 37 2 10 8 6 1.6 TO 3383 .4 0.96 154 8
+
+IFCStore [20] 8 37 2 10 8 6 2.8 TO 5049 .1 1.02 160 8
+
+IFCLoad [20] 8 37 2 20 16 12 15 .4 TO 11293 .7 5.76 930 18 
+
+DeBruijnFO [44] 10 117 4 10 18 12 1.5 TO 634 .0 40 .38 4765 26 
+
+DeBruijnHO [44] 10 118 4 10 18 14 1.4 TO TO 91 .73 9034 31 
+
+HashTable [28] 13 38 4 6 6 2 1.0 TO 64 .8 0.76 57 6
+
+Transaction 8 45 3 25 15 12 1.2 TO - 2.89 423 16 
+
+Shopping [1] 10 60 3 31 17 11 1.0 20 .0 TO 22 .10 1269 30 
+
+Courseware [1] 16 106 3 34 18 12 1.0 57 .5 TO 27 .71 1479 33 
+
+Twitter [1] 16 99 3 46 24 16 1.0 6.3 TO 61 .96 2339 24 
+
+Smallbank [1] 22 162 3 69 28 22 1.9 TO - 163 .55 10263 29 
+
+Table 4. Detail results of table 2. 
+
+Benchmark #op #qualifier #var #eff #assert # Num. Executions ttotal (s) #SMT #refine uHAT goal Clouseau Random Manual  
+
+> Database
+
+4 15 3 6 33 4 1.0 5.6 - 0.32 49 6
+
+> Firewall
+
+[30] 5 26 4 12 28 9 1.0 10 .0 - 0.59 222 10 
+
+> RingLeaderElection
+
+[30] 3 14 2 12 26 7 1.0 17 .7 - 0.83 100 8
+
+> BankServer
+
+[13] 6 42 1 15 23 5 1.0 40 .5 2.2 0.17 27 5
+
+> Simplified2PC
+
+[13] 9 32 5 7 26 5 2.1 125 .0 5.8 1.03 88 8
+
+> HeartBeat
+
+[13] 7 31 3 9 410 9 1.0 70 .9 6.0 1.10 145 14 
+
+> ChainReplication
+
+[14] 7 72 4 24 48 9 1.0 588 .2 500 .0 19 .24 2054 169 
+
+> Paxos
+
+[14] 10 110 2 36 410 13 1.0 TO 666 .7 23 .70 1763 77  
+
+> Raft
+
+9 39 6 21 210 10 1.0 TO - 26 .84 1262 78  
+
+> AnonReadAtomicity
+
+17 113 3 37 511 12 1.0 53 .0 - 18 .35 1909 16 
+
+J Evaluation Details 
+
+Table 3 and Table 4 provide additional details about the experimental results in our evaluation section, including the number of local variables (#var), the number of effectful operations (# eff ), the number of assertions (# assert ), and the number of executions for both random generator and manual written test generators. We also present the results of all benchmarks in both OCaml and P Language with weakened specifications in Table 5 and Table 6. Three of these benchmarks (IFCLoad W, DeBruijnHO W, and Transaction W) are already shown in Sec. 5. 
+
+, Vol. 1, No. 1, Article . Publication date: April 2026. Trace-Guided Synthesis of Effectful Test Generators 65 
+
+Table 5. The results of the benchmarks in OCaml with weakened specifications. 
+
+Benchmark #op #qualifier # Num. Executions ttotal (s) #evt #refine #SMT Name Property uHAT goal Clouseau Baseline 
+
+Stack W[45] Pushes and pops are correctly paired. 6 11 3 1.2 30 .4 0.92 15 4 149 
+
+Set W[45] Membership holds for every element inserted into the set. 
+
+7 20 3 1.1 30 .1 1.41 12 12 265 
+
+Filesystem W[45] A valid file path only contains non-deleted entries. 
+
+7 47 4 4.3 4103 .0 3.84 10 12 469 
+
+Graph W[45] A serialized stream of nodes and edges is re-constituted to form a fully-connected graph. 
+
+6 17 4 1.0 Timeout 1.67 11 11 233 
+
+NFA W[45] An NFA reaches a final state for every string in the language it accepts. 
+
+8 33 4 1.0 Timeout 7.93 24 5 1908 
+
+IFCStore W[20] A well-behaved IFC program containing a 
+
+Store command never leaks a secret. 
+
+8 33 2 6.0 6082 .8† 0.89 8 8 136 
+
+IFCAdd W[20] A well-behaved IFC program containing an Add 
+
+command never leaks a secret. 
+
+8 33 2 3.4 6621 .5† 0.99 8 8 136 
+
+IFCLoad W[20] A well-behaved IFC program containing a Load 
+
+command never leaks a secret. 
+
+8 33 2 115 .4 4278 .3† 5.01 16 18 754 
+
+DeBruijnFO W[44] An STLC interpreter correctly evaluates a well-typed first-order STLC program that uses a de Bruijn representation. 
+
+10 106 4 Timeout 303 .6† 3.03 7 22 857 
+
+DeBruijnHO W[44] An STLC interpreter correctly evaluates a a well-typed higher-order STLC program that uses a de Bruijn representation. 
+
+10 107 4 Timeout Timeout † 3.32 7 22 957 
+
+Shopping W[1] All items added to a cart can be checked-out. 10 58 3 1.0 20 .0† 18 .57 17 30 1174 
+
+HashTable W[28] No updates to a concurrent hashtable are ever lost. 
+
+13 33 4 1.0 2.5† 0.84 6 6 56 
+
+Transaction W Asynchronous read operations are logically atomic. 
+
+8 40 3 Timeout Timeout 2.61 15 15 372 
+
+Courseware W[1] Every student enrolled in a course exists in the enrollment database for that course. 
+
+16 100 3 1.0 57 .5† 25 .54 18 33 1374 
+
+Twitter W[1] Posted tweets are visible to all followers. 16 95 3 1.0 6.3† 27 .28 18 33 1374 
+
+Smallbank W[15] Account updates are strongly consistent. 22 154 3 Timeout Timeout 5.74 14 14 528 
+
+, Vol. 1, No. 1, Article . Publication date: April 2026. 66 Zhe Zhou, Ankush Desai, Benjamin Delaware, and Suresh Jagannathan 
+
+Table 6. The results of the benchmarks in P Language with weakened specifications. 
+
+Benchmark #op #qualifier # Num. Executions ttotal (s) #evt #refine #SMT Name Property uHAT goal Clouseau Baseline 
+
+Database W The database maintains a Read-Your-Writes policy. 
+
+4 13 3 1.0 TO 0.34 6 6 51 
+
+Firewall W[30] Requests generated inside the firewall are eventually propagated to the outside. 
+
+5 20 4 TO TO 0.61 6 6 189 
+
+RingLeaderElection W[30] There is always a single unique leader. 3 13 2 2.0 TO 0.82 8 8 102 
+
+BankServer W[13] Withdrawals in excess of the available balance are never allowed. 
+
+6 36 1 1.6 TO † 0.17 5 5 27 
+
+Simplified2PC W[13] Transactions are atomic. 9 24 5 2.9 TO † 1.05 8 8 86 
+
+HeartBeat W[13] All available nodes are identified by a detector. 
+
+7 24 3 TO TO † 0.36 6 6 41 
+
+ChainReplication W[14] Concurrent updates are never lost. 7 47 4 5.2 TO † 4.22 11 11 332 
+
+Paxos W[14] Logs are correctly replicated. 10 85 2 TO TO † 21 .83 12 61 2046 
+
+Raft W Leader election is robust to faults. 9 34 6 1.0 TO 27 .60 12 12 989 
+
+AnonReadAtomicity W Read Atomicity is preserved. 17 98 3 1.0 53 .3† 10 .68 12 12 991 
+
+, Vol. 1, No. 1, Article . Publication date: April 2026.

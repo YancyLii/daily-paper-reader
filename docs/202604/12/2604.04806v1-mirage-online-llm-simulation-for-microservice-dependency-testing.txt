@@ -1,0 +1,404 @@
+Title: MIRAGE: Online LLM Simulation for Microservice Dependency Testing
+
+URL Source: https://arxiv.org/pdf/2604.04806v1
+
+Published Time: Tue, 07 Apr 2026 01:55:04 GMT
+
+Number of Pages: 9
+
+Markdown Content:
+# MIRAGE : Online LLM Simulation for Microservice Dependency Testing 
+
+Xinran Zhang 
+
+University of California, Berkeley zhangxr7@berkeley.edu 
+
+Abstract —Existing approaches to microservice dependency simulation—record-replay, pattern-mining, and specification-driven stubs—generate static artifacts before test execution. We propose online LLM simulation , a runtime approach where the LLM directly answers each dependency request as it arrives, maintaining cross-request state throughout a test scenario. No mock specification is pre-generated; the model reads the depen-dency’s source code, caller code, and production traces, then simulates dependency behavior on demand. We instantiate this approach in M IRAGE and evaluate it on 110 test scenarios spanning 14 caller-dependency pairs across three microservice systems (Google’s Online Boutique, Weaveworks’ Sock Shop, and a custom system). In white-box mode (de-pendency source available), M IRAGE achieves 99% status-code fidelity (109/110) and 99% response-shape fidelity, compared to 62% / 16% for record-replay. End-to-end, caller integration tests produce the same pass/fail outcomes with M IRAGE as with real dependencies (8/8 scenarios). A signal ablation shows dependency source code is often sufficient for high-fidelity runtime simulation (100% alone); without it, the model still infers correct error codes (94%) but loses response-structure accuracy (75%). Constraining LLM output through typed intermediate representations reduces fidelity on complex stateful services (55%) while performing adequately on simple APIs (86%), suggesting that the runtime approach’s implicit state tracking matters for behavioral com-plexity. Results are stable across three LLM families (within 3%) at $0.16–$0.82 per dependency. 
+
+I. I NTRODUCTION 
+
+Integration testing of microservices requires deploy-ing downstream dependencies with correct configurations, database states, and behavioral semantics. When dependencies are unavailable or expensive to provision, developers rely on 
+
+dependency simulation : lightweight surrogates that reproduce the dependency’s behavior during testing [1], [2]. Existing approaches treat this as a compile-time artifact-generation problem: record-replay tools capture request-response pairs from production traffic [3]; pattern-mining extracts stateful rules from traces [4]; schema-based tools generate stubs from API specifications [5]. All produce a static mock artifact before tests run. These approaches share a fundamental limitation: the gen-erated artifact must encode all relevant dependency behavior at generation time. Any scenario not anticipated during ar-tifact construction—unseen request parameters, error condi-tions, cross-request state dependencies—produces incorrect or missing responses. In our evaluation, record-replay achieves only 62% status-code fidelity and 16% response-shape fidelity on held-out scenarios across three benchmarks. We propose a different approach: online LLM simulation .Instead of generating a static artifact, we keep the LLM in the loop at test time. Each incoming HTTP request is answered by the LLM directly, with the model maintaining cross-request interaction state throughout a test scenario. The LLM reads the dependency’s source code (when available), caller code, and production traces, then simulates dependency behavior on demand. No mock specification or intermediate representation is pre-generated. We instantiate this approach in M IRAGE and evaluate it on 110 test scenarios spanning 14 caller-dependency pairs across three microservice systems of increasing complexity. Our contributions are: 1) Online LLM simulation as a dependency testing prim-itive. We formulate online LLM simulation—where the model directly answers each request and maintains cross-request state—as a runtime approach to dependency testing. This is, to our knowledge, the first empirical study of this approach for microservice dependency testing. 2) Empirical validation across three benchmarks. MIRAGE 
+
+achieves 99% status-code and 99% response-shape fidelity in white-box mode (109/110 scenarios), outperforming record-replay (62% / 16% on all three benchmarks) and, where evaluated, pattern-mining (61% on Demo) and IR-constrained generation (55–86% depending on service complexity). In a preliminary end-to-end check, caller integration tests produce the same pass/fail outcomes with MIRAGE mocks as with real dependencies (8/8 scenarios on the Demo system). 3) Operating envelope characterization. Dependency source code is often sufficient for high-fidelity simulation (100% alone). Without it, the model infers correct error codes (94% status) but loses response structure (75% response-shape). Typed IR constraints reduce fidelity on complex stateful services but work on simple APIs, suggesting that runtime implicit state tracking matters for behavioral complexity. Results are stable across three LLM families and practical at $0.16–$0.82/dep. Section II surveys related work. Section III defines online LLM simulation and describes M IRAGE . Section IV presents results. Section V discusses practical guidance. Section VI addresses threats to validity, and Section VII concludes. 
+
+> arXiv:2604.04806v1 [cs.SE] 6 Apr 2026
+
+II. B ACKGROUND AND RELATED WORK 
+
+a) Service Virtualization and Mock Generation.: Service virtualization replaces real downstream dependencies with lightweight surrogates during testing [2]. The simplest form, 
+
+record-replay , captures HTTP request-response pairs from live traffic and replays the closest match at test time. Tools such as HoverFly [3], WireMock [6], and Mountebank [7] implement this approach. Practitioner literature emphasizes the impor-tance of “fake dependencies” for microservice testing [2], [8], [9], but writing accurate fakes manually is labor-intensive and error-prone—a key motivation for automated approaches. Schema-based tools like Prism [5] generate stubs from Ope-nAPI specifications, producing type-correct responses but ig-noring behavioral semantics (e.g., state transitions, validation logic). Hossain et al. [4] improve on record-replay by mining stateful patterns from traces and generating mock servers with explicit state machines. Their approach handles some stateful behaviors (e.g., CRUD sequences) but does not generalize to error handling, code-level edge cases, or unseen request pa-rameters. M IRAGE differs by delegating behavioral reasoning to an LLM that has access to source code and traces, achieving substantially higher fidelity on non-trivial scenarios. 
+
+b) LLMs for Software Engineering.: Large language models have been applied to code generation [10]–[12], test generation [13], [14], and program repair [15]. Most relevant to our work is LLM-based test generation, where models pro-duce test inputs and oracles from source code. Pan et al. [16] combine program analysis with LLM agents to generate service-level integration tests (SAINT), while Elumalai [17] propose an LLM-based workflow for automating Spring Boot integration tests. These approaches generate test code , while MIRAGE generates dependency behavior : a complementary problem where the LLM must faithfully simulate a service rather than exercise one. Recent work has also applied LLMs directly to microservice systems: Zhang et al. [18] benchmark LLM capabilities on microservice remediation tasks, while Yellin [19] evaluates how specification complexity affects LLM performance on microservice applications—a finding related to our observation that structured IR specifications can hinder rather than help LLM-based generation. Iyer [1], [20] analyzes how AI features complicate microservice testing and why traditional integration tests miss real problems, directly motivating the need for richer test doubles like M IRAGE . To our knowledge, no prior work uses LLMs for real-time, per-request dependency simulation with cross-request interaction state tracking. 
+
+c) Distributed Tracing and Trace-Based Testing.: Dis-tributed tracing frameworks such as OpenTelemetry [21], Jaeger [22], and Zipkin [23] capture inter-service commu-nication as spans with timing, status codes, and request metadata. Traces have been used for anomaly detection [24], performance diagnosis [25], and root cause analysis [26]. Several works use traces to infer service dependencies [27] or detect protocol violations [28]. M IRAGE consumes traces as 
+
+evidence for generation : rather than monitoring or diagnosing, it uses observed interactions to inform LLM-based dependency simulation. 
+
+d) Behavioral Contracts and Intermediate Representa-tions.: Protocol state machines [29], session types [30], and behavioral contracts [31] provide formal frameworks for specifying expected service behavior. In principle, generat-ing such an IR from traces and code should yield precise, verifiable simulators. Our Contract-IR baselines implement this approach: the LLM infers a typed guarded transition system with state variables, match conditions, and response templates. On our custom benchmark, this structured approach 
+
+reduces fidelity compared to unconstrained generation (55% vs. 100%), because the IR forces discretization of a continuous behavioral space and strips the LLM’s ability to reason about implicit state. This is a single-benchmark observation whose generalizability to other IR designs (e.g., richer state models, hierarchical automata) remains an open question. III. A PPROACH AND EXPERIMENTAL SETUP 
+
+A. Problem Formulation 
+
+Given a caller service A that depends on service D, a set of production traces T = {(ri, s i)}ni=1 of A ↔ D interactions (where ri is a request and si is the corresponding response), and optionally D’s source code SD , we seek to build a simulator ˆD such that for a set of held-out test scenarios 
+
+Σ = {σ1, . . . , σ k}, the caller’s observable behavior with ˆD
+
+matches its behavior with D.
+
+Definition 1 (caller-adequate simulator) . ˆD is caller-adequate 
+
+with respect to scenario set Σ if, for every scenario σ =(c1, . . . , c m) ∈ Σ, running the call sequence against ˆD
+
+produces (a) status codes matching the real service ( s ˆDi = sDi
+
+for all i) and (b) response bodies with the same top-level JSON keys as the real service. 
+
+We report fidelity under both criteria separately: status-code fidelity (all status codes match) and body-shape fidelity (status codes match and response body top-level keys match). Body-shape fidelity is strictly harder than status-code fidelity. 
+
+B. The MIRAGE System 
+
+MIRAGE performs online LLM-based simulation : the LLM remains in the loop at test time, answering each request as it arrives. This is not one-shot code generation—no standalone simulator artifact is produced. The tradeoff is higher per-request latency ( ∼3s) in exchange for the LLM’s ability to reason about accumulated cross-request state. MIRAGE consists of three components: 
+
+a) Context Builder.: Assembles the LLM system prompt from available signals: (1) dependency source code SD (for white-box mode; truncated to 8,000 characters), (2) caller source code SA (truncated to 5,000 characters), and (3) a summary of trace interactions grouped by endpoint and status code distribution. The prompt instructs the LLM to simulate 
+
+D’s behavior, track state across requests, and return responses as JSON with status (integer), body (object), and optional 
+
+headers fields. b) Per-Request LLM Server.: A FastAPI [32] server that intercepts all HTTP requests to the mock endpoint. Each incoming request is serialized as a JSON user mes-sage containing the HTTP method, path, query parame-ters, request body, and relevant headers ( Authorization ,
+
+Idempotency-Key ). The LLM returns a JSON object with status (integer), body (object or list), and optional 
+
+headers . Both messages are appended to a conversation history that is maintained across requests within a scenario, enabling the LLM to track accumulated state (e.g., items added to a cart, tokens issued, reservations pending or confirmed). The conversation is bounded to the last 20 exchanges (42 messages including system prompt) to control context length. If the LLM returns invalid JSON, one retry with an error correction prompt is attempted before falling back to a 500 response. We use LiteLLM for model routing, supporting Claude Opus 4.6 (via AWS Bedrock), Claude Sonnet 4.6, Kimi K2.5, and MiniMax M2 through a unified interface. 
+
+c) Scenario Context.: Before each test scenario, the evaluation harness posts the scenario name and the sequence of HTTP methods and paths (but not the expected status codes or response bodies) to a /__mock__/scenario 
+
+endpoint. This helps the LLM anticipate multi-step flows (e.g., “reserve then confirm”) without leaking oracle information. Between scenarios, a /__mock__/reset endpoint clears conversation state. We evaluate the impact of this context in Section IV-A via a no-injection ablation. 
+
+C. Operating Modes 
+
+MIRAGE operates in three signal configurations:  
+
+> •
+
+White-box : dependency source code + caller code + traces. The LLM has full visibility into D’s implementation.  
+
+> •
+
+Black-box : caller code + traces (no dependency source). Models the common case where the dependency is owned by another team.  
+
+> •
+
+Ablation variants : dep-only, caller-only, or traces-only, for the signal contribution analysis (Section IV-C). 
+
+D. Baselines 
+
+We compare against four baseline categories: 1) Record-replay (all benchmarks): captures request-response pairs from traces and replays the closest match using path pattern normalization and status grouping (HoverFly-style [3]). 2) Pattern-mining (Demo only): extracts stateful patterns from traces, building mock servers with explicit state vari-ables, match conditions, and response templates (Hossain et al. style [4]). 3) Contract IR (Demo only): the LLM infers a typed guarded transition system from traces and code, which is compiled into an executable simulator. We evaluate two variants: basic IR ( IR-v1 ) with status-based guards, and enriched IR ( IR-v2 ) with comparisons, arithmetic, and dynamic ID tracking. TABLE I: Benchmark systems. OB and SS are community benchmarks originally written in Go, C#, Java, and Node.js; we adapt faithful Python replicas that preserve all endpoint semantics, status codes, and validation logic.                         
+
+> System Deps Pairs Scenarios Traces Origin
+> Demo 3338 1,234 Custom Online Boutique 6633 1,414 Google Sock Shop 5539 1,173 Weaveworks
+> Total 14 14 110 3,821
+
+4) Alternative LLM models (all benchmarks for Opus/Sonnet; Demo only for Kimi/MiniMax): Section IV-E. 
+
+E. Benchmark Systems 
+
+Table I summarizes the three benchmark systems. The Demo 
+
+system is a custom four-service application (order, inventory, payment, shipping) designed with intentionally tricky patterns: optimistic locking with version conflicts (inventory), token lifecycle with expiration and refresh (payment), async polling with status transitions (shipping), and saga orchestration with compensating actions (order). We use this system as a con-trolled stress test where all approaches can be compared under identical conditions. 
+
+Online Boutique [33] is Google’s microservice demo ap-plication with 11 services written in Go, C#, Node.js, and Python. We target 6 dependency services (product catalog, cart, currency, shipping, email, payment) called by the check-out and frontend services. Key behaviors include multi-step checkout (8 chained service calls), credit card validation with type-specific rejection, and EUR-hub currency conversion with floor rounding. 
+
+Sock Shop [34] is Weaveworks’ microservice benchmark with 6 services written in Go, Java, and Node.js. We target 5 dependencies (catalogue, cart, user, payment, shipping) called by the orders and frontend services. Key behaviors include a $100 payment threshold, pre-seeded user accounts with hashed passwords, and tag-based catalogue filtering with pagination. For each benchmark, we collect production-style traces via OpenTelemetry instrumentation [21] by running scripted workloads covering normal flows, error paths, and edge cases. Test scenarios are manually designed to cover 9 behavior categories (Table II). 
+
+F. Evaluation Protocol 
+
+For each test scenario σ = ( c1, . . . , c m):1) Post scenario context (call sequence without expected outcomes) to ˆD’s /__mock__/scenario endpoint. 2) Run c1, . . . , c m against the real service D; record status codes [sD 
+
+> 1
+
+, . . . , s Dm].3) Reset ˆD’s state via /__mock__/reset and re-inject scenario context. 4) Run the same c1, . . . , c m against ˆD; record [s ˆD 
+
+> 1
+
+, . . . , s ˆDm].5) Scenario passes if sDi = s ˆDi for all i.TABLE II: Test scenario categories with per-benchmark counts. Categories are designed to stress different aspects of dependency simulation.                                  
+
+> Category Demo OB SS
+> basic crud 313 11 error handling 856code reasoning 865stateful lifecycle 747generalization 321pagination 102auth lifecycle 202async lifecycle 200stress tests 435
+> Total 38 33 39
+
+We report two metrics:  
+
+> •
+
+Status-code fidelity : fraction of scenarios where all HTTP status codes match (e.g., 201 for creation, 409 for conflict, 404 for missing resource).  
+
+> •
+
+Body-shape fidelity : fraction of scenarios where status codes match and each response body contains the same top-level JSON keys as the real service. This catches cases where the status code is correct but the response structure is wrong (e.g., returning {‘‘status’’: ‘‘ok’’ } in-stead of {‘‘items’’: [...], ‘‘next_cursor’’: ... }). Multi-step scenarios use chained references (e.g., a reserva-tion ID from step 1 is used in step 2’s URL). The evaluation harness extracts these from response bodies and substitutes them in subsequent requests for both real and simulated runs. 
+
+G. Implementation Details 
+
+MIRAGE is implemented in Python using FastAPI for HTTP handling and LiteLLM for model routing. The Context Builder assembles prompts averaging 3,000–5,000 tokens (sys-tem message), with per-request messages of 200–500 tokens. Conversation history is bounded to 20 exchanges (40 messages plus system prompt), totaling 6,000–10,000 tokens per request. For white-box mode, dependency source files are truncated to 8,000 characters if needed; for multi-file services (original Go/Java source), files are concatenated with filename headers and truncated to 6,000 characters. Caller source is truncated to 5,000 characters. Trace summaries aggregate spans by end-point and status code distribution, typically requiring 1,000– 3,000 characters regardless of trace volume. The evaluation harness supports chained references across calls within a scenario: a reservation ID returned by call 1 can be substituted into call 2’s URL via template markers (e.g., __rsv_id__ ). The harness performs this substitution identically for both real and simulated services, ensuring a fair comparison. All experiments use temperature 0.1 and max tokens 2,048. The code, benchmark adapters, test scenarios, and evaluation harness will be released as an open-source artifact upon publication. TABLE III: Experimental conditions. Each row specifies which inputs the simulator receives, whether conversation state is maintained, and the reset policy.                                          
+
+> Condition Dep src Caller Traces State
+> MIRAGE (WB) ✓✓✓Conv. MIRAGE (BB) —✓✓Conv. MIRAGE (dep) ✓——Conv. MIRAGE (caller) —✓—Conv. MIRAGE (traces) ——✓Conv. Record-replay ——✓None Pattern-mining ——✓Explicit Contract IR ✓✓✓Explicit
+
+Table III summarizes all experimental conditions. “Conv.” indicates cross-request state (LLM maintains history across re-quests within a scenario); “Explicit” indicates hand-coded state variables; “None” is stateless replay. All conditions use the same evaluation protocol and metric definitions. Between sce-narios, all stateful conditions reset via /__mock__/reset .
+
+a) Trace-test independence.: Test scenarios and produc-tion traces are designed independently: traces are collected from scripted workloads that exercise normal paths (browse, add to cart, checkout), while test scenarios are manually designed to cover error handling, edge cases, and code-level reasoning not present in the workload. For example, the Demo traces contain no double-confirmation or stock-exhaustion se-quences, yet these appear as test scenarios. On OB and SS, the workload generator runs 5 rounds of the standard user journey; test scenarios include boundary conditions (e.g., $100 payment threshold in SS, expired card in OB) that the workload does not exercise. This independence means the LLM cannot simply memorize trace patterns to pass the evaluation. 
+
+b) Scenario context as potential leakage.: The sce-nario context tells the LLM what calls will arrive 
+
+(e.g., “POST /items/item-001/reserve then POST /reserva-tions/ {id }/confirm”) but not what status codes to return . This is analogous to a human developer reading a test plan before writing a mock. We evaluate the impact of this context by running a no-injection ablation in Section IV-A. IV. E VALUATION 
+
+We organize the evaluation around five research questions:  
+
+> •
+
+RQ1 : How accurately can LLM-based online simulation reproduce caller-observable dependency behavior?  
+
+> •
+
+RQ2 : Does constraining LLM output via intermediate rep-resentations help or hurt?  
+
+> •
+
+RQ3 : Which input signals contribute most to fidelity?  
+
+> •
+
+RQ4 : How consistent are results across benchmarks and runs?  
+
+> •
+
+RQ5 : What is the cost, latency, and model sensitivity? 
+
+A. RQ1: Feasibility 
+
+Table IV presents the aggregate results. M IRAGE in white-box mode achieves 99% status-code fidelity (109/110) and 99% response-shape fidelity. In black-box mode (caller code Replay Pattern* IR* TG     
+
+> (traces)
+> TG
+> (BB)
+> TG
+> (WB)
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Status-Code Fidelity (%)
+> 80%
+> threshold
+> 62% 61%
+> 55%
+> 92% 94% 99%
+> * Demo only
+> (a) Status-Code Fidelity
+> Replay TG
+> (traces)
+> TG
+> (BB)
+> TG
+> (WB)
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Body-Shape Fidelity (%)
+> 16%
+> 53%
+> 75%
+> 99%
+> 83pp gap
+> (b) Body-Shape Fidelity
+
+Fig. 1: Main results. (a) Status-code fidelity: M IRAGE (WB) achieves 99% across all three benchmarks; replay achieves 62% (also all three); Pattern and IR are Demo-only (marked with *). (b) Response-shape fidelity (subset with body data): replay returns structurally wrong responses (16%) while M I-
+
+RAGE (WB) matches real body shapes on 99% of scenarios. TG = M IRAGE .TABLE IV: Fidelity by approach and benchmark. Status = all HTTP status codes match; Body = status match and 
+
+response body top-level JSON keys match. Pattern-mining and IR evaluated on Demo only ( ∗). 
+
+Status Fidelity Status Body Approach Demo OB SS All All 
+
+Record-replay 37% 76% 72% 62% 16% Pattern-mining ∗ 61% — — — —Contract IR ∗ 55% — — — —MIRAGE (traces) — 100% 85% 92% 53% MIRAGE (BB) 97% 100% 85% 94% 75% MIRAGE (WB) 97% 100% 100% 99% 99% 
+
++ traces, no dependency source), status fidelity remains 94% (103/110) but response-shape drops to 75% (82/110)— revealing a quality gap invisible to status codes alone. At the pair level , M IRAGE (WB) outperforms record-replay on 9 of 14 caller-dependency pairs in status fidelity (mean 
+
+∆: +28.5pp, median: +14pp; one-sided sign test: p = 0 .03 ). On response-shape, M IRAGE wins on 13/14 pairs (mean ∆:+80pp). On the 5 pairs where both achieve 100% status, the response-shape gap is decisive: M IRAGE matches real body structures while replay returns placeholder responses. The single WB failure is a cross-service saga in Demo (test design artifact). On Demo—the only benchmark where all approaches are evaluated—pattern-mining reaches 61% and Contract IR 55%. 
+
+a) Scenario context ablation.: To assess whether sce-nario context inflates results, we run M IRAGE with and without scenario injection on three service configurations: (1) OB product-catalog (7 stateless scenarios): 7/7 both ways; (2) SS cart (7 stateful scenarios): 7/7 both ways; (3) Demo inven-tory (19 scenarios including multi-step stateful flows): 19/19 without injection vs. 18/19 with injection . The single failure with injection occurs because the injected scenario describes a cross-service saga, misleading the LLM into handling pay-ment calls that inventory should reject. Without injection, the TABLE V: Category-level fidelity on Demo (38 scenarios). All approaches evaluated; M IRAGE columns use Opus. IR is worse than pattern-mining on stateful scenarios. 
+
+Category Replay Pattern IR BB WB 
+
+basic crud 67% 67% 100% 100% 100% error handling 0% 38% 88% 100% 100% code reasoning 12% 38% 25% 100% 100% stateful 71% 100% 29% 100% 100% generalization 67% 67% 67% 100% 100% pagination 0% 0% 100% 100% 100% auth 50% 100% 100% 100% 100% async 100% 100% 50% 100% 100% stress 25% 50% 25% 75% 75% stateful code 
+
+> reason
+> error
+> handling
+> async
+
+0
+
+20 
+
+40 
+
+60 
+
+80 
+
+100 
+
+> Fidelity (%)
+> 29%
+
+IR Paradox: Category Breakdown (Demo) Replay 
+
+> Pattern
+> IR
+> TraceGate
+
+Fig. 2: Structured IR vs. online simulation on Demo by category. IR achieves only 29% on stateful scenarios while MIRAGE achieves 100%. IR helps on error handling (88%) but fails where implicit state tracking is needed. LLM correctly returns 404 for unknown endpoints. Scenario injection does not inflate results; if anything, it can hurt on cross-service tests by providing misleading context. Table V breaks down fidelity by behavior category on Demo. M IRAGE achieves 100% on 7 of 9 categories. The two stress-test failures (75%) involve a cross-service saga that routes payment and shipping calls to an inventory-only mock. 
+
+RQ1. MIRAGE (WB) achieves 99% status and 99% body-shape fidelity across three benchmarks. In black-box mode (caller+traces): 94% status / 75% body. Record-replay: 62% status / 16% body. Scenario injection does not inflate results (no-injection ablation: equal or better). 
+
+B. RQ2: Structured vs. Free-Form Generation 
+
+A natural alternative to M IRAGE ’s online simulation is to have the LLM generate a typed intermediate representation (IR)—a guarded transition system compiled into a standalone mock server. We evaluate two IR variants on Demo ( IR-v1 :status-based guards; IR-v2 : enriched with comparisons, arith-metic, dynamic IDs) and one on OB product-catalog as a cross-benchmark sanity check. On Demo (38 scenarios), both IR variants achieve 55%— 
+
+lower than pattern-mining (61%) and far below MIRAGE 
+
+(100%). On OB product-catalog (7 simpler scenarios), IR achieves 86% (6/7)—closer to MIRAGE ’s 100% but still below it. The degradation on Demo is concentrated in stateful scenarios: IR achieves only 29% (vs. 100% for M IRAGE ). The match-condition framework cannot express implicit cross-request state. In contrast, IR outperforms pattern-mining on error handling (88% vs. 38%) and pagination (100% vs. 0%), confirming that typed constraints help for simple branching but fail for complex state tracking. These results suggest that the effectiveness of structured generation depends on service complexity : IR works ad-equately for simple stateless APIs but degrades on services with latent state, temporal coupling, and multi-step workflows. The IR design space is large (richer state models, hierarchical automata, hybrid approaches), and our two variants explore only a narrow slice. 
+
+RQ2. Structured IR generation achieves 86% on simple APIs (OB) but drops to 55% on complex stateful services (Demo), while M IRAGE achieves 99–100% on both. The gap is driven by implicit state that typed match conditions cannot express. 
+
+a) Qualitative examples across benchmarks.: On OB ,the ob_checkout_bad_card scenario sends a charge with an Amex card number (starting with 3) to the payment ser-vice. M IRAGE correctly returns 400 (UnacceptedCreditCard) because it reads the validation logic requiring card numbers starting with 4 (Visa) or 5 (Mastercard). Replay returns 200 because its recorded responses only contain successful charges. On SS , the ss_payment_over_boundary scenario charges $100.01, just above the $100 payment threshold. MIRAGE returns {‘‘authorised’’: false } matching the real service’s boundary logic. In black-box mode, the same scenario still passes because the LLM infers the threshold from traces showing approved amounts below $100 and declined amounts above. A failure example: ss_get_customer in black-box mode. The real service returns 404 (user-001 not found after restart), but the BB mock returns 200 (assumes the ID is valid). This failure is consistent across all BB runs and illustrates the pre-seeded-state boundary. 
+
+C. RQ3: Signal Contribution Analysis 
+
+Table VI shows the ablation on the two community bench-marks. The body-shape metric reveals a gradient invisible to status codes alone:             
+
+> Signals Status (combined) Body (combined)
+> dep+caller+traces 100% 100% dep only 100% 100% caller+traces 92% 62% caller only 92% 69% traces only 92% 53%
+
+Dependency source code is the dominant signal: alone it yields 100% on both metrics. Without it, status fidelity drops dep+caller    
+
+> +traces
+> dep
+> only
+> caller
+> +traces
+> caller
+> only
+> traces
+> only
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Fidelity (%)
+> 100 100 100 100
+> 92
+> 62
+> 92
+> 69
+> 92
+> 53
+> without dep source
+> Signal Ablation (OB+SS combined)
+> Status
+> Body
+
+Fig. 3: Signal ablation (OB+SS combined). Status fidelity remains ≥92% across all signal configurations, but body-shape fidelity drops from 100% to 53–69% without dependency source code. The body metric captures a quality gradient invisible to status codes. TABLE VI: Signal ablation on OB (33 scenarios) and SS (39 scenarios). Status = status-code match; Body = body-shape match. All results verified with body-aware evaluator. Dep source is the dominant signal for both metrics.                          
+
+> Status Body Signals OB SS OB SS
+> dep+caller+traces (WB) 100% 100% 100% 100% caller+traces (BB) 100% 85% 67% 59% dep only 100% 100% 100% 100% traces only 100% 85% 58% 49% caller only 100% 85% 70% 69%
+
+modestly (100% → 92%) but body-shape drops sharply (100% 
+
+→ 53–69%). The LLM infers correct decisions (error codes) from traces or caller code, but cannot fully reconstruct re-sponse shapes without seeing the implementation. Caller code provides slightly better body fidelity than traces alone (69% vs. 53%), suggesting the caller’s request/response handling code carries structural information about expected response formats. Table VII lists all black-box status failures. The body-shape failures (28 additional scenarios across BB) fall into three cat-egories: (1) missing keys (14 cases): the mock omits response fields present in the real service (e.g., missing next_cursor 
+
+in pagination); (2) extra keys (8 cases): the mock adds fields not in the real response (e.g., adding status: ‘‘ok’’ ); (3) wrong structure (6 cases): correct keys but wrong nesting or type (e.g., returning an object where the real service returns a list). All status failures (6 cases) share one root cause: the mock assumes pre-seeded data exists without source code visibility. These failures are systematic—the same scenarios fail across all black-box configurations and all 3 repeated runs. TABLE VII: All black-box failures on SS. Five involve hidden pre-seeded user state; one involves a long UUID catalogue ID.               
+
+> Scenario Real Mock
+> ss get customer (GET /customers/user-001) 404 200 ss add address (POST /addresses) 404 200 ss add card (POST /cards) 404 200 ss get addresses (GET /customers/.../addr) 404 200 ss get cards (GET /customers/.../cards) 404 200 ss get sock (GET /catalogue/ {uuid })404 200
+
+TABLE VIII: Per-benchmark fidelity for M IRAGE (WB) by behavior category. Results are consistent across systems de-spite different service complexity, languages, and behavioral patterns.                            
+
+> Category Demo OB SS
+> basic crud 100% 100% 100% error handling 100% 100% 100% code reasoning 100% 100% 100% stateful 100% 100% 100% generalization 100% 100% 100% auth/async/pagination 100% —100% stress 75% 100% 100%
+> Overall 97% 100% 100%
+
+RQ3. Dependency source code yields 100% on both met-rics. Without it, status drops modestly (100% →92%) but body shape drops sharply (100% →63%). The LLM infers correct decisions from traces/caller but cannot reconstruct response shapes without the implementation. 
+
+D. RQ4: Cross-Benchmark Consistency 
+
+Table VIII shows per-benchmark category fidelity for M I- 
+
+> RAGE
+
+in white-box mode. Performance is remarkably con-sistent: 100% on all behavior categories except Demo stress tests (75%), where the failure is a test design artifact (cross-service calls routed to the wrong mock). The consistency across benchmarks—which differ in service complexity (3– 6 dependencies), original languages (Go, C#, Java, Node.js vs. Python), and behavioral patterns (optimistic locking, async polling, saga orchestration)—suggests that the approach gen-eralizes to diverse microservice architectures. 
+
+a) Within-session determinism.: We run three indepen-dent evaluations within the same day for two configurations: OB payment (white-box, 8 scenarios) and SS user (black-box, 11 scenarios). Both produce identical results across all three runs (8/8 and 6/11), with 0% spread. This demonstrates within-session stability under fixed model version and temperature; long-term reproducibility across model updates or provider changes is not tested and remains a deployment concern. 
+
+RQ4. White-box results are consistent across benchmarks (97–100%) and deterministic across runs (0% spread). Failures are systematic (knowledge gaps), not stochastic. TABLE IX: Model comparison. Three frontier families achieve 
+
+≥97%. Kimi and MiniMax evaluated on Demo only.                     
+
+> Model Demo OB SS Cost/dep
+> Claude Opus 4.6 97% 97% 100% $0.82 Claude Sonnet 4.6 97% 100% 100% $0.16 Kimi K2.5 100% ——$0.50 MiniMax M2 84% ——$0.30
+
+E. RQ5: Cost, Latency, and Model Sensitivity 
+
+Three frontier models (Opus, Sonnet, Kimi) achieve ≥97%, within 3 points of each other (Table IX). MiniMax M2, a smaller model, drops to 84%, indicating frontier-class reason-ing helps but the approach is not tied to one family. Sonnet achieves equal or better fidelity at 80% lower cost, making it the recommended choice for cost-sensitive use. The full evaluation required 177 LLM calls at $0.16– $0.82 per dependency. Each call takes ∼3s (Opus via Bedrock), yielding ∼6s per scenario. Six M IRAGE processes use ∼200MB RAM vs. ∼2GB for real services. 
+
+a) Latency and CI impact.: Each LLM call takes ∼3s (Opus via AWS Bedrock). With an average of 1.7 calls per scenario, the full 110-scenario suite completes in ∼9.4 minutes. This is ∼100 × slower than running against real services ( ∼50ms per scenario), but real dependency deploy-ment requires 2–5 minutes of setup time (Docker provi-sioning, database initialization, configuration). M IRAGE ’s no-infrastructure model (no Docker, no databases) means the net CI impact is comparable or favorable when setup time dominates test execution time. 
+
+b) End-to-end test equivalence.: To validate that M I- 
+
+> RAGE
+
+preserves integration test outcomes, we run the Demo system’s OrderService caller against both real dependencies and MIRAGE mocks across 8 end-to-end order scenarios covering happy paths, error compensation (declined card →
+
+422), error propagation (insufficient stock → 409, nonexistent item → 500), edge cases (zero quantity), and stateful flows (multiple orders, order listing). Both white-box and black-box modes produce 8/8 matching caller responses (100%)—for these 8 scenarios, the caller’s integration tests pass or fail the same way whether running against real dependencies or MIRAGE mocks. This provides direct evidence that M IRAGE 
+
+preserves the testing decisions that matter for CI, not just individual HTTP status codes. 
+
+RQ5. Three frontier LLM families agree within 3%. Cost is $0.16–$0.82/dep. End-to-end: across 8 caller-level inte-gration tests (including error compensation and fault prop-agation), M IRAGE produces identical pass/fail outcomes as real dependencies (8/8 WB, 8/8 BB). V. D ISCUSSION 
+
+a) When does structured generation help or hurt?: Our comparison of structured IR generation against online simula-tion reveals a complexity-dependent pattern: IR achieves 86% on OB’s simple product-catalog API but only 55% on Demo’s stateful services. The failure mechanism is specific: typed match conditions (e.g., if reservation exists then 200 ) cannot express state transitions that require tracking accumulated context across requests (e.g., marking a reserva-tion as “already confirmed”). The IR does outperform pattern-mining on simple error handling (88% vs. 38%), confirming that constraints help when the input-to-output mapping is clear and discrete. This suggests a practical guideline: use structured gener-ation for simple, well-partitioned APIs where determinism and verifiability matter; use online simulation for services with latent state, temporal coupling, or exception flows that resist clean formalization. A promising direction is hybrid approaches where the LLM generates free-form responses while an IR layer validates structural invariants post-hoc. 
+
+b) If dep-source alone gets 100%, why use traces?: De-pendency source code yields 100% fidelity on our benchmarks, raising the question of whether traces add value. We argue traces remain important for three reasons: (1) source code is often unavailable for third-party dependencies; (2) source code may be too large to fit in the LLM context window—traces provide a compressed behavioral summary; (3) traces capture 
+
+runtime behavior including environment-specific configuration that may not be obvious from code alone. On our benchmarks, the services are small enough that source code alone suffices; larger real-world services may require traces to fill information gaps. 
+
+c) Practical deployment guidance.: In practice, depen-dency source code is often unavailable (third-party services, other teams’ microservices). Black-box mode is therefore the 
+
+default deployment scenario . Our results show it achieves 94% status fidelity—high enough for integration testing of control-flow correctness (error codes, status transitions)—but only 75% body fidelity, meaning response content should not be relied upon for value-level assertions. White-box mode, when source is available, achieves 99% on both metrics and should be preferred. We recommend: (1) start with black-box for rapid mock generation; (2) upgrade to white-box for services where response content matters; (3) use Sonnet-class models for cost-sensitive deployments ($0.16/dep); (4) the full 110-scenario suite runs in ∼9.4 minutes without deploying dependency infrastructure (Docker, databases), making it practical for CI pipelines where dependency provisioning is the bottleneck. Initial harness setup takes ∼8 hours across three benchmarks (Section V). For pipelines with lightweight always-on staging clusters, the ∼100 × per-request latency overhead may not be justified. M IRAGE is most valuable in three scenarios: (1) teams that lack pre-provisioned staging environments and would otherwise spend 2–5 minutes per CI run on Docker provisioning; (2) services with many dependencies where pro-visioning cost scales linearly; (3) development branches where developers need rapid feedback without full infrastructure. For a service with 10 dependencies at $0.16/dep (Sonnet), a single CI run costs $1.60—comparable to the compute cost of provisioning 10 containers. 
+
+d) Onboarding effort.: Setting up M IRAGE for a new benchmark requires: (1) collecting traces (scripted workload + OTel instrumentation, ∼1–2 hours); (2) writing test scenarios (∼2–4 hours for 30–40 scenarios); (3) configuring the runner (service ports, trace paths, URL prefixes, ∼30 minutes). No prompt engineering is needed—the Context Builder assembles prompts automatically from source files and trace summaries. For the three benchmarks in this paper, total human setup time was approximately 8 hours (Demo: 3h, OB: 3h, SS: 2h), dominated by test scenario design. 
+
+e) Metric limitations and value-level check.: Our body-shape metric checks top-level JSON key agreement but does not validate value correctness. To assess the gap, we run a deeper value-level check on a 15-scenario subset (OB product-catalog + SS payment) comparing response value types and scalar values. On SS payment (8 scenarios with simple JSON responses), M IRAGE achieves 100% exact value match. On OB product-catalog (7 scenarios), M IRAGE achieves 100% for single-object responses (product lookup, 404 errors) but returns list responses with different item counts than the real service (e.g., the mock may return 5 products instead of 9). This confirms that M IRAGE accurately simulates decision logic and error handling but may approximate data-volume as-pects of responses. The 83-point gap between M IRAGE (WB) and replay on body shape (99% vs. 16%) is too large for value-level errors to reverse the ordering. All benchmark services communicate over HTTP/JSON. gRPC, message queues, and event-driven architectures remain untested. VI. T HREATS TO VALIDITY 
+
+a) Internal validity.: Scenario injection provides the LLM with the call sequence (but not expected responses), which could inflate fidelity. Our no-injection ablation (Sec-tion IV-A) shows injection does not inflate results—fidelity is equal or higher without injection across three service configu-rations including stateful multi-step scenarios. Our body-shape metric checks top-level JSON key agreement; value-level correctness (e.g., exact prices, list lengths) is not validated. The LLM may have seen Online Boutique and Sock Shop source code during pre-training; however, the Demo system is original and unpublished, yet achieves comparable fidelity (97%). 
+
+b) External validity.: All three benchmarks use HTTP/JSON communication and are adapted as Python services from polyglot originals (Go, C#, Java, Node.js). The Python adaptation simplifies the LLM’s task: the model reads Python source rather than Go or Java, which may inflate white-box fidelity. We mitigate this concern by noting that (1) black-box mode does not use dependency source at all, and its 94% status fidelity is the more conservative number; (2) the Demo system is natively Python and achieves comparable fidelity to the adapted benchmarks; (3) the adaptation preserves all endpoint semantics, status codes, and validation logic, so behavioral complexity is unchanged. Three systems with 110 scenarios is respectable but not exhaustive; enterprise microservices may have dozens of de-pendencies with richer interaction patterns. Online Boutique and Sock Shop are public and may appear in LLM training data, potentially inflating results; the custom Demo system (unpublished) mitigates this with comparable fidelity (97%). Pattern-mining and Contract IR are evaluated on Demo only because their generation pipelines assume Demo-specific trace formats. Adapting them to OB and SS requires non-trivial engineering (different trace schemas, service structures); we prioritized breadth of the main approach (M IRAGE ) over breadth of baselines. Record-replay, which is format-agnostic, is evaluated on all three benchmarks. 
+
+c) Construct validity.: caller-adequate fidelity is defined relative to our test scenario set. A broader scenario set might expose additional failure modes. The 9 behavior categories cover common microservice patterns but do not exhaust all possibilities (e.g., rate limiting, circuit breaking, distributed transactions). VII. C ONCLUSION 
+
+We introduced online LLM simulation as a runtime ap-proach to microservice dependency testing: instead of gen-erating static mock artifacts before test execution, the LLM answers each dependency request directly while maintaining cross-request interaction state. Our instantiation, MIRAGE ,achieves 99% status-code and 99% response-shape fidelity across 110 scenarios on three benchmarks, outperforming record-replay (62% / 16%) on all three benchmarks and, where evaluated, pattern-mining (61%) and typed IR (55–86%). In a preliminary end-to-end check on the Demo system, caller integration tests produce the same pass/fail outcomes with MIRAGE as with real dependencies (8/8 scenarios). A signal ablation shows dependency source code is often sufficient for runtime simulation (100% alone); without it, the model retains error-code accuracy (94%) but loses response-structure fidelity (75%). Future work will extend response validation to value-level correctness, support gRPC and event-driven protocols, and investigate hybrid approaches that layer structural validation atop runtime simulation. REFERENCES [1] A. Iyer, “Why your microservice integration tests miss real problems,” 2024, practitioner article. [2] AtomicJar, “Why integration testing is key to testing microservices,” https://www.atomicjar.com, 2023. [3] SpectoLabs, “HoverFly: Lightweight service virtualization,” https:// hoverfly.io, 2023. [4] S. Hossain et al. , “Automated mock generation for microservice testing from execution traces,” in Proceedings of the IEEE/ACM International Conference on Software Engineering (ICSE) , 2025, to appear. [5] Stoplight, “Prism: API mock server from OpenAPI specifications,” https: //stoplight.io/open-source/prism, 2023. [6] WireMock, “WireMock: API mocking tool,” https://wiremock.org, 2023. [7] B. Byars, “mountebank: Over the wire test doubles,” https://www.mbtest. org, 2023. [8] E. Masor, “How to use “fake dependency” for testing microservices,” 2022, practitioner article. [9] Kong Inc., “How to test microservices: Strategy and use cases,” https: //konghq.com, 2022. [10] M. Chen et al. , “Evaluating large language models trained on code,” 
+
+CoRR , vol. abs/2107.03374, 2021, arXiv preprint. [11] R. Li, L. B. Allal, Y. Zi, N. Muennighoff, D. Kocetkov, C. Mou, M. Marone et al. , “StarCoder: May the source be with you!” Trans-actions on Machine Learning Research (TMLR) , 2023. [12] B. Rozi` ere, J. Gehring, F. Gloeckle, S. Sootla, I. Gat et al. , “Code Llama: Open foundation models for code,” CoRR , vol. abs/2308.12950, 2023, arXiv preprint. [13] Y. Chen, Z. Hu, C. Zhi, J. Han, and S. Deng, “ChatUniTest: A framework for LLM-based test generation,” in Companion Proceedings of the 32nd ACM International Conference on the Foundations of Software Engineering (FSE Companion) , 2024. [14] C. Lemieux, J. P. Inala, S. K. Lahiri, and S. Sen, “CodaMosa: Escaping coverage plateaus in test generation with pre-trained large language models,” in 45th IEEE/ACM International Conference on Software Engineering (ICSE) , 2023, pp. 951–963. [15] C. S. Xia, Y. Wei, and L. Zhang, “Automated program repair in the era of large pre-trained language models,” in 45th IEEE/ACM International Conference on Software Engineering (ICSE) , 2023, pp. 1482–1494. [16] R. Pan, R. Pavuluri, R. Huang, R. Krishna, T. Stennett, A. Orso, and S. Sinha, “SAINT: Service-level integration test generation with program analysis and LLM-based agents,” CoRR , vol. abs/2511.13305, 2025, arXiv preprint. [17] R. Elumalai, “Automating Spring Boot integration tests with AI/LLM: A 5-prompt workflow,” 2025, practitioner article. [18] L. Zhang, Y. Zhai, and T. Jia, “MicroRemed: Benchmarking LLMs in microservices remediation,” 2025, preprint. [19] D. M. Yellin, “Evaluating LLMs on microservice-based applications: How complex is your specification?” 2025, preprint. [20] A. Iyer, “Why AI features break microservices testing,” 2025, practi-tioner article. [21] Cloud Native Computing Foundation, “OpenTelemetry: An observability framework,” https://opentelemetry.io, 2023. [22] CNCF, “Jaeger: Open-source distributed tracing,” https: //www.jaegertracing.io, 2023. [23] OpenZipkin, “Zipkin: A distributed tracing system,” https://zipkin.io, 2023. [24] Y. Gan, Y. Zhang, K. Hu, D. Cheng, Y. He, M. Pancholi, and C. De-limitrou, “Seer: Leveraging big data to navigate the complexity of performance debugging in cloud microservices,” in 24th International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS) , 2019, pp. 19–33. [25] R. R. Sambasivan, I. Shafer, J. Mace, B. H. Sigelman, R. Fonseca, and G. R. Ganger, “Principled workflow-centric tracing of distributed sys-tems,” in Proceedings of the 7th ACM Symposium on Cloud Computing (SoCC) , 2016. [26] G. Yu, P. Chen, H. Chen, Z. Guan, Z. Huang, L. Jing, T. Weng, X. Sun, and X. Li, “MicroRank: End-to-end latency issue localization with extended spectrum analysis in microservice environments,” in 
+
+Proceedings of the Web Conference 2021 (WWW) , 2021, pp. 3087–3098. [27] M. Ma, J. Xu, Y. Wang, P. Chen, Z. Zhang, and P. Wang, “AutoMAP: Diagnose your microservice-based web applications automatically,” in 
+
+Proceedings of the Web Conference 2020 (WWW) , 2020. [28] I. Beschastnikh, Y. Brun, M. D. Ernst, and A. Krishnamurthy, “Inferring models of concurrent systems from logs of their behavior with CSight,” in 36th International Conference on Software Engineering (ICSE) , 2014, pp. 468–479. [29] I. Beschastnikh, Y. Brun, S. Schneider, M. Sloan, and M. D. Ernst, “Leveraging existing instrumentation to automatically infer invariant-constrained models,” in 19th ACM SIGSOFT Symposium on the Foun-dations of Software Engineering (FSE) , 2011, pp. 267–277. [30] K. Honda, N. Yoshida, and M. Carbone, “Multiparty asynchronous session types,” Journal of the ACM , vol. 63, no. 1, pp. 9:1–9:67, 2016. [31] G. Castagna, N. Gesbert, and L. Padovani, “A theory of contracts for web services,” ACM Transactions on Programming Languages and Systems ,vol. 31, no. 5, pp. 19:1–19:61, 2009. [32] S. Ram´ ırez, “FastAPI: Modern web framework for building APIs with Python,” https://fastapi.tiangolo.com, 2023. [33] Google Cloud, “Online Boutique: A cloud-native microservices demo application,” https://github.com/GoogleCloudPlatform/ microservices-demo, 2023. [34] Weaveworks, “Sock Shop: A microservices demo application,” https: //microservices-demo.github.io, 2023.

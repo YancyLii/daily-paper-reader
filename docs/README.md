@@ -6,73 +6,79 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-04-12
-- 运行时间：2026-04-12 19:42:59 UTC
+- 最新运行日期：2026-04-13
+- 运行时间：2026-04-13 20:21:47 UTC
 - 运行状态：成功
-- 本次总论文数：17
-- 精读区：5
+- 本次总论文数：19
+- 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日深度复盘 17 篇前沿论文，重点剖析 Claude Code 自动模式的权限边界与 AI Agent 在漏洞验证（PoC）中的实战表现。
-研究揭示了程序分析对提升代码生成精准度的关键作用，并探讨了区块链技术在安全治理型 AI 中的约束潜力。
-建议开发者关注 AI 代理在复杂仓库环境下的对齐优化，并警惕自动化工具在权限管理上的潜在风险。
-- 详情：[/202604/12/README](/202604/12/README)
+今日深度研读 19 篇前沿论文，聚焦智能体运行时治理与大模型工具调用的安全防线。
+核心结论指出，通过执行绑定安全链可有效管控智能体变异，同时需警惕工具调用中潜藏的数据泄露后门。
+建议关注 Model Context Protocol (MCP) 安全框架，在开发 Agent 时加强对第三方库幻觉的静态检测。
+- 详情：[/202604/13/README](/202604/13/README)
 
 ### 精读区论文标签
-1. [Measuring the Permission Gate: A Stress-Test Evaluation of Claude Code's Auto Mode](/202604/12/2604.04978v1-measuring-the-permission-gate-a-stress-test-evaluation-of-claude-codes-auto-mode)  
+1. [Harnessing Embodied Agents: Runtime Governance for Policy-Constrained Execution](/202604/13/2604.07833v2-harnessing-embodied-agents-runtime-governance-for-policy-constrained-execution)  
+   标签：评分：9.0/10、query:agsec
+   evidence：智能体的运行时治理与策略约束执行
+2. [OpenKedge: Governing Agentic Mutation with Execution-Bound Safety and Evidence Chains](/202604/13/2604.08601v1-openkedge-governing-agentic-mutation-with-execution-bound-safety-and-evidence-chains)  
+   标签：评分：9.0/10、query:agsec
+   evidence：通过执行绑定安全和策略约束治理智能体变动
+3. [Systematic API Testing Through Model Checking and Executable Contracts](/202604/13/2604.08633v1-systematic-api-testing-through-model-checking-and-executable-contracts)  
+   标签：评分：9.0/10、query:libfuz
+   evidence：自动生成有效的有状态API调用序列
+4. [CORA: Conformal Risk-Controlled Agents for Safeguarded Mobile GUI Automation](/202604/13/2604.09155v1-cora-conformal-risk-controlled-agents-for-safeguarded-mobile-gui-automation)  
+   标签：评分：9.0/10、query:agsec
+   evidence：针对自主Agent的策略后动作前安全框架，通过风险控制实现安全动作执行
+5. [Nidus: Externalized Reasoning for AI-Assisted Engineering](/202604/13/2604.05080v1-nidus-externalized-reasoning-for-ai-assisted-engineering)  
    标签：评分：8.0/10、query:agsec
-   evidence：评估拦截AI智能体危险工具调用和状态变更操作的权限系统
-2. [Program Analysis Guided LLM Agent for Proof-of-Concept Generation](/202604/12/2604.07624v1-program-analysis-guided-llm-agent-for-proof-of-concept-generation)  
-   标签：评分：8.0/10、query:libfuz
-   evidence：程序分析引导的LLM用于漏洞复现和PoC生成
-3. [Guardian-as-an-Advisor: Advancing Next-Generation Guardian Models for Trustworthy LLMs](/202604/12/2604.07655v1-guardian-as-an-advisor-advancing-next-generation-guardian-models-for-trustworthy-llms)  
+   evidence：强制执行工程不变性和约束库的治理运行时
+6. [Harnessing Hyperbolic Geometry for Harmful Prompt Detection and Sanitization](/202604/13/2604.06285v1-harnessing-hyperbolic-geometry-for-harmful-prompt-detection-and-sanitization)  
    标签：评分：8.0/10、query:agsec
-   evidence：针对LLM输出的软门控安全检查器和风险标签预测
-4. [AITH: A Post-Quantum Continuous Delegation Protocol for Human-AI Trust Establishment](/202604/12/2604.07695v1-aith-a-post-quantum-continuous-delegation-protocol-for-human-ai-trust-establishment)  
+   evidence：针对视觉语言模型的有害提示检测与净化
+7. [Dictionary-Aligned Concept Control for Safeguarding Multimodal LLMs](/202604/13/2604.08846v1-dictionary-aligned-concept-control-for-safeguarding-multimodal-llms)  
    标签：评分：8.0/10、query:agsec
-   evidence：为自主AI智能体强制执行硬约束和速率限制的边界引擎
-5. [Activation Steering for Aligned Open-ended Generation without Sacrificing Coherence](/202604/12/2604.08169v1-activation-steering-for-aligned-open-ended-generation-without-sacrificing-coherence)  
-   标签：评分：8.0/10、query:agsec
-   evidence：用于对齐生成和安全的激活引导
+   evidence：保护多模态大模型免受恶意查询和不安全响应的影响
 
 ### 速读区论文标签
-1. [Toward Executable Repository-Level Code Generation via Environment Alignment](/202604/12/2604.03622v1-toward-executable-repository-level-code-generation-via-environment-alignment)  
+1. [Your LLM Agent Can Leak Your Data: Data Exfiltration via Backdoored Tool Use](/202604/13/2604.05432v1-your-llm-agent-can-leak-your-data-data-exfiltration-via-backdoored-tool-use)  
+   标签：评分：8.0/10、query:agsec
+   evidence：LLM智能体中后门工具调用的安全风险与数据外泄
+2. [MCP-DPT: A Defense-Placement Taxonomy and Coverage Analysis for Model Context Protocol Security](/202604/13/2604.07551v1-mcp-dpt-a-defense-placement-taxonomy-and-coverage-analysis-for-model-context-protocol-security)  
+   标签：评分：8.0/10、query:agsec
+   evidence：LLM智能体调用第三方工具的安全格局与防御部署
+3. [An Empirical Analysis of Static Analysis Methods for Detection and Mitigation of Code Library Hallucinations](/202604/13/2604.07755v2-an-empirical-analysis-of-static-analysis-methods-for-detection-and-mitigation-of-code-library-hallucinations)  
+   标签：评分：8.0/10、query:libfuz
+   evidence：利用静态分析检测和缓解代码库调用幻觉
+4. [ACIArena: Toward Unified Evaluation for Agent Cascading Injection](/202604/13/2604.07775v1-aciarena-toward-unified-evaluation-for-agent-cascading-injection)  
+   标签：评分：8.0/10、query:agsec
+   evidence：多智能体系统中级联注入攻击的评估
+5. [SafeCtrl: Region-Aware Safety Control for Text-to-Image Diffusion via Detect-Then-Suppress](/202604/13/2604.03941v1-safectrl-region-aware-safety-control-for-text-to-image-diffusion-via-detect-then-suppress)  
+   标签：评分：7.0/10、query:agsec
+   evidence：基于检测-抑制范式的模型输出安全控制框架
+6. [IntentScore: Intent-Conditioned Action Evaluation for Computer-Use Agents](/202604/13/2604.05157v1-intentscore-intent-conditioned-action-evaluation-for-computer-use-agents)  
+   标签：评分：7.0/10、query:agsec
+   evidence：计算机使用智能体的意图条件动作评估
+7. [Graph of Skills: Dependency-Aware Structural Retrieval for Massive Agent Skills](/202604/13/2604.05333v1-graph-of-skills-dependency-aware-structural-retrieval-for-massive-agent-skills)  
    标签：评分：7.0/10、query:libfuz
-   evidence：仓库级代码生成与环境对齐
-2. [Profile-Then-Reason: Bounded Semantic Complexity for Tool-Augmented Language Agents](/202604/12/2604.04131v1-profile-then-reason-bounded-semantic-complexity-for-tool-augmented-language-agents)  
-   标签：评分：7.0/10、query:agsec
-   evidence：工具增强推理的有界执行框架
-3. [Governance-Constrained Agentic AI: Blockchain-Enforced Human Oversight for Safety-Critical Wildfire Monitoring](/202604/12/2604.04265v1-governance-constrained-agentic-ai-blockchain-enforced-human-oversight-for-safety-critical-wildfire-monitoring)  
-   标签：评分：7.0/10、query:agsec
-   evidence：区块链强制的人类监督与针对智能体的安全关键治理
-4. [How Alignment Routes: Localizing, Scaling, and Controlling Policy Circuits in Language Models](/202604/12/2604.04385v1-how-alignment-routes-localizing-scaling-and-controlling-policy-circuits-in-language-models)  
-   标签：评分：7.0/10、query:agsec
-   evidence：控制语言模型中的策略电路和安全拒绝机制
-5. [Collaborative Altruistic Safety in Coupled Multi-Agent Systems](/202604/12/2604.04772v1-collaborative-altruistic-safety-in-coupled-multi-agent-systems)  
-   标签：评分：7.0/10、query:agsec
-   evidence：多智能体系统中用于安全的协作控制屏障函数
-6. [Squeez: Task-Conditioned Tool-Output Pruning for Coding Agents](/202604/12/2604.04979v1-squeez-task-conditioned-tool-output-pruning-for-coding-agents)  
-   标签：评分：7.0/10、query:agsec
-   evidence：针对代码智能体的任务条件工具输出剪枝
-7. [DebugHarness: Emulating Human Dynamic Debugging for Autonomous Program Repair](/202604/12/2604.03610v1-debugharness-emulating-human-dynamic-debugging-for-autonomous-program-repair)  
-   标签：评分：6.0/10、query:libfuz
-   evidence：自主LLM驱动的调试代理harness，用于解决复杂的漏洞
-8. [From Prompt to Physical Action: Structured Backdoor Attacks on LLM-Mediated Robotic Control Systems](/202604/12/2604.03890v1-from-prompt-to-physical-action-structured-backdoor-attacks-on-llm-mediated-robotic-control-systems)  
+   evidence：从技能包构建可执行技能图以建模依赖关系
+8. [Graph of Skills: Dependency-Aware Structural Retrieval for Massive Agent Skills](/202604/13/2604.05333v2-graph-of-skills-dependency-aware-structural-retrieval-for-massive-agent-skills)  
+   标签：评分：7.0/10、query:libfuz
+   evidence：针对大规模智能体技能库的依赖感知结构化检索
+9. [From High-Level Types to Low-Level Monitors: Synthesizing Verified Runtime Checkers for MAVLink](/202604/13/2604.03886v1-from-high-level-types-to-low-level-monitors-synthesizing-verified-runtime-checkers-for-mavlink)  
    标签：评分：6.0/10、query:agsec
-   evidence：针对LLM介导机器人控制及物理动作执行的后门攻击
-9. [COBOLAssist: Analyzing and Fixing Compilation Errors for LLM-Powered COBOL Code Generation](/202604/12/2604.03978v1-cobolassist-analyzing-and-fixing-compilation-errors-for-llm-powered-cobol-code-generation)  
-   标签：评分：6.0/10、query:libfuz
-   evidence：分析并修复生成代码中的编译错误
-10. [Certificates Synthesis for A Class of Observational Properties in Stochastic Systems: A Unified Approach](/202604/12/2604.04067v1-certificates-synthesis-for-a-class-of-observational-properties-in-stochastic-systems-a-unified-approach)  
+   evidence：强制执行消息序列的上下文有效性以确保安全
+10. [Styx: Collaborative and Private Data Processing With TEE-Enforced Sticky Policy](/202604/13/2604.04082v1-styx-collaborative-and-private-data-processing-with-tee-enforced-sticky-policy)  
    标签：评分：6.0/10、query:agsec
-   evidence：随机系统中的信息流安全与观测属性
-11. [Cheap Talk, Empty Promise: Frontier LLMs easily break public promises for self-interest](/202604/12/2604.04782v1-cheap-talk-empty-promise-frontier-llms-easily-break-public-promises-for-self-interest)  
+   evidence：用于数据处理和执行的 TEE 强制粘性策略
+11. [LLM-Enabled Open-Source Systems in the Wild: An Empirical Study of Vulnerabilities in GitHub Security Advisories](/202604/13/2604.04288v1-llm-enabled-open-source-systems-in-the-wild-an-empirical-study-of-vulnerabilities-in-github-security-advisories)  
    标签：评分：6.0/10、query:agsec
-   evidence：多智能体环境下智能体欺骗行为及其安全后果的研究
-12. [MIRAGE: Online LLM Simulation for Microservice Dependency Testing](/202604/12/2604.04806v1-mirage-online-llm-simulation-for-microservice-dependency-testing)  
-   标签：评分：6.0/10、query:libfuz
-   evidence：用于微服务依赖测试的在线LLM模拟
+   evidence：启用LLM的开源系统中的漏洞研究
+12. [Bridging Safety and Security in Complex Systems: A Model-Based Approach with SAFT-GT Toolchain](/202604/13/2604.04705v1-bridging-safety-and-security-in-complex-systems-a-model-based-approach-with-saft-gt-toolchain)  
+   标签：评分：6.0/10、query:agsec
+   evidence：基于模型的自适应系统安全分析方法，利用攻击故障树进行建模
 
 
 <div class="dpr-home-promo-card">

@@ -6,79 +6,79 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-04-13
-- 运行时间：2026-04-13 20:21:47 UTC
+- 最新运行日期：2026-04-14
+- 运行时间：2026-04-14 20:13:53 UTC
 - 运行状态：成功
 - 本次总论文数：19
 - 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日深度研读 19 篇前沿论文，聚焦智能体运行时治理与大模型工具调用的安全防线。
-核心结论指出，通过执行绑定安全链可有效管控智能体变异，同时需警惕工具调用中潜藏的数据泄露后门。
-建议关注 Model Context Protocol (MCP) 安全框架，在开发 Agent 时加强对第三方库幻觉的静态检测。
-- 详情：[/202604/13/README](/202604/13/README)
+今日深度研读 19 篇论文，聚焦 LLM Agent 的指令层级优化与安全防御体系构建。
+重点关注多级指令架构与 PlanGuard 规划一致性校验，这是解决 Agent 间接提示词注入的关键突破。
+建议开发者警惕 GUI 环境下的语义注入与推理劫持风险，优先提升 Agent 在复杂任务中的抗干扰能力。
+- 详情：[/202604/14/README](/202604/14/README)
 
 ### 精读区论文标签
-1. [Harnessing Embodied Agents: Runtime Governance for Policy-Constrained Execution](/202604/13/2604.07833v2-harnessing-embodied-agents-runtime-governance-for-policy-constrained-execution)  
+1. [Many-Tier Instruction Hierarchy in LLM Agents](/202604/14/2604.09443v1-many-tier-instruction-hierarchy-in-llm-agents)  
    标签：评分：9.0/10、query:agsec
-   evidence：智能体的运行时治理与策略约束执行
-2. [OpenKedge: Governing Agentic Mutation with Execution-Bound Safety and Evidence Chains](/202604/13/2604.08601v1-openkedge-governing-agentic-mutation-with-execution-bound-safety-and-evidence-chains)  
+   evidence：用于解决智能体中多源指令冲突的指令层级机制
+2. [PlanGuard: Defending Agents against Indirect Prompt Injection via Planning-based Consistency Verification](/202604/14/2604.10134v1-planguard-defending-agents-against-indirect-prompt-injection-via-planning-based-consistency-verification)  
    标签：评分：9.0/10、query:agsec
-   evidence：通过执行绑定安全和策略约束治理智能体变动
-3. [Systematic API Testing Through Model Checking and Executable Contracts](/202604/13/2604.08633v1-systematic-api-testing-through-model-checking-and-executable-contracts)  
-   标签：评分：9.0/10、query:libfuz
-   evidence：自动生成有效的有状态API调用序列
-4. [CORA: Conformal Risk-Controlled Agents for Safeguarded Mobile GUI Automation](/202604/13/2604.09155v1-cora-conformal-risk-controlled-agents-for-safeguarded-mobile-gui-automation)  
+   evidence：通过动作验证防御Agent免受间接提示注入攻击
+3. [ClawGuard: A Runtime Security Framework for Tool-Augmented LLM Agents Against Indirect Prompt Injection](/202604/14/2604.11790v1-clawguard-a-runtime-security-framework-for-tool-augmented-llm-agents-against-indirect-prompt-injection)  
    标签：评分：9.0/10、query:agsec
-   evidence：针对自主Agent的策略后动作前安全框架，通过风险控制实现安全动作执行
-5. [Nidus: Externalized Reasoning for AI-Assisted Engineering](/202604/13/2604.05080v1-nidus-externalized-reasoning-for-ai-assisted-engineering)  
+   evidence：针对工具增强型智能体在工具调用边界的运行时安全框架
+4. [Beyond Fluency: Toward Reliable Trajectories in Agentic IR](/202604/14/2604.04269v2-beyond-fluency-toward-reliable-trajectories-in-agentic-ir)  
    标签：评分：8.0/10、query:agsec
-   evidence：强制执行工程不变性和约束库的治理运行时
-6. [Harnessing Hyperbolic Geometry for Harmful Prompt Detection and Sanitization](/202604/13/2604.06285v1-harnessing-hyperbolic-geometry-for-harmful-prompt-detection-and-sanitization)  
+   evidence：智能体轨迹完整性验证与安全部署策略
+5. [ClawsBench: Evaluating Capability and Safety of LLM Productivity Agents in Simulated Workspaces](/202604/14/2604.05172v1-clawsbench-evaluating-capability-and-safety-of-llm-productivity-agents-in-simulated-workspaces)  
    标签：评分：8.0/10、query:agsec
-   evidence：针对视觉语言模型的有害提示检测与净化
-7. [Dictionary-Aligned Concept Control for Safeguarding Multimodal LLMs](/202604/13/2604.08846v1-dictionary-aligned-concept-control-for-safeguarding-multimodal-llms)  
+   evidence：在模拟工作空间中评估大模型生产力智能体的安全关键场景
+6. [Precise Shield: Explaining and Aligning VLLM Safety via Neuron-Level Guidance](/202604/14/2604.08881v1-precise-shield-explaining-and-aligning-vllm-safety-via-neuron-level-guidance)  
    标签：评分：8.0/10、query:agsec
-   evidence：保护多模态大模型免受恶意查询和不安全响应的影响
+   evidence：通过神经元级引导和多模态防御实现VLLM安全
+7. [Conversations Risk Detection LLMs in Financial Agents via Multi-Stage Generative Rollout](/202604/14/2604.09056v1-conversations-risk-detection-llms-in-financial-agents-via-multi-stage-generative-rollout)  
+   标签：评分：8.0/10、query:agsec
+   evidence：金融智能体安全检测框架，识别可疑行为模式
 
 ### 速读区论文标签
-1. [Your LLM Agent Can Leak Your Data: Data Exfiltration via Backdoored Tool Use](/202604/13/2604.05432v1-your-llm-agent-can-leak-your-data-data-exfiltration-via-backdoored-tool-use)  
+1. [Stop Fixating on Prompts: Reasoning Hijacking and Constraint Tightening for Red-Teaming LLM Agents](/202604/14/2604.05549v2-stop-fixating-on-prompts-reasoning-hijacking-and-constraint-tightening-for-red-teaming-llm-agents)  
    标签：评分：8.0/10、query:agsec
-   evidence：LLM智能体中后门工具调用的安全风险与数据外泄
-2. [MCP-DPT: A Defense-Placement Taxonomy and Coverage Analysis for Model Context Protocol Security](/202604/13/2604.07551v1-mcp-dpt-a-defense-placement-taxonomy-and-coverage-analysis-for-model-context-protocol-security)  
-   标签：评分：8.0/10、query:agsec
-   evidence：LLM智能体调用第三方工具的安全格局与防御部署
-3. [An Empirical Analysis of Static Analysis Methods for Detection and Mitigation of Code Library Hallucinations](/202604/13/2604.07755v2-an-empirical-analysis-of-static-analysis-methods-for-detection-and-mitigation-of-code-library-hallucinations)  
+   evidence：通过推理劫持和约束收紧实现的攻击与安全控制策略
+2. [ExplainFuzz: Explainable and Constraint-Conditioned Test Generation with Probabilistic Circuits](/202604/14/2604.06559v1-explainfuzz-explainable-and-constraint-conditioned-test-generation-with-probabilistic-circuits)  
    标签：评分：8.0/10、query:libfuz
-   evidence：利用静态分析检测和缓解代码库调用幻觉
-4. [ACIArena: Toward Unified Evaluation for Agent Cascading Injection](/202604/13/2604.07775v1-aciarena-toward-unified-evaluation-for-agent-cascading-injection)  
+   evidence：使用概率电路进行基于语法的模糊测试生成框架
+3. [Are GUI Agents Focused Enough? Automated Distraction via Semantic-level UI Element Injection](/202604/14/2604.07831v1-are-gui-agents-focused-enough-automated-distraction-via-semantic-level-ui-element-injection)  
    标签：评分：8.0/10、query:agsec
-   evidence：多智能体系统中级联注入攻击的评估
-5. [SafeCtrl: Region-Aware Safety Control for Text-to-Image Diffusion via Detect-Then-Suppress](/202604/13/2604.03941v1-safectrl-region-aware-safety-control-for-text-to-image-diffusion-via-detect-then-suppress)  
+   evidence：通过语义级UI元素注入对GUI智能体进行红队测试
+4. [Preference Redirection via Attention Concentration: An Attack on Computer Use Agents](/202604/14/2604.08005v1-preference-redirection-via-attention-concentration-an-attack-on-computer-use-agents)  
+   标签：评分：8.0/10、query:agsec
+   evidence：针对多模态智能体输入和注意力重定向的攻击
+5. [Uncovering Linguistic Fragility in Vision-Language-Action Models via Diversity-Aware Red Teaming](/202604/14/2604.05595v1-uncovering-linguistic-fragility-in-vision-language-action-models-via-diversity-aware-red-teaming)  
    标签：评分：7.0/10、query:agsec
-   evidence：基于检测-抑制范式的模型输出安全控制框架
-6. [IntentScore: Intent-Conditioned Action Evaluation for Computer-Use Agents](/202604/13/2604.05157v1-intentscore-intent-conditioned-action-evaluation-for-computer-use-agents)  
+   evidence：具身AI Agent安全性的红队测试
+6. [SymptomWise: A Deterministic Reasoning Layer for Reliable and Efficient AI Systems](/202604/14/2604.06375v1-symptomwise-a-deterministic-reasoning-layer-for-reliable-and-efficient-ai-systems)  
    标签：评分：7.0/10、query:agsec
-   evidence：计算机使用智能体的意图条件动作评估
-7. [Graph of Skills: Dependency-Aware Structural Retrieval for Massive Agent Skills](/202604/13/2604.05333v1-graph-of-skills-dependency-aware-structural-retrieval-for-massive-agent-skills)  
+   evidence：针对安全关键型AI输出的确定性推理层
+7. [The Defense Trilemma: Why Prompt Injection Defense Wrappers Fail?](/202604/14/2604.06436v3-the-defense-trilemma-why-prompt-injection-defense-wrappers-fail)  
+   标签：评分：7.0/10、query:agsec
+   evidence：对提示注入防御封装器和预处理机制的分析
+8. [Inference-Time Code Selection via Symbolic Equivalence Partitioning](/202604/14/2604.06485v1-inference-time-code-selection-via-symbolic-equivalence-partitioning)  
    标签：评分：7.0/10、query:libfuz
-   evidence：从技能包构建可执行技能图以建模依赖关系
-8. [Graph of Skills: Dependency-Aware Structural Retrieval for Massive Agent Skills](/202604/13/2604.05333v2-graph-of-skills-dependency-aware-structural-retrieval-for-massive-agent-skills)  
-   标签：评分：7.0/10、query:libfuz
-   evidence：针对大规模智能体技能库的依赖感知结构化检索
-9. [From High-Level Types to Low-Level Monitors: Synthesizing Verified Runtime Checkers for MAVLink](/202604/13/2604.03886v1-from-high-level-types-to-low-level-monitors-synthesizing-verified-runtime-checkers-for-mavlink)  
+   evidence：代码生成中基于符号执行的语义行为分组
+9. [Typify: A Lightweight Usage-driven Static Analyzer for Precise Python Type Inference](/202604/14/2604.05067v1-typify-a-lightweight-usage-driven-static-analyzer-for-precise-python-type-inference)  
+   标签：评分：6.0/10、query:libfuz
+   evidence：用于类型推断和符号执行的静态分析引擎
+10. [Compiled AI: Deterministic Code Generation for LLM-Based Workflow Automation](/202604/14/2604.05150v1-compiled-ai-deterministic-code-generation-for-llm-based-workflow-automation)  
    标签：评分：6.0/10、query:agsec
-   evidence：强制执行消息序列的上下文有效性以确保安全
-10. [Styx: Collaborative and Private Data Processing With TEE-Enforced Sticky Policy](/202604/13/2604.04082v1-styx-collaborative-and-private-data-processing-with-tee-enforced-sticky-policy)  
+   evidence：通过确定性代码生成减少安全风险
+11. [LLM-as-Judge for Semantic Judging of Powerline Segmentation in UAV Inspection](/202604/14/2604.05371v1-llm-as-judge-for-semantic-judging-of-powerline-segmentation-in-uav-inspection)  
    标签：评分：6.0/10、query:agsec
-   evidence：用于数据处理和执行的 TEE 强制粘性策略
-11. [LLM-Enabled Open-Source Systems in the Wild: An Empirical Study of Vulnerabilities in GitHub Security Advisories](/202604/13/2604.04288v1-llm-enabled-open-source-systems-in-the-wild-an-empirical-study-of-vulnerabilities-in-github-security-advisories)  
+   evidence：LLM作为语义裁判用于无人机自主巡检的安全评估
+12. [Don't Act Blindly: Robust GUI Automation via Action-Effect Verification and Self-Correction](/202604/14/2604.05477v1-dont-act-blindly-robust-gui-automation-via-action-effect-verification-and-self-correction)  
    标签：评分：6.0/10、query:agsec
-   evidence：启用LLM的开源系统中的漏洞研究
-12. [Bridging Safety and Security in Complex Systems: A Model-Based Approach with SAFT-GT Toolchain](/202604/13/2604.04705v1-bridging-safety-and-security-in-complex-systems-a-model-based-approach-with-saft-gt-toolchain)  
-   标签：评分：6.0/10、query:agsec
-   evidence：基于模型的自适应系统安全分析方法，利用攻击故障树进行建模
+   evidence：自主GUI智能体的动作效果验证与自我纠正
 
 
 <div class="dpr-home-promo-card">

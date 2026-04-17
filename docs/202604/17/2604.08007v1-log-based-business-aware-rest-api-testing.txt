@@ -1,0 +1,876 @@
+Title: Log-based, Business-aware REST API Testing
+
+URL Source: https://arxiv.org/pdf/2604.08007v1
+
+Published Time: Fri, 10 Apr 2026 00:49:40 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+# Log-based, Business-aware REST API Testing 
+
+DING YANG ∗ and RUIXIANG QIAN ∗, Nanjing University, China 
+
+ZHAO WEI, Tencent, China 
+
+ZHENYU CHEN, Nanjing University, China 
+
+CHUNRONG FANG, Nanjing University, China REST APIs enable collaboration among microservices. A single fault in a REST API can bring down the entire microservice system and cause significant financial losses, underscoring the importance of REST API testing. Effectively testing REST APIs requires thoroughly exercising the functionalities behind them. To this end, existing techniques leverage REST specifications (e.g., Swagger or OpenAPI) to generate test cases. Using the resource constraints extracted from specifications, these techniques work well for testing simple, business-insensitive functionalities, such as resource creation, retrieval, update, and deletion. However, for complex, business-sensitive functionalities, these specification-based techniques often fall short, since exercising such functionalities requires additional business constraints that are typically absent from REST specifications. In this paper, we present LoBREST , a log-based, business-aware REST API testing technique that leverages historical request logs (HRLogs) to effectively exercise the business-sensitive functionalities behind REST APIs. To obtain compact operation sequences that preserve clean and complete business constraints, LoBREST first employs a locality-slicing strategy to partition HRLogs into smaller slices. Then, to ensure the effectiveness of the obtained slices, LoBREST enhances them in two steps: (1) adding slices for operations missing from HRLogs, and (2) completing missing resources within the slices. Finally, to improve test adequacy, LoBREST uses these enhanced slices as initial seeds to perform business-aware fuzzing. We evaluate LoBREST on 17 real-world REST services and compare it with eight existing REST API testing tools, including the state-of-the-art tools 
+
+Arat-rl , Morest , and Deeprest . The experimental results demonstrate that LoBREST achieves the highest operation coverage on 16 services and the highest line coverage on 15 services. Specifically, LoBREST covers 
+
+2.1× as many operations and 1.2× as many lines as the second-best tool on average. Moreover, across all 17 services, LoBREST detects the most 5XX bugs—108 in total, including 38 bugs that other tools fail to find. CCS Concepts: • Software and its engineering → Software testing and debugging .Additional Key Words and Phrases: REST API Testing, Fuzzing, Log Analysis, Business 
+
+ACM Reference Format: 
+
+Ding Yang, Ruixiang Qian, Zhao Wei, Zhenyu Chen, and Chunrong Fang. 2026. Log-based, Business-aware REST API Testing. 1, 1 (April 2026), 20 pages. https://doi.org/10.1145/nnnnnnn.nnnnnnn 
+
+1 INTRODUCTION 
+
+Web APIs constitute fundamental infrastructures for communication among distributed software systems [ 30 , 31 ]. As an API design paradigm, Representational State Transfer (REST) has achieved widespread adoption due to its simplicity and flexibility [ 27 ]. Today, 93% of API services are 
+
+> ∗
+
+Both authors contributed equally to this research. Authors’ Contact Information: Ding Yang, dingyang@smail.nju.edu.cn; Ruixiang Qian, qianrx@smail.nju.edu.cn, Nanjing University, Nanjing, China; Zhao Wei, Tencent, China, zachwei@tencent.com; Zhenyu Chen, Nanjing University, China, zychen@nju.edu.cn; Chunrong Fang, Nanjing University, China, fangchunrong@nju.edu.cn. Permission to make digital or hard copies of all or part of this work for personal or classroom use is granted without fee provided that copies are not made or distributed for profit or commercial advantage and that copies bear this notice and the full citation on the first page. Copyrights for components of this work owned by others than the author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or republish, to post on servers or to redistribute to lists, requires prior specific permission and/or a fee. Request permissions from permissions@acm.org. 
+
+© 2026 Copyright held by the owner/author(s). Publication rights licensed to ACM. ACM XXXX-XXXX/2026/4-ART https://doi.org/10.1145/nnnnnnn.nnnnnnn , Vol. 1, No. 1, Article . Publication date: April 2026. 
+
+> arXiv:2604.08007v1 [cs.SE] 9 Apr 2026
+
+2 Ding Yang, Ruixiang Qian, Zhao Wei, Zhenyu Chen, and Chunrong Fang OP -1: Create One Commit   
+
+> Method: POST
+> /projects/:id/repository/commit
+> “branch”: “feat -xxx -xx”,
+> “commit_message ”: “feat: xxx”,
+> “actions”: [ “create”…]
+> OP -2: Create Merge Request
+> Method: POST
+> /projects/:id/ merge_requests
+> “title”: “merge request”,
+> “source_branch ”: “feat -xxx -xx”,
+> “target_branch ”: “main”,
+> “reviewer_ids ”: [1, 2]
+> OP -3: Approve Merge Request
+> Method: POST
+> (None body parameter needed)
+> /projects/:id/ merge_requests /iid /approve
+> OP -4: Merge the Branch
+> Method: PUT
+> “merge_commit_message ”: “xx”,
+> “remove_source_branch ”: true,
+> “squash”: false,
+> “auto_merge ”: false
+> /projects/:id/ merge_requests /iid /merge
+> Commit
+> Created
+> MR
+> Created
+> MR
+> Approved
+> Func -4: Merge branch after approval
+> Create One Project
+> Method: POST
+> /projects
+> “name”: “project -1”
+> Get All Project
+> Method: GET
+> /projects
+> (None body parameter needed)
+> Create One Project
+> Method: POST
+> /projects
+> “name”: “project -2”
+> Delete One Project
+> Method: DELETE
+> /projects/:id
+> (None body parameter needed)
+> Project
+> Created
+> Func -1: Create one project Func -2: Get all projects Func -3: delete one project
+> Business -insensitive Functionalities
+> Business -sensitive Functionalities
+
+Fig. 1. Examples of business-insensitive and business-sensitive functionalities in the GitLab REST service. 
+
+constructed using the REST style, commonly referred to as REST Services [ 32 ]. In large enterprises such as Amazon [ 2 ] and Google [ 16 ], REST services expose a wide range of APIs and process billions of requests daily [ 35 ]. A single bug in any of these APIs can propagate through services and bring down the entire system, highlighting the importance of REST API testing. Thorough testing of REST APIs requires comprehensively exercising the underlying functionali-ties, each of which typically involves multiple API operations. These functionalities can be classified into two categories: business-insensitive and business-sensitive . A business is relevant to the applica-tion domain of a REST service. For instance, the business of an e-commerce service is shopping, and the business of a GitLab 1 service is software development. Fig. 1 presents examples of the two types of functionalities in a GitLab REST service. As shown in Fig. 1, a business-insensitive functionality (such as Func-1,2,3 in Fig. 1) corresponds to basic resource management behaviors, i.e., creation, retrieval, update, and deletion (CRUD). The execution of a business-insensitive functionality is generally trivial, requiring straightforward combinations of a few operations over the resources involved. In contrast, business-sensitive functionalities involve operations that are closely tied to the core service business; executing such functionalities requires not only invoking basic CRUD operations (OP-1 and OP-2) but also performing business-specific actions (OP-3 and OP-4) on the created resources, which is more challenging. For example, Func-4 in Fig. 1 is a business-sensitive functionality of GitLab that implements the action chain to “merge branch after approval”. To perform Func-4, an approval operation must be executed shortly after a merge request is created; otherwise, the merge operation will fail and the functionality will not be fully tested. To ensure the reliability of REST APIs, various testing techniques have been proposed [ 6, 8,12 , 17 , 20 , 22 , 23 , 25 , 39 , 41 ]. Generally, these techniques generate test cases as sequences of API operations based on Swagger [ 38 ]/OpenAPI specifications [ 19 ], synthesizing operation sequences under resource constraints . For example, if operation A consumes a resource created by operation B, then there is a resource constraint that requires A to be executed after B. With resource constraints, existing techniques usually work well in testing business-insensitive functionalities; however, they fall short when applied to business-sensitive functionalities. The reason is that correctly exercising business-sensitive functionalities requires not only satisfying resource constraints but also adherence to business constraints , which are typically not readily available in REST specifi-cations. For example, fully exercising Func-4 in Fig. 1 requires satisfying the following business 
+
+> 1
+
+GitLab is a popular DevOps platform serving over 10 million users, providing version control, CI/CD, and project manage-ment for software development and operation teams. , Vol. 1, No. 1, Article . Publication date: April 2026. Log-based, Business-aware REST API Testing 3
+
+constraints: (1) a strict execution order (from OP-1 to OP-4), (2) valid parameter combinations (e.g., 
+
+source_branch and target_branch must exist simultaneously in OP-2), and (3) valid parameter values (e.g., parameter action in OP-1 can only take predefined values like create or delete ). Being unaware of business constraints, existing techniques fail to construct complete and valid operation sequences for business-sensitive functionalities. In this paper, we propose LoBREST , a log-based, business-aware REST API testing technique that leverages historical request logs (HRLogs) to facilitate testing of business-sensitive functionalities in REST services. Our key insight is that HRLogs inherently capture the business constraints needed for testing business-sensitive functionalities. This is because, when users invoke business-sensitive functionalities, HRLogs will record the executed API operations as temporally ordered request traces, which implicitly encode both the execution-order and parameter-usage constraints. By exploiting HRLogs, LoBREST can generate operation sequences that preserve business constraints, thereby enabling more effective testing and deeper exploration of these business-sensitive functionalities. Despite the potential of HRLogs, effectively repurposing them for REST API testing is still non-trivial and poses three challenges: 
+
+• Challenge-1: How to preserve clean and complete business constraints? HRLogs are chaotic, containing requests from multiple users at different times. Operations in a single func-tionality are usually fragmented across the entire logs. Without filtering irrelevant operations and reassembling the relevant ones, the generated operation sequences still cannot successfully exercise the target business-sensitive functionality. 
+
+• Challenge-2: How to complete the missing resources? REST APIs operate on persistent resources, some created long ago. Since servers typically retain logs only for a limited period (e.g., days or weeks), earlier resource creation records may be lost. Without completing these resources, operation sequences—even those preserving business constraints—can fail to execute. 
+
+• Challenge-3: How to broaden the coverage of derived operation sequences? The operation sequences derived from HRLogs provide only limited coverage of the service. LoBREST therefore uses these sequences as seeds to initiate a REST API fuzzing. However, generating mutations that both preserve business constraints and explore diverse variations remains tricky. To address these challenges, LoBREST incorporates three main designs: log slice generation (Challenge-1 ), log slice enhancement ( Challenge-2 ), and business-aware REST API fuzzing (Challenge-3 ). First, to preserve clean and complete constraints, LoBREST applies a locality slicing strategy to partition HRLogs into smaller slices. This strategy is motivated by the observation that operations belonging to the same functionality tend to act on overlapping resources and are often executed consecutively within a short interval. At the same time, LoBREST extracts valid parameter combinations and values from HRLogs for constructing concrete requests in subsequent stages. Next, LoBREST enhances the obtained log slices by adding slices for operations missing from HRLogs and completing missing but required resources within the slices using parameter-to-resource dependencies. Finally, the enhanced slices are used as initial seeds for business-aware REST API fuzzing. During fuzzing, LoBREST employs business-aware and fault-triggering mutators to generate new operation sequences that both comply with the extracted business constraints and maximize the likelihood of uncovering faults in REST APIs. To thoroughly evaluate LoBREST , we compared it with eight REST API testing techniques (including state-of-the-art ones such as Arat-rl [23 ], Morest [ 25 ], EvoMaster [6 ], and Deeprest 
+
+[ 12 ]) on 17 REST services (S01-S17). Services S01-S10 are collected from the recently published RESTgym [ 13 ] benchmark. Most functionalities in these services are business-insensitive, with only a small portion being business-sensitive. In contrast, services S11-S17 come from the GitLab REST service, which contains a rich set of business-sensitive functionalities. Specifically, S11-S16 
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026.
+
+4 Ding Yang, Ruixiang Qian, Zhao Wei, Zhenyu Chen, and Chunrong Fang swagger : 2.0              
+
+> info :
+> description :GitLab API Swagger Documentation
+> version :v4
+> title :GitLab REST API
+> basePath :/api/v4
+> paths :
+> post :
+> operationId :createProjectUsingPOST
+> parameters :
+> -in :body
+> name :project_details
+> required :true
+> schema :
+> $ref :'#/definitions/ProjectCreateReqBody'
+> responses :
+> '200' :
+> description :OK
+> tags: ['project']
+
+Fig. 2. A swagger specification snippet. {"time" :"2024 .12 .20 T03 :19 :50 .129 Z" ,"severity" :"INFO" ,"duration_s" :3.68006 ,
+
+> "status" :201 ,"method" :"POST" ,"path" :"/api/v 4/projects" ,"params" :[{"key" :"d
+> escription" ,"value" :"[FILTERED]" },{"key" :"initialize_with_readme" ,"value" :
+> "true" },{"key" :"issues_access_level" ,"value" :"private" },{"key" :"name" ,"val
+> ue" :"fuzzing -tool" }],"user_id" :1,"username" :"root" ,…}
+
+(a) An entry from Gitlab logs. {"request_url" :"/blog?userId= 1","request_method" :"GET" ,"request_headers" :{    
+
+> …},"request_body" :"", "response_status" :200 ,"response_body" :"{ \"code \":0,\"
+> msg \":\"get blogs successfully \", \"data \":[{ \"id \":1,\"content \":\"it's a
+> beautiful day! \", \"userId \":1,\"likes \":0}]}" ,"timestamp" :1744138752984 }
+
+(b) An entry from Nginx logs. Fig. 3. An example of REST API HRLog entries. 
+
+are sub-services of the entire GitLab REST service, previously evaluated in studies [ 8] and [ 41 ]; S17 is the entire GitLab REST service. To the best of our knowledge, we are the first to evaluate existing REST API testing techniques on a complete GitLab REST service with over 1,000 API operations (prior evaluations only consider services with fewer than 100 operations). Experimental results demonstrate that LoBREST consistently outperforms the other techniques in terms of operation coverage, line coverage, and bug detection. On S01-S10, LoBREST achieves the highest operation coverage on nine services and improves line coverage by an average of 15.2% over the best-performing technique, Arat-rl . On S11–S16, LoBREST improves operation coverage by 263.1% and line coverage by 26.5% compared with the best-performing technique, Restct . On S17, LoBREST achieves 188.6% higher operation coverage and 56.6% higher line coverage than the best performing technique, EvoMaster . For bug detection, across all 17 services, LoBREST detects the most 5XX bugs—108 in total (38 of them cannot be detected by other techniques). In summary, this paper makes the following contributions: 
+
+• Innovative Technique. We propose LoBREST , a novel REST API testing technique that leverages historical request logs to effectively test the business-sensitive functionalities behind REST APIs. 
+
+• Extensive Evaluation. We evaluate LoBREST against eight baselines on 17 REST services with 4,840 CPU hours. To the best of our knowledge, this is the first work to evaluate existing techniques on a large-scale service, which has more than 1,000 API operations. 
+
+• Practical Tool. We prototype LoBREST and release all code to support future research. 
+
+2 BACKGROUND 
+
+REST APIs and Specifications. REST is a popular web API design style built on top of HTTP [ 9 , 15 ]. Services providing REST APIs are referred to as REST services. An API in a REST service is also called an API operation. These operations are used to manage persistent resources in services [ 36 ]. Each operation comprises a URI, an HTTP method (e.g., GET, POST, PUT, DELETE), and optional parameters. Executing an operation means sending the corresponding HTTP request to the service. Mainstream REST API specifications, such as OpenAPI [ 19 ] and Swagger [ 38 ], describe how resources can be accessed and managed. Fig. 2 presents a Swagger specification snippet, where the header records service metadata and the paths field enumerates all available API operations. 
+
+HRLogs. Historical request logs (HRLogs) record concrete invocations of API operations and are generated either by the service itself or by proxy gateways (e.g., Nginx[ 14 ]). In this paper, we collec-tively refer to logs from both sources as HRLogs. HRLog entries record concrete historical requests, containing the timestamps, URIs, parameters, and response status codes [ 18 ]. Fig. 2a shows a log entry from the GitLab service itself, while Fig. 2b presents one from the Nginx gateway. LoBREST 
+
+leverages HRLogs for REST API testing because these logs contain authentic historical executions of 
+
+, Vol. 1, No. 1, Article . Publication date: April 2026. Log-based, Business-aware REST API Testing 52025 -10 -23T09:18:22 n POST /projects 201 Created                                               
+
+> 2025 -10 -23T09:18:42 nGET /projects/15 200 OK
+> One month later, many log entries omitted…
+> 2025 -11 -25T16:18:12 nPOST /projects/15/commits 201 Created
+> 2025 -11 -25T16:25:07 nPOST /projects/22/commits 201 Created
+> 2025 -11 -25T16:20:35 nPOST /projects/15/ mr 201 Created
+> Two days later, many log entries omitted…
+> 2025 -11 -28T15:28:34 nPOST /projects/15/ mr /35/approve 200 OK
+> 2025 -11 -28T15:29:45 nPOST /projects/15/ mr /35/merge 200 OK
+> Historical Request Logs ( HRLogs )Resources
+> 15
+> 15
+> 15 89
+> 22 96
+> 15 35
+> 15 35
+> 15 35
+> Slices & Seeds
+> POST /projects/:id/ mr /: iid /approve
+> POST /projects/:id/ mr /: iid /merge
+> POST /projects/:id/ mr
+> POST /projects
+> POST /projects/:id/commits
+> POST /projects/:id/ mr
+> POST /projects
+> 15 35 Seed -S1’
+> 15 35 Seed -S2’
+> Fuzzing Inputs
+> POST /projects/:id/ mr /: iid /approve
+> POST /projects/:id/ mr /: iid /merge
+> POST /projects
+> 15 35 Input -I1
+> POST /projects/:id/commits
+> POST /projects/:id/ mr
+> Cleared Logs
+> Existing Logs
+> id
+> id
+> id
+> Project Resource
+> Merge Request Resource
+> Commit Resource
+> Fuzzing Seed/Input
+> Operations to be Completed
+> Operations Sliced from HRLogs
+> E1
+> E2
+> E3
+> E4
+> E5
+> E6
+> E7
+> Resource Overlap
+> Slice -S2
+> Slice -S1
+> Log Slices
+> Func -4 in Fig. 1
+> Merge branch after approved
+
+Fig. 4. An example of LoBREST generating operation sequences to exercise Func-4 in Fig. 1. The left shows HRLogs and involved resources, while the right shows the generated log slices, seeds, and fuzzing inputs. 
+
+functionalities, including the order of operations and the parameter combinations/values used. This information inherently captures business constraints, which are missing from REST specifications, enabling LoBREST to preserve these constraints into operation sequences. 
+
+REST API Testing. The primary goal of REST API testing is to trigger 5XX response codes, which indicate server-side errors. A test case consists of a sequence of API operations, such as POST /projects → DELETE /projects/:id . In this sequence, the id used in the deletion operation is obtained from the response of the creation operation, representing a resource constraint . Existing studies [ 6 , 8, 25 , 39 , 41 ] focus on extracting such resource constraints from REST specifications to generate operation sequences, but often overlook critical business constraints , resulting in insufficient testing of REST APIs. To address this, LoBREST innovatively leverages HRLogs to generate operation sequences that preserve business constraints. It further performs mutation-based fuzzing [ 10 , 11 ,26, 29, 33, 34, 43] on these sequences to more thoroughly explore the REST service. 
+
+3 MOTIVATING EXAMPLE 
+
+This section illustrates how LoBREST constructs operation sequences to exercise the business-sensitive functionality Func-4 in Fig. 1. To correctly exercise Func-4, operations must be executed in a strict order from OP-0 to OP-4: 
+
+• OP-0 (create a project): POST /projects 
+
+• OP-1 (create a commit): POST /projects/:id/commits 
+
+• OP-2 (create a merge request): POST /projects/:id/merge_requests 
+
+• OP-3 (approve the merge): POST /projects/:id/merge_requests/:iid/approve 
+
+• OP-4 (merge the branch): PUT /projects/:id/merge_requests/:iid/merge 
+
+The absence of any operation or an incorrect execution order will cause the functionality to fail. 
+
+Limitations of Specification-based Techniques. Existing REST API testing techniques [ 6, 8 ,12 , 17 , 20 , 22 , 23 , 25 , 39 , 41 ] rely on REST specifications to generate operation sequences that satisfy resource constraints. For example, they can produce sequences such as (OP-0, OP-1) and (OP-0, OP-2, OP-4), since OP-1,2 depend on OP-0, and OP-4 depends on OP-2. However, they struggle to generate a complete sequence for Func-4 because the required business constraints are absent from the specifications. In Func-4, the key business constraint is that both OP-3 and OP-4 must be present, and OP-3 (approve) must be executed before OP-4 (merge). Without the business constraints, these techniques fail to adequately test business-sensitive functionalities behind REST APIs. 
+
+, Vol. 1, No. 1, Article . Publication date: April 2026. 6 Ding Yang, Ruixiang Qian, Zhao Wei, Zhenyu Chen, and Chunrong Fang Operation -Centric      
+
+> Resource Indentification
+> Parameter -to -Resource
+> Dependency Inference
+> REST Resource Analysis
+> Log Slice Generation
+> Log
+> Preprocessing
+> Log Slicing
+> Log Slice Enhancement
+> Slice
+> Augmentation
+> Slice
+> Completion
+> Parameter
+> Combination/Value
+> Corpus
+> projects
+> merge
+> request
+> reviewer commits
+> issues groups
+> project_id
+> group_id
+> reviewer_id
+> Parameters Resource Tree
+
+… 
+
+> Initial Slices
+> 𝑆
+
+… 
+
+> Completed Slices 𝑆 !
+> Business -aware
+> REST API Fuzzing
+
+…   
+
+> Seed Queue
+> Fuzzing Loop
+> Seed
+> Business -aware
+> Mutation
+> Fault -triggering
+> Mutation
+> Execution
+> 5XX Code Triggered!
+> REST API
+> Specification
+> Historical
+> Request
+> Logs(HRLogs)
+> Feedback
+> Post -mutation
+> Completion
+> Sliding Time Window
+> Max Lead Time
+
+Fig. 5. The overview of LoBREST 
+
+Our Solution. LoBREST addresses this limitation by leveraging HRLogs. Fig. 4 depicts how 
+
+LoBREST tackle with Func-4 using HRLogs. The left side shows an HRLog piece excerpt from a GitLab service and the resources involved in each log entry. Entries E3 and E4 create a commit (OP-1) and a merge request (OP-2) under project 15, while E6 and E7 approve (OP-3) and merge (OP-4) the request. Although OP-1,2,3,4 occur in the exact order required by Func-4, which indicates that the business constraint of Func-4 is indeed captured in the HRLogs, the corresponding entries are scattered across chaotic logs, and the project-creation operation (OP-0) is missing due to log rotation (i.e., the mechanism that periodically clears old logs). Therefore, to reconstruct a complete and valid operation sequence for Func-4, LoBREST performs three main steps. 
+
+❶ To preserve business constraints, LoBREST applies a locality-slicing strategy to partition HRLogs into smaller log slices. Based on resource overlap and temporal proximity, entries E3 and E5 form slice S1, while E6 and E7 form slice S2. ❷ To ensure that each slice has proper resource constraints, LoBREST completes missing resource-creation operations using parameter-to-resource dependencies. In S1, both operations require an existing project resource, inferred from their parameter id pointing to the same project ( id=15 ). Therefore, LoBREST prepends a project-creation operation to S1. Similarly, it prepends a project-creation operation followed by a merge-request-creation operation to S2. After completion, slices S1 and S2 become seeds S1’ and S2’. ❸ To handle cases where operations of the same functionality are scattered across different seeds, LoBREST splices similar seeds during fuzzing. Since S1’ and S2’ involve the same project and merge request, they are combined in chronological order. To avoid redundant resource creation, splicing is applied to the original slices S1 and S2. After splicing, resource completion is applied again to produce the final input I1, which preserves all the operations and a correct execution order (from OP-0 to OP-4) of Func-4. By constructing such operation sequences that preserve business constraints, LoBREST enables deeper exploration of business-sensitive functionalities and further mutates these sequences to uncover unexpected behaviors and bugs in REST APIs. 
+
+4 APPROACH 
+
+Fig. 5 presents an overview of LoBREST , which comprises four stages: REST resource analysis , log slice generation , log slice enhancement , and business-aware REST API fuzzing .
+
+, Vol. 1, No. 1, Article . Publication date: April 2026. Log-based, Business-aware REST API Testing 7
+
+REST Resource Analysis. The first stage focuses on extracting REST resource information required by the subsequent three stages. Specifically, LoBREST leverages a Large Language Model (LLM) to identify the resources managed by the service and then infers the parameter-to-resource dependencies . Resources act as key cues for grouping operations that belong to the same business-sensitive functionality, while parameter-to-resource dependencies ensure that each generated operation sequence satisfies the required resource constraints. The details are in § 4.1. 
+
+Log Slice Generation. Directly using raw HRLogs for testing would intermingle unrelated op-erations and functionalities, making testing unscalable and uncontrollable. Therefore, LoBREST 
+
+partitions HRLogs into shorter log slices in this stage. To preserve business constraints within each slice, LoBREST adopts a locality-slicing strategy. This strategy ensures that log entries within the same slice operate on overlapping resources and are temporally close, making them more likely to belong to the same business-sensitive functionality. Further details are described in § 4.2. 
+
+Log Slice Enhancement. Since HRLogs only record operations used by users in history and older records are periodically deleted, the previously obtained slices may have two drawbacks: (1) some operations under test may be missing from the slices, and (2) resource-creation operations in each slice may be absent. LoBREST addresses this in two steps. First, it creates a new slice for each missing operation. Next, it leverages parameter-to-resource dependencies to complete any missing resource-creation operations in all slices, ensuring each slice forms a valid and effective operation sequence. Further details about this stage are described in § 4.3. 
+
+Business-aware REST API Fuzzing. The number of slices generated from HRLogs is limited. To broaden their testing impact, LoBREST uses the slices as initial seeds and performs business-aware fuzzing. It employs two types of mutators: business-aware mutators and fault-triggering mutators . Business-aware mutators generate new operation sequences while preserving business constraints, enabling deeper exploration of the target service. Fault-triggering mutators apply more aggressive mutations on the valid sequences produced by business-aware mutators, aiming to expose unexpected bugs. The details are presented in § 4.4. 
+
+4.1 REST Resource Analysis 
+
+As the initial stage, REST resource analysis prepares the essential information required by the subsequent stages: resources and parameter-to-resource dependencies . Resources are used to identify operations belonging to the same business-sensitive functionality, while parameter-to-resource dependencies support the completion of missing resources. To derive them, LoBREST takes two steps: operation-centric resource identification and parameter-to-resource inference. 
+
+4.1.1 Operation-centric Resource Identification. In addition to constructing valid sequences, re-sources also help identify business constraints: operations belonging to the same business-sensitive functionality typically operate on overlapping resources. However, resources are not explicitly specified in REST API specifications, which primarily describe operations. Therefore, to obtain resources managed by the service, LoBREST adopts an operation-centric approach. Specifically, LoBREST infers resources by analysing the semantics of API operations. In practice, not all POST operations create resources, nor do all GET operations retrieve resources. To address this, LoBREST iterates over the POST and GET operations and uses an LLM to determine which operations create or retrieve resources (Fig. 6a, Fig. 6b). For POST operations, it selects those whose semantics indicate the creation of new resources (e.g., POST /projects ) while excluding operations that merely act on existing resources (e.g., POST /projects/:id/share ). For GET operations, it focuses on those that retrieve collections of resources without requiring resource identifiers (e.g., 
+
+GET /projects ), excluding operations that access individual resources (e.g., GET /projects/:id ). Finally, LoBREST constructs a resource set R, deriving each resource’s name from the operation 
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026.
+
+8 Ding Yang, Ruixiang Qian, Zhao Wei, Zhenyu Chen, and Chunrong Fang Identifying Resource -creation Operaitons                                          
+
+> Description :You are an expert in developing and testing
+> REST services .
+> Task :Your task is to identify whether agiven operation is
+> responsible for creating anew resource or not based on its
+> path and description .
+> Information :
+> The operation is POST {path} with description {description} .
+> Return format :true/false
+> Examples of input/output:
+> POST /projects createOneProject
+> POST /projects/:id/issues createOneIssue
+> POST /projects/:id/share shareProjectWithOneGroup
+> Input Output
+> true
+> true
+> false
+
+(a) Prompt template for identifying resource-creation operations. Identifying Resource -retrieval Operaitons                                           
+
+> Description :You are an expert in developing and testing
+> REST services .
+> Task :Your task is to identify whether an operation is used
+> for retrieving resource collections without corresponding
+> resource id being required .
+> Information :
+> The operation is GET {path} with description {description} .
+> The operation’s paramethers are :{parameters}
+> GET /projects getProjects
+> GET /projects/:id/issues getIssues
+> GET /projects/:id getProjectByID
+> Input Output
+> true
+> true
+> false
+> Examples of input/output:
+> Return format :true/false
+
+(b) Prompt template for identifying resource-retrieval operations. Parameter -to -Resource Dependency Inference                                                
+
+> Description :You are an expert in developing and testing
+> REST services .
+> Task :Your task is to identify the dependencies between
+> parameters and given resources .
+> Information :The REST service manages the resources
+> below :{resources} .The operation is {method} {path}
+> {description} ;the target parameter from the operation is
+> {param_name} {param_type} {param_description} .
+> Return format :<resource_name>/none
+> Examples of input/output:
+> POST /projects name
+> POST /projects/:id/issues id
+> GET /projects/:id/issues/:iid iid
+> Input Output
+> none
+> /projects
+> /projects/:id/issues
+
+(c) Prompt template for parameter-to-resource dependency inference. Fig. 6. Prompt templates for REST resource analysis. 
+
+path. These resources are further organized into a hierarchical resource tree: a resource whose name is a complete prefix of another is treated as the parent. For example, resource /projects is identified as the parent of resource /projects/:id/issues .
+
+4.1.2 Parameter-to-resource Dependency Inference. Parameter-to-resource dependencies are a critical basis for generating valid operation sequences. They are used in subsequent log slice completion ( § 4.3.2) and fuzzing ( § 4.4) stages. To extract these dependencies, LoBREST iterates over all parameters and leverages an LLM to determine whether a parameter originates from any resource in the previously obtained resource set R. The LLM is prompted with the operation context, target parameter, and list of known resources, returning either the dependent resource name or None (Fig. 6c). For example, parameter name in POST /projects does not depend on any existing resource because it is used to create a new project; in contrast, parameter id in POST /projects/:id/issues depends on the /projects resource since it references an existing project under which a new issue can be created. By systematically applying this approach, LoBREST 
+
+constructs a comprehensive mapping of parameters to resources. 
+
+4.2 Log Slice Generation 
+
+Real-world HRLogs are typically chaotic: they contain requests from multiple users, span long time periods, and cover heterogeneous functionalities. As a result, directly using these logs for testing (e.g., replaying entire logs) is problematic, as it mixes unrelated operations and functionalities, leading to uncontrollable and unscalable testing. To address this, LoBREST partitions HRLogs into smaller slices, each serving as an independent operation sequence for testing. Specifically, LoBREST 
+
+first preprocesses these HRLogs by removing irrelevant requests and constructing user-independent queues; then, it employs the locality-slicing strategies to generate log slices that preserve business constraints. 
+
+4.2.1 Log Preprocessing. In this phase, LoBREST takes four steps to prepare for log slicing. First, 
+
+LoBREST removes any operations not declared in the specification, as such operations are typically from other services and are less relevant to the service under test. It also filters out invalid requests with 4XX response codes. Then, LoBREST extracts parameter combinations and values from requests with 2XX response codes, storing them into a corpus for subsequent request construction. Next, 
+
+LoBREST identifies the resource instances involved in each request based on the parameter-to-resource dependencies obtained in § 4.1.2. A resource instance refers to a concrete occurrence of a 
+
+, Vol. 1, No. 1, Article . Publication date: April 2026. Log-based, Business-aware REST API Testing 9
+
+resource observed in the HRLogs, identified by a specific value (e.g., an ID) extracted from requests. Finally, to avoid interference among different users, LoBREST splits HRLogs into user-independent queues for each user based on user identifiers (e.g., user IDs, tokens, or cookies). Each user-independent queue is an ordered collection of log entries , where each log entry corresponds to a request record in the HRLogs. Formally, a log entry 𝑒 can be formalized as a quintuple 𝑒 = ⟨𝑡 𝑒 , 𝑜 𝑒 , P𝑒 , I𝑒 , Φ𝑒 ⟩ where 𝑡 𝑒 is the entry timestamp, 𝑜 𝑒 is the executed operation, P𝑒 is the used parameters, I𝑒 is the resource instances involved in the entry, and Φ𝑒 : P𝑒 → I 𝑒 ∪ { None }
+
+is a mapping from each parameter 𝑝 of 𝑜 𝑒 to the corresponding resource instance in I𝑒 .
+
+4.2.2 Log Slicing. In this phase, LoBREST partitions each user-independent queue into smaller log slices. Each log slice contains a sequence of log entries and serves as an operation sequence for testing. Regarding preserving business constraints during slicing, our key observation is that operations belonging to the same business-sensitive functionality tend to operate on overlapping resource instances, and some of these operations are typically executed consecutively within a short interval. Therefore, a log slice that preserves business constraints should satisfy two properties: (1) its entries involve overlapping resource instances, and (2) its entries are temporally close. To generate log slices that meet these properties, LoBREST adopts two complementary locality-slicing strategies: maximum lead time slicing (MLTS) and sliding time window slicing (STWS) .MLTS emphasizes minimizing the temporal gaps between consecutive entries in a slice. Formally, for a candidate slice 𝜎 = {𝑒 1, . . . , 𝑒 𝑚 } ordered by timestamp 𝑡 𝑒 1 < · · · < 𝑡 𝑒 𝑚 , we require 
+
+> 𝑚
+
+max  
+
+> 𝑖 =2
+
+(𝑡 𝑒 𝑖 − 𝑡 𝑒 𝑖 −1 ) ≤ Δ𝑡 mlt ,
+
+where Δ𝑡 mlt is the maximum allowable lead time between consecutive entries. This ensures that all entries in the slice occur in rapid succession, capturing tightly coupled operations. STWS focuses on bounding the overall time span of a slice. Given a window size Δ𝑡 stw , slices 𝜎 
+
+are formed such that 
+
+𝑡 max (𝜎 ) − 𝑡 min (𝜎 ) ≤ Δ𝑡 stw ,
+
+where 𝑡 min (𝜎 ) and 𝑡 max (𝜎 ) are the earliest and latest timestamps of entries in 𝜎 . This guarantees that the entire slice corresponds to a short interval of activity. Algorithm 1 and Algorithm 2 present the procedures of MLTS and STWS. Both algorithms take a user-independent queue and a temporal threshold as input, and return a set of log slices 𝑆 𝑘 . Initially, 
+
+𝑆 𝑘 , the current slice 𝜎 , the shared resource instance set 𝐼 , and the set of already sliced entries 𝑉 
+
+are empty, and a queue 𝑄 of potential slice starting indices is initialized (Line 1 in both). For each index in 𝑄 , MLTS scans subsequent entries in temporal order. If the interval between the current entry and the last entry in 𝜎 exceeds the MLTS threshold, the current slice is finalized, and the current entry’s index is enqueued into 𝑄 as a new starting point if it is not in 𝑉 (Lines 6–7,14–15 in Algorithm 1). Otherwise, the algorithm checks for resource overlap: if the entry shares any resources with 𝜎 , it is appended, and its instances are merged into 𝐼 ; if not, the entry is skipped, but its index is enqueued for future slicing if not already processed (Lines 8–12 in Algorithm 1). MLTS terminates when all indices in 𝑄 have been processed. STWS follows the same workflow, with the key difference that it measures the interval from the current entry to the slice’s starting entry, rather than between consecutive entries as in MLTS (Line 5 in Algorithm 2). After processing all the queues with the slicing algorithms, LoBREST merges the resulting slice sets to form the set of initial log slices 𝑆 .Note that when there are long time intervals between operations of a business-sensitive func-tionality, the locality-slicing strategy may split the corresponding log entries into different log slices. Executing any single slice alone is therefore insufficient to exercise the full functionality. To  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. 10 Ding Yang, Ruixiang Qian, Zhao Wei, Zhenyu Chen, and Chunrong Fang
+
+Algorithm 1 Maximum Lead Time Slicing (MLTS)                                                                                               
+
+> Input: Log entry queue E, MLT threshold Δ𝑡 MLT
+> Output: Set of log slices 𝑆 𝑘
+> 1: Initialize 𝑆 𝑘 , 𝐼, 𝑉 ← ∅ ,𝜎 ← [ ] ,𝑄 ← { 0}
+> 2: while 𝑄 ≠∅do
+> 3: 𝑠 ←𝑄. pop() , 𝐼 ← I 𝑒 𝑠 , 𝑡 prev ←𝑡 𝑒 𝑠 , 𝜎 . add (𝑒 𝑠 )
+> 4: for 𝑖 =𝑠 +1to | E 𝑘 |do
+> 5: 𝑡 curr ←𝑡 𝑒 𝑖
+> 6: if 𝑡 curr −𝑡 prev >Δ𝑡 MLT then
+> 7: 𝑄. push (𝑖 )𝑖 𝑓 𝑒 𝑖 ∉𝑉 ,break
+> 8: else if I𝑒 𝑖 ∩𝐼 =∅then
+> 9: 𝑄. push (𝑖 )𝑖 𝑓 𝑒 𝑖 ∉𝑉
+> 10: else
+> 11: 𝜎 . add (𝑒 𝑖 ), 𝐼 ←𝐼 ∪ I 𝑒 𝑖 , 𝑡 prev ←𝑡 curr
+> 12: end if
+> 13: end for
+> 14: if 𝜎 ≠∅then 𝑆 𝑘 ←𝑆 𝑘 ∪ { 𝜎 }, 𝑉 ←𝑉 ∪𝜎
+> 15: end if
+> 16: end while
+> 17: return 𝑆 𝑘
+
+Algorithm 2 Sliding Time Window Slicing (STWS)                                                                                          
+
+> Input: Log entry queue E, window size Δ𝑡 STW
+> Output: Set of log slices 𝑆 𝑘
+> 1: Initialize 𝑆 𝑘 , 𝐼, 𝑉 ← ∅ ,𝜎 ← [ ] ,𝑄 ← { 0}
+> 2: while 𝑄 ≠∅do
+> 3: 𝑠 ←𝑄. pop() , 𝐼 ← I 𝑒 𝑠 , 𝑡 win ←𝑡 𝑒 𝑠 , 𝜎 . add (𝑒 𝑠 )
+> 4: for 𝑖 =𝑠 +1to | E 𝑘 |do
+> 5: if 𝑡 𝑒 𝑖 −𝑡 win >Δ𝑡 STW then
+> 6: 𝑄. push (𝑖 )𝑖 𝑓 𝑒 𝑖 ∉𝑉 ,break
+> 7: else if I𝑒 𝑖 ∩𝐼 =∅then
+> 8: 𝑄. push (𝑖 )𝑖 𝑓 𝑒 𝑖 ∉𝑉
+> 9: else
+> 10: 𝜎 . add (𝑒 𝑖 ),𝐼 ←𝐼 ∪ I 𝑒 𝑖
+> 11: end if
+> 12: end for
+> 13: if 𝜎 ≠∅then
+> 14: 𝑆 𝑘 ←𝑆 𝑘 ∪ { 𝜎 }, 𝑉 ←𝑉 ∪𝜎
+> 15: end if
+> 16: end while
+> 17: return 𝑆 𝑘
+
+address this, LoBREST splices slices during the subsequent fuzzing stage ( § 4.4) based on resource similarity, effectively reconstructing the complete operation sequence. 
+
+4.3 Log Slice Enhancement 
+
+HRLogs only record operations that have been executed by users, and older log entries are periodi-cally cleared. Therefore, the initial log slices 𝑆 derived from such logs suffer from two deficiencies: (1) they may not cover all service operations, and (2) some slices may lack required resource-creation operations. To address these issues, LoBREST enhances 𝑆 in two steps. First, it adds new slices to 𝑆 , each containing an operation that does not appear in the HRLogs. Second, it performs resource-consistency completion on each slice to ensure that all required resources are available and the slice can be executed successfully. 
+
+4.3.1 Slice Augmentation. To ensure that all operations of the service are represented in the log slices, LoBREST first identifies operations that do not appear in any of the initial slices. For each missing operation, it constructs a corresponding log entry and adds it to the slice set as a single-entry slice. This approach ensures that, in the subsequent resource-consistency completion stage, there is no need to distinguish between slices derived from HRLogs and those added to cover missing operations. Finally, LoBREST obtains the augmented slice set 𝑆 𝑎𝑢𝑔 .
+
+4.3.2 Resource-consistency Slice Completion. REST services often enforce business constraints on resource-binding parameters, requiring two parameters to reference either the same or distinct resources. For example, in GitLab, POST /projects/:id/merge_request requires source_branch 
+
+and target_branch to refer to different branches; associating both with the same branch would violate the functionality. To satisfy such constraints, LoBREST performs Resource-Consistency Slice Completion (RCSC), ensuring that each slice contains all required resource-creation operations while respecting resource usage. Specifically, RCSC first prepends missing resource-creation operations to the slice following the resource hierarchy, then links parameters to their resource-creation operations using the instance IDs.  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Log-based, Business-aware REST API Testing 11
+
+Algorithm 3 Resource-Consistency Slice Completion (RCSC) 
+
+Input: A log slice 𝜎 
+
+Output: Completed slice 𝜎 ′ and parameter-to-entry mapping Φ𝜎 ′ 
+
+> 1:
+
+Initialize Enew ← [] ⊲ list of newly created entries  
+
+> 2:
+
+Initialize Imap ← {} ⊲ mapping from resource instance 𝑖 ∈ I to entry 𝑒  
+
+> 3:
+
+Initialize Φ ← {} ⊲ mapping from parameter 𝑝 to entry 𝑒  
+
+> 4:
+
+I𝜎 ← Ð𝑒 ∈𝜎 I𝑒 ⊲ collect all resource instances in the slice  
+
+> 5:
+
+for each 𝑖 ∈ I 𝜎 in descending resource-layer order do ⊲ Resource-creation entry construction  
+
+> 6:
+
+𝑒 new ← createEntry (𝑖 ) 
+
+> 7:
+
+Imap [𝑖 ] ← 𝑒 new , Enew .adds (𝑒 new ) 
+
+> 8:
+
+end for  
+
+> 9:
+
+𝜎 ′ ← E new ∥ 𝜎 ⊲ prepend new entries to the original slice  
+
+> 10:
+
+for each entry 𝑒 ∈ 𝜎 ′ do ⊲ Parameter-to-entry mapping construction  
+
+> 11:
+
+for each parameter 𝑝 ∈ P 𝑒 and Φ𝑒 (𝑝 ) ≠ None do  
+
+> 12:
+
+Φ[𝑝 ] ← I map [Φ𝑒 (𝑝 )] ⊲ propagate dependencies  
+
+> 13:
+
+end for  
+
+> 14:
+
+end for  
+
+> 15:
+
+return 𝜎 ′, Φ𝜎 ′
+
+The procedure of RCSC is described in Algorithm 3. RCSC first collects all resource instances in the slice 𝜎 (Line 4). It then organizes them by their parent relationships and traverses them from higher to lower levels. For each instance, LoBREST constructs a corresponding resource-creation entry, appends it to Enew , and records the instance-to-entry mapping in Imap (Line 5–8). After all required resource-creation entries are constructed, Enew is prepended to the original slice, yielding a completed slice 𝜎 ′ (Line 9). Finally, by composing the parameter-to-instance and instance-to-entry mappings, LoBREST derives a parameter-to-entry mapping Φ𝜎 ′ (Line 10–14). After processing all slices in the augmented slice set 𝑆 𝑎𝑢𝑔 , LoBREST produces the completed slice set 𝑆 ′, in which each slice contains all required resource-creation operations. 
+
+4.4 Business-aware REST API Fuzzing 
+
+Although the operation sequences in 𝑆 ′ preserve business constraints, they cover only a limited portion of the service behavior, resulting in insufficient exploration of the REST API. To overcome this limitation, LoBREST performs a mutation-based fuzzing. LoBREST treats each completed slice and its corresponding parameter-to-entry mapping as a fuzzing seed. To explore more business functionalities while maximizing bug discovery, LoBREST employs two complementary categories of mutators: business-aware mutators and fault-triggering mutators .Business-aware mutators aim to generate valid operation sequences that satisfy business con-straints, intending to trigger feasible yet previously unobserved business functionalities. A represen-tative example is the Similar-Seed Splicing mutator, which alleviates the fragmentation of business functionalities caused by locality-based slicing. This mutator splices seeds that share overlapping resources according to their temporal order observed in HRLogs, thereby reassembling operations belonging to the same functionality while preserving execution-order constraints. In addition, 
+
+LoBREST includes mutators targeting constraints on parameter combinations and values. These mutators replace parameter combinations or individual values using the corpus mined from HRLogs, producing inputs that more closely reflect real-world usage patterns and enabling exploration of diverse but valid business behaviors. All sequences generated by business-aware mutators are re-completed before execution to ensure that newly introduced resource-binding parameters have                                                                                                                                
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. 12 Ding Yang, Ruixiang Qian, Zhao Wei, Zhenyu Chen, and Chunrong Fang
+> Table 1. Selected Target REST Services. # BMs refers to the number of business modules in a service.
+> ID REST Service # Ops LoC # BMs Auth Language Version
+> S01 Features Service 18 456 1✗Java commit 3f086ff S02 Genome Nexus 23 5242 6✗Java v2.0.3 S03 LanguageTool 236583 1✗Java v6.6 S04 Market 13 1583 5✓Java commit bda6ca2 S05 NCS 6275 1✗Java from WFD 4.0.0 S06 SCS 11 295 1✗Java from WFD 4.0.0 S07 Project Tracking 59 1298 7✗Java commit b236c3a S08 Person Controller 12 211 1✗Java commit 7b42660 S09 REST Countries 22 538 1✗Java v2.0.5 S10 User Management 22 736 5✗Java commit 04500e7 S11 GitLab-Branch 9––✓Ruby v18.4.5-ce S12 GitLab-Commit 15 ––✓Ruby v18.4.5-ce S13 GitLab-Group 17 ––✓Ruby v18.4.5-ce S14 GitLab-Issue 27 ––✓Ruby v18.4.5-ce S15 GitLab-Project 31 ––✓Ruby v18.4.5-ce S16 GitLab-Repository 10 ––✓Ruby v18.4.5-ce S17 GitLab 1099 50032 109 ✓Ruby v18.4.5-ce
+
+their dependent resources available. During execution, such parameters are dynamically assigned values based on the parameter-to-entry mapping in the seed. In contrast, fault-triggering mutators apply more aggressive perturbations to the sequences pro-duced by business-aware mutators. They randomly modify, add, or remove parameter values, insert or delete operations, and may even disable the runtime assignment of resource-binding parameters. These disruptive mutations intentionally violate or stress business or resource constraints, aiming to expose latent faults and robustness issues in REST services. 
+
+5 EVALUATION 
+
+We evaluate LoBREST on the following research questions (RQs): 
+
+• RQ1: Effectiveness on services with sparse businesses. How does LoBREST compare with state-of-the-art REST API testing tools on lightweight services with sparse businesses? 
+
+• RQ2: Effectiveness on services with dense businesses. How does LoBREST compare with state-of-the-art REST API testing tools on industrial services with dense businesses? 
+
+• RQ3: Contributions of core designs. How do log slicing, log slice enhancement, and business-aware REST API fuzzing contribute to LoBREST’s testing performance? 
+
+5.1 Experimental Setup 
+
+5.1.1 Benchmarks. We select a total of 17 open-source REST services, with their detailed informa-tion summarized in Table 1. Services S01-S10 come from the RESTgym benchmark [ 13 ]. Services S11-S16 are sub-services of the GitLab REST service and have been widely used in prior evaluations [ 8, 41 ] (their total lines of code cannot be computed because the partition is at the API rather than the file level). S17 is the entire GitLab REST service with all 1,099 API operations. To the best of our knowledge, we are the first to evaluate REST API testing tools on such a large-scale service with over 1,000 API operations—previous studies only consider services with fewer than 100 operations. 
+
+5.1.2 Baselines. We choose eight representative and applicable REST API testing tools, which are:  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Log-based, Business-aware REST API Testing 13
+
+• Restler [ 8 ] is the first stateful REST API fuzzer that generates test sequences by inferring producer-consumer dependencies and analyzing dynamic feedback from responses. 
+
+• EvoMaster [6 , 7] is a search-based testing tool supporting both black-box and white-box modes. Since all the other tools in our evaluation operate in a black-box manner, EvoMaster is also used in black-box mode for fairness (denoted as Evo-BB ). 
+
+• RestTestGen (abbreviated as RTG ) [ 39 ] analyzes dependencies and shared attributes among APIs and constructs an operation dependency graph to guide test case generation. 
+
+• Morest [25 ] is also a graph-based REST API testing tool that incorporates data schemas as nodes within the graph to enhance its capability. 
+
+• Restct [ 41 ] is the first systematic and fully automatic approach that adopts combinatorial testing to REST API testing. 
+
+• Schemathesis (abbreviated as Schma ) [ 17 ] adopts a property-based testing approach to auto-matically derives structure-aware tests from OpenAPI schemas to uncover complex defects in REST APIs. 
+
+• Arat-rl [ 21 ] is an adaptive REST API testing technique that uses reinforcement learning to prioritize operations and parameters during operation sequence generation. 
+
+• Deeprest [ 12 ] leverages curiosity-driven deep reinforcement learning to uncover implicit business logic and hidden constraints in REST APIs 
+
+5.1.3 Evaluation Metrics. Following prior work [ 8 , 12 , 21 , 23 , 25 , 42 ], we use operation coverage, line coverage, bug detection, and statistical effect size as our evaluation metrics. 
+
+• Operation coverage measures the extent to which the testing tool explores the REST APIs. An operation is considered covered if it produces a 2XX status code 
+
+• Line coverage measures how thoroughly a testing tool exercises a service’s business functionalities at the line level. It has been widely adopted in prior studies [ 8 , 25 ]. We use JaCoCo and Ruby TracePoint to collect the line coverage of Java and Ruby Projects. 
+
+• Bug detection is indicated by 5XX status codes observed during testing. Each bug is identified by the corresponding service, operation, status code, and error message. 
+
+• Effect size ( ˆ𝐴 12 ) quantifies the magnitude of performance differences between two tools using the Vargha–Delaney ˆ𝐴 12 statistic based on the Mann–Whitney U test. Our one-tailed alternative hypothesis is that LoBREST achieves higher values than the baseline tool being compared. 
+
+5.1.4 HRLog Preparation. LoBREST relies on HRLogs to guide testing. To generate HRLogs, we follow a controlled procedure. We recruit a group of participants and first brief them on the typical business scenarios of each service. They then interact with the services via REST APIs for fixed durations—24 hours for S01–S16 and 72 hours for S17, which has a substantially larger API set. 
+
+5.1.5 Experimental Procedure and Environments. To enable parallel testing while maintaining isolation between different testings, we adopt a containerized setup. Services and testing tools are deployed in separate containers. During parallel testing, the overall CPU and memory utilization are kept below 60%. All experiments are conducted on a server running Ubuntu 20.04.6 LTS, equipped with an Intel(R) Xeon(R) Silver 4316 CPU @ 2.30GHz (80 logical cores) and 512 GB of RAM. 
+
+5.2 RQ1: Effectiveness on services with sparse businesses 
+
+We categorize Services S01–S10 as services with sparse businesses, as most functionalities in them are business-insensitive. Evaluating LoBREST on such services provides a baseline for its performance. We set a time budget of one hour for each tool run, which is widely adopted and examined in prior works [ 8 , 13 , 21 , 23 , 25 ]. To alleviate the impact of randomness, each tool run is repeated 20 times. 
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026.
+
+14 Ding Yang, Ruixiang Qian, Zhao Wei, Zhenyu Chen, and Chunrong Fang 
+
+Table 2. Comparison of coverage results on all target services. For each baseline, the value outside parentheses denotes the average operation/line coverage, while the value inside is the ˆ𝐴 12 effect size. Entries marked with “–” indicate cases where a tool crashes or lacks authentication when testing a service. (a) Results of operation coverage. 
+
+LoBREST Restler Evo-BB RTG Morest Restct Schma Arat-rl Deeprest 
+
+S01 18.0 11.0 (1.00) 12.1 (1.00) 10.4 (1.00) 11.1 (1.00) 8.6 (1.00) 6.0 (1.00) 17.8 (0.60) 11.2 (1.00) 
+
+S02 23.0 15.0 (1.00) 18.8 (1.00) 11.3 (1.00) 22.9 (0.53) – 21.0 (1.00) 22.1 (0.80) 10.3 (1.00) 
+
+S03 2.0 1.0 (1.00) 2.0 (0.50) 1.0 (1.00) 2.0 (0.50) – 1.2 (0.88) 2.0 (0.50) 1.0 (1.00) 
+
+S04 13.0 9.0 (1.00) 10.0 (1.00) 9.0 (1.00) – 9.0 (1.00) 10.8 (1.00) – 9.0 (1.00) 
+
+S05 6.0 6.0 (0.50) 6.0 (0.50) 5.0 (1.00) – 6.0 (0.50) 6.0 (0.50) 6.0 (0.50) 6.0 (0.53) 
+
+S06 10.0 10.0 (0.50) 10.0 (0.50) 10.0 (0.50) 10.0 (0.50) 10.0 (0.50) 10.0 (0.50) 10.0 (0.50) 10.0 (0.50) 
+
+S07 56.8 20.0 (1.00) 43.1 (1.00) 25.1 (1.00) 41.5 (1.00) – 23.4 (1.00) 39.3 (1.00) 22.7 (1.00) 
+
+S08 8.0 2.0 (1.00) 5.0 (1.00) 3.6 (1.00) 9.0 (0.00) – 5.8 (1.00) 7.0 (1.00) 2.8 (1.00) 
+
+S09 12.0 – 9.0 (1.00) 12.0 (0.50) 12.0 (0.50) 8.1 (1.00) 7.2 (1.00) 12.0 (0.50) 10.3 (0.75) 
+
+S10 21.0 – 16.9 (1.00) 13.2 (1.00) 17.0 (1.00) – 16.9 (1.00) 16.9 (1.00) 13.9 (1.00) 
+
+S11 8.0 1.0 (1.00) 5.0 (1.00) 5.5 (1.00) – 4.4 (1.00) 4.8 (1.00) – 5.3 (1.00) 
+
+S12 12.0 1.0 (1.00) 3.0 (1.00) 3.0 (1.00) – 3.0 (1.00) 2.7 (1.00) – 2.8 (1.00) 
+
+S13 11.0 1.0 (1.00) 10.0 (1.00) 1.0 (1.00) – 1.0 (1.00) 3.2 (1.00) – 1.0 (1.00) 
+
+S14 22.6 3.0 (1.00) 7.1 (1.00) 15.7 (0.99) – 22.5 (0.55) 6.0 (1.00) – 21.9 (0.68) 
+
+S15 26.7 1.0 (1.00) 13.9 (1.00) 22.7 (1.00) – 20.6 (1.00) 5.3 (1.00) – 24.9 (0.81) 
+
+S16 8.0 1.0 (1.00) 3.0 (1.00) 3.0 (1.00) – 3.0 (1.00) 3.0 (1.00) – 2.9 (1.00) 
+
+S17 352.7 – 122.2 (1.00) 47.9 (1.00) – – 26.1 (1.00) – 43.3 (1.00) 
+
+(b) Results of line coverage. 
+
+LoBREST Restler Evo-BB RTG Morest Restct Schma Arat-rl Deeprest 
+
+S01 370.0 220.0 (1.00) 266.9 (1.00) 227.8 (1.00) 231.5 (1.00) 200.7 (1.00) 178.0 (1.00) 364.4 (0.82) 230.1 (1.00) 
+
+S02 2384.8 1534.0 (1.00) 1994.2 (1.00) 1545.2 (1.00) 1613.8 (1.00) – 1538.3 (1.00) 1882.0 (1.00) 1475.5 (1.00) 
+
+S03 11193.7 1264.0 (1.00) 9069.2 (1.00) 1264.0 (1.00) 9646.5 (1.00) – 2866.7 (1.00) 10861.6 (0.96) 1264.0 (1.00) 
+
+S04 791.5 591.0 (1.00) 633.4 (1.00) 570.0 (1.00) – 580.0 (1.00) 661.4 (1.00) – 570.0 (1.00) 
+
+S05 265.5 203.0 (1.00) 177.7 (1.00) 167.0 (1.00) – 235.0 (1.00) 258.4 (1.00) 257.9 (0.96) 227.3 (1.00) 
+
+S06 263.0 181.0 (1.00) 197.2 (1.00) 194.7 (1.00) 185.8 (1.00) 180.8 (1.00) 194.0 (1.00) 200.5 (1.00) 191.0 (1.00) 
+
+S07 563.6 406.0 (1.00) 495.9 (1.00) 398.6 (1.00) 527.4 (1.00) – 468.2 (1.00) 517.4 (1.00) 401.6 (1.00) 
+
+S08 168.0 57.0 (1.00) 156.0 (1.00) 46.8 (1.00) 156.4 (0.97) – 156.9 (1.00) 156.0 (1.00) 42.6 (1.00) 
+
+S09 328.8 – 322.1 (1.00) 327.4 (0.90) 329.0 (0.40) 319.1 (1.00) 316.4 (1.00) 329.1 (0.38) 322.1 (0.72) 
+
+S10 662.6 – 461.9 (1.00) 352.2 (1.00) 491.3 (1.00) – 474.4 (1.00) 475.4 (1.00) 356.4 (1.00) 
+
+S11 607.8 284.0 (1.00) 539.8 (1.00) 543.9 (1.00) – 544.6 (1.00) 525.3 (1.00) – 527.2 (1.00) 
+
+S12 712.0 285.0 (1.00) 579.0 (1.00) 554.1 (1.00) – 576.8 (1.00) 518.2 (1.00) – 506.3 (1.00) 
+
+S13 436.6 254.0 (1.00) 460.9 (0.00) 229.0 (1.00) – 229.0 (1.00) 322.8 (1.00) – 229.0 (1.00) 
+
+S14 812.5 425.0 (1.00) 652.8 (1.00) 703.8 (1.00) – 739.1 (1.00) 620.7 (1.00) – 716.4 (1.00) 
+
+S15 780.0 354.0 (1.00) 585.4 (1.00) 668.4 (1.00) – 691.0 (1.00) 402.9 (1.00) – 686.9 (1.00) 
+
+S16 592.6 282.0 (1.00) 526.5 (1.00) 520.4 (1.00) – 537.2 (1.00) 480.7 (1.00) – 481.4 (1.00) 
+
+S17 3945.8 – 2519.1 (1.00) 1630.5 (1.00) – – 1255.3 (1.00) – 1592.2 (1.00) 
+
+5.2.1 Operation Coverage. The operation coverage for Services S01-S10 is summarized in Table 2a. 
+
+LoBREST achieves the highest coverage on 9 out of the 10 services; on S08, it ranks second, trailing 
+
+Morest by only one operation. Most ˆ𝐴 12 values are at least 0.80, indicating consistent advantages across 20 runs. ˆ𝐴 12 Values of 0.50 occur when LoBREST and baselines achieve identical coverage, typically on services with very simple functionality. For example, Services S05 and S06 manage no persistent resources and expose only GET operations for basic numeric computation and string concatenation; consequently, each functionality involves only a single operation. However, identical operation coverage does not imply equivalent effectiveness: as shown later in § 5.2.2, LoBREST 
+
+still outperforms all baselines on S05 and S06 in terms of line coverage. 
+
+, Vol. 1, No. 1, Article . Publication date: April 2026. Log-based, Business-aware REST API Testing 15 (a) S01 -S03, S05 -S10 (b) S11 -S16 (c) S17 
+
+> Fig. 7. UpSet plots illustrating the bugs detected by all tools across Service S01-S17 (excluding S04 for fairness). Only bugs triggered at least 10 times across 20 runs are counted.
+
+As for the average coverage rate, LoBREST consistently outperforms the eight baselines. Specifi-cally, LoBREST achieves an operation coverage of 90.4%, reaching 100.0% coverage on five services (S01-S05). Compared with the top-performing baselines— Arat-rl (82.6%), Morest (78.6%), and 
+
+Evo-BB (75.0%)— LoBREST improves the average coverage by 9.4%, 15.0%, and 20.5%. 
+
+5.2.2 Line Coverage. The line coverage results for Services S01–S10 are summarized in Table 2b. 
+
+LoBREST attains the highest line coverage on 9 of the 10 services; on the remaining one, its coverage is comparable to the best-performing baseline Arat-rl , with a difference of only 0.3 lines. The ˆ𝐴 12 
+
+values confirm that LoBREST consistently outperforms the baselines. Overall, LoBREST attains an average line coverage of 66.6%, improving by 15.2% and 30.6% over the strongest baselines, Arat-rl 
+
+and Morest . A manual inspection of the source code reveals that, for several services (e.g., S01, S05-S06, S07, and S10), LoBREST already reaches the maximum line coverage, as the remaining uncovered code is either dead or unreachable via REST APIs. 
+
+5.2.3 Bug Detection. Fig. 7a shows the overlaps of bugs found by LoBREST and eight baseline tools. For fairness, Service S04 is excluded because the SOTA tools Arat-rl and Morest could not run due to authentication issues. The results show that LoBREST detects the most bugs (66), followed by Arat-rl (54), Schemathesis (52), and RestTestGen (40); the remaining baselines detect fewer than 40. Moreover, the matrix panel at the bottom of the UpSet plot reveals that only 
+
+LoBREST , Arat-rl , and Schemathesis can find bugs that other tools fail to detect, with LoBREST 
+
+performing the best (10 vs. 3 and 2). Totally, 74 bugs are found across these nine services, with 
+
+LoBREST responsible for 89.2%. In summary, LoBREST consistently uncovers most bugs in Services S01–S10 (excluding S04) and identifies more independent bugs than other tools. 
+
+Answers to RQ1: LoBREST demonstrates strong baseline performance on services with sparse businesses. It achieves the highest operation coverage on 9 out of the 10 services, reaching 100.0% operation coverage on 5 services. LoBREST improves average line coverage by 15.2% compared with the second-best tool Arat-rl . It also detects the most bugs—66 in total—22.0% more than the second-best tool Arat-rl .
+
+5.3 RQ2: Effectiveness on services with dense businesses 
+
+GitLab is a large-scale, industrial service with 1,099 operations and 109 business modules 2, providing a wide range of business-sensitive functionalities. Therefore, we categorize GitLab services S11-S17       
+
+> 2REST services are often organized into business modules, each grouping operations related to a specific business concern (e.g., Branch and Commit in GitLab). Such modules are developer-defined and can be reflected via operation tags. , Vol. 1, No. 1, Article . Publication date: April 2026. 16 Ding Yang, Ruixiang Qian, Zhao Wei, Zhenyu Chen, and Chunrong Fang 0510 15 20 25
+> Time (hours)
+> 0
+> 500
+> 1000
+> 1500
+> 2000
+> 2500
+> 3000
+> 3500
+> 4000
+> Average Line Coverage
+> LOBREST
+> DeepREST
+> EvoMaster-BB
+> RESTTESTGEN
+> Schemathesis
+
+Fig. 8. Average line coverage on the whole GitLab over 24 hours. The lines represent the mean values across 20 independent runs, and the shaded areas indicate the standard deviation ( ± SD). Schmathesis 
+
+> RESTTESTGEN
+> DeepREST
+> EvoMaster -BB
+> LOBREST
+
+Fig. 9. Heatmap of coverage rates across different business modules for each testing tool. Each cell represents the coverage rate achieved by a tool for a specific module, with darker shades indicating higher coverage. 
+
+as business services with dense businesses. Evaluating LoBREST on such services demonstrates its capability to leverage HRLogs to recover business constraints, exercise complex functionalities, and achieve deep testing coverage in large-scale, real-world REST services. Following prior studies [ 8, 41 ], we first test six commonly evaluated GitLab sub-services (S11-S16), with each run lasting one hour and repeated 20 times. Next, we evaluate tools on the full GitLab service for the first time; considering the complexity of S17, each experiment on it lasts 24 hours and is repeated 20 times. 
+
+5.3.1 Operation coverage. Table 2a presents the operation coverage achieved by LoBREST across S11-S17. LoBREST consistently attains the highest coverage, outperforming the strongest baseline, 
+
+Restct , by 263.1%. Moreover, for the entire GitLab S17, LoBREST covers 352.7 operations, exceeding the second-best tool Evo-BB by 188.6%. These results demonstrate that LoBREST exercises a substantially larger portion of the API operations compared to existing tools. 
+
+5.3.2 Line Coverage. Table 2b summarizes line coverage results on S11-S17. LoBREST achieves the highest coverage on five sub-services, ranking second only on GitLab-Group (S13). Averaged across the sub-services, LoBREST outperforms the strongest baseline Restct by 26.5%. On the entire GitLab S17, LoBREST exceeds the best-performing baseline Evo-BB by 56.6%. Fig. 8 depicts the progression of average line coverage over 24 hours for LoBREST and four baselines. Coverage growth for all tools plateaus during the latter half of the evaluation, indicating that the 24-hour time budget is sufficient for meaningful comparison. Notably, LoBREST achieves superior coverage within the first hour and sustains this lead throughout the experiment, highlighting its efficiency in exercising code paths. In summary, LoBREST demonstrates the strongest performance on line coverage, with particularly significant advantages when evaluated on the entire GitLab service. 
+
+5.3.3 Business Module Coverage. Fig. 9 presents the coverage of GitLab business modules achieved by LoBREST and the four baseline tools during testing S17. Each cell represents the coverage rate of a tool for a specific module, with darker shades indicating higher coverage. LoBREST covers 80 out of 109 business modules, substantially surpassing the baselines: 55 for Evo-BB , 32 for both 
+
+Deeprest and RestTestGen , and 23 for Schemathesis . In addition to breadth, LoBREST achieves the highest average operation coverage within modules at 45.4%, outperforming the second-best tool, Evo-BB , which reaches 27.9%, by 62.7%. In summary, LoBREST excels in both the breadth and depth of business module coverage, demonstrating superior capability in exploring diverse business modules and effectively exercising their operations.              
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. Log-based, Business-aware REST API Testing 17 S01 S02 S03 S04 S05 S06 S07 S08 S09 S10 S17
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Coverage (%)
+> Slices-Init Slices-Enh Slices-Enh+Fuzzing
+
+Fig. 10. Line coverage comparison for initial slices, enhanced slices, and fuzzing with enhanced slices across 11 services. S11-S16 are excluded since their total line numbers are unknown. 
+
+5.3.4 Bug Detection. Fig. 7a and Fig. 7b present the bug detection results of LoBREST and the baseline tools on GitLab sub-services and the entire GitLab service. On the sub-services, LoBREST 
+
+detects 12 bugs, including 7 unique ones, outperforming all baselines. The advantage becomes even more significant for the entire GitLab service: LoBREST detects 30 bugs—twice as many as the second-best tool Evo-BB —including 21 bugs that other tools fail to find, exceeding the second-ranked Schemathesis by 133.0%. These results demonstrate that LoBREST is highly effective in detecting bugs in services with dense businesses compared to existing tools. 
+
+Answers to RQ2: Compared with services with sparse businesses, LoBREST shows more pronounced advantages on services with dense businesses. Against the strongest baseline, 
+
+LoBREST improves operation coverage by 263.1% and 188.6% and line coverage by 26.5% and 56.6% on S11–S16 and S17, respectively. LoBREST is also more business-aware, achieving 45.5% and 62.7% higher breadth and depth of business module coverage. Overall, LoBREST 
+
+detects the most bugs; notably, on S17, it finds 2× as many bugs as the second-best tool. 
+
+5.4 RQ3: Contributions of Core Designs 
+
+Log slicing, log slice enhancement, and business-aware fuzzing are key designs of LoBREST to repurpose HRLogs for REST API testing. To evaluate their contributions to the effectiveness of LoBREST, we compare three configurations: the initial slice set 𝑆 (Slices-Init ), the enhanced slice set 
+
+𝑆 ′ (Slices-Enh ), and fuzzing with 𝑆 ′ (Slices-Enh+Fuzzing ). Fig. 10 shows the resulting line coverage for each configuration. (1) The initial slice set achieves a certain level of coverage on all services, demonstrating that the locality-slicing strategy can effectively generate slices suitable for testing and provide crucial inputs for the subsequent stages. (2) Across all 11 services, enhanced slices consistently achieve higher coverage than the initial slices, with an average improvement of 77.5%. This gain stems from LoBREST adding missing operations and completing required resource-creation entries within each slice. (3) Using the enhanced slices as seeds for fuzzing further amplifies testing effectiveness, yielding an additional average improvement of 39.7%. Fuzzing is especially impactful for services with dense businesses: on GitLab, it increases the coverage of 𝑆 ′ by 313%. 
+
+Answers to RQ3: The core designs of LoBREST progressively improve testing performance. Initial log slices provide baseline coverage, generating operation sequences executable in testing. Enhancing the slices increases coverage by 77.5% on average, and applying business-aware fuzzing on these slices further boosts coverage by 39.7% on average, reaching up to 313.0% on services with dense businesses like GitLab.  
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026. 18 Ding Yang, Ruixiang Qian, Zhao Wei, Zhenyu Chen, and Chunrong Fang
+
+5.5 Threats to Validity 
+
+Internal Validity. Our study is affected by three potential internal threats. First, the effectiveness of the compared tools may be influenced by configuration choices, as different settings can lead to different testing behaviors. To mitigate this threat and ensure fairness, we use the default configurations recommended in each tool’s official repository. Second, LoBREST relies on HRLogs, but real production logs of the evaluated services are unavailable. To address this, we simulate realistic usage scenarios by recruiting participants to interact with the target services over a period of time, thereby generating HRLogs that approximate real-world usage patterns. Third, the inherent randomness of fuzzing may affect the stability of the results [ 24 , 37 ]. To reduce this impact, we repeat the running of each tool on each service 20 times and report the average results. 
+
+External Validity. The threat to external validity arises from the limited number and diversity of the evaluated services [ 3 ]. To mitigate this, we evaluate LoBREST on 17 REST services. These services span multiple business domains and include both lightweight benchmarks and large-scale industrial systems. Notably, we first evaluate testing tools on a complete GitLab service. Such a large and real-world system provides indicative evidence of the general applicability of LoBREST .
+
+6 RELATED WORK 
+
+REST API Testing. In recent years, various techniques have been proposed to ensure the reliability of REST services. Restler [ 8 ] is the first automatic stateful fuzzer, which generates test cases by inferring the producer-consumer dependencies among requests. EvoMaster [ 6] is another early REST API testing tool; it follows a white-box testing approach and applies evolutionary algorithms to optimize test case generation. Wu et al. [ 41 ] proposed Restct , the first approach to apply combinatorial testing techniques to REST API testing. Most existing works focus on generating operation sequences that satisfy resource constraints but overlook the importance of business constraints, resulting in insufficient exploration of the service. Similar to us, Deeprest [ 12 ]recognizes this issue and uses reinforcement learning to uncover implicit business logic and hidden constraints. However, Deeprest can only infer these constraints at runtime through repeated trial and error, because the specifications it relies on do not contain this information. In contrast, 
+
+LoBREST leverages HRLogs, which inherently capture business constraints, allowing it to obtain constraint information more effectively and efficiently. 
+
+Log-Analysis in Testing. As an important means of profiling software systems, logging has become a common practice in enterprise operations. Many testing approaches leverage log data to enhance their testing effectiveness [ 1, 4 , 5 ]. Wu et al. [ 40 ] present Logos, which transforms log data into semantic coverage information to guide the fuzzing process and enhance testing effectiveness. Messaoudi et al. [ 28 ] proposed DS3, which shares a similar slicing-based approach with LoBREST 
+
+for generating test cases. Nevertheless, our approach differs greatly from DS3 in the slicing target, where DS3 slices complex system-level test cases with logs serving only as auxiliary guidance, whereas LoBREST directly slices logs to construct REST API test cases. 
+
+7 CONCLUSION 
+
+This paper introduces LoBREST , a log-based, business-aware REST API testing technique that leverages historical request logs to facilitate effective testing of REST APIs. With the locality slicing strategies, LoBREST first decomposes logs into smaller log slices, each slice preserving the required business constraints. Then, the log slices are enhanced to ensure that the entire slice set can cover all API operations and each slice can be executed successfully. Finally, the enhanced slices are used as initial seeds to perform business-aware REST API fuzzing. We evaluate LoBREST against 
+
+> , Vol. 1, No. 1, Article . Publication date: April 2026.
+
+Log-based, Business-aware REST API Testing 19 
+
+eight existing techniques on 17 REST services. The results demonstrate that LoBREST consistently outperforms other techniques in terms of operation coverage, line coverage, and bug detection. 
+
+REFERENCES 
+
+[1] Aafer, Y., You, W., Sun, Y., Shi, Y., Zhang, X., and Yin, H. Android {SmartTVs } vulnerability discovery via 
+
+{log-guided } fuzzing. In 30th USENIX Security Symposium (USENIX Security 21) (2021), pp. 2759–2776. [2] Amazon Web Services, I. Amazon api gateway. https://docs.aws.amazon.com/apigateway/latest/developerguide/ apigateway-rest-api.html, 2025. [3] Ampatzoglou, A., Bibi, S., Avgeriou, P., Verbeek, M., and Chatzigeorgiou, A. Identifying, categorizing and mitigating threats to validity in software engineering secondary studies. Information and software technology 106 
+
+(2019), 201–230. [4] Andrews, J. H. Testing using log file analysis: tools, methods, and issues. In Proceedings 13th IEEE International Conference on Automated Software Engineering (Cat. No. 98EX239) (1998), IEEE, pp. 157–166. [5] Andrews, J. H., and Zhang, Y. General test result checking with log file analysis. IEEE Transactions on Software Engineering 29 , 7 (2003), 634–648. [6] Arcuri, A. Restful api automated test case generation with evomaster. ACM Transactions on Software Engineering and Methodology (TOSEM) 28 , 1 (2019), 1–37. [7] Arcuri, A., Galeotti, J. P., Marculescu, B., and Zhang, M. Evomaster: A search-based system test generation tool. 
+
+Journal of Open Source Software (2021). [8] Atlidakis, V., Godefroid, P., and Polishchuk, M. Restler: Stateful rest api fuzzing. In 2019 IEEE/ACM 41st International Conference on Software Engineering (ICSE) (2019), IEEE, pp. 748–758. [9] Berners-Lee, T., Fielding, R., and Frystyk, H. Hypertext transfer protocol–http/1.0. Tech. rep., 1996. [10] Böhme, M., Pham, V.-T., Nguyen, M.-D., and Roychoudhury, A. Directed greybox fuzzing. In Proceedings of the 2017 ACM SIGSAC Conference on Computer and Communications Security (CCS’17) (2017), pp. 2329–2344. [11] Böhme, M., Pham, V.-T., and Roychoudhury, A. Coverage-based greybox fuzzing as markov chain. In Proceedings of the 2016 ACM SIGSAC Conference on Computer and Communications Security (2016), pp. 1032–1043. [12] Corradini, D., Montolli, Z., Pasqa, M., and Ceccato, M. Deeprest: Automated test case generation for rest apis exploiting deep reinforcement learning. In Proceedings of the 39th IEEE/ACM International Conference on Automated Software Engineering (2024), pp. 1383–1394. [13] Corradini, D., Pasqa, M., and Ceccato, M. Restgym: A flexible infrastructure for empirical assessment of automated rest api testing tools. In 2025 IEEE Conference on Software Testing, Verification and Validation (ICST) (2025), IEEE, pp. 757–761. [14] F5, I. Nginx. https://nginx.org/, 2025. [15] Fielding, R. T. Architectural styles and the design of network-based software architectures . University of California, Irvine, 2000. [16] Google . Google for developers. https://developers.google.com/workspace/drive/api/reference/rest/v3, 2025. [17] Hatfield-Dodds, Z., and Dygalo, D. Deriving semantics-aware fuzzers from web api schemas. In Proceedings of the ACM/IEEE 44th International Conference on Software Engineering: Companion Proceedings (2022), pp. 345–346. [18] He, S., He, P., Chen, Z., Yang, T., Su, Y., and Lyu, M. R. A survey on automated log analysis for reliability engineering. 
+
+ACM computing surveys (CSUR) 54 , 6 (2021), 1–37. [19] Initiative, O. Openapi. https://www.openapis.org, 2025. [20] Karlsson, S., Čaušević, A., and Sundmark, D. Quickrest: Property-based test generation of openapi-described restful apis. In 2020 IEEE 13th International Conference on Software Testing, Validation and Verification (ICST) (2020), IEEE, pp. 131–141. [21] Kim, M., Sinha, S., and Orso, A. Adaptive rest api testing with reinforcement learning. In 2023 38th IEEE/ACM International Conference on Automated Software Engineering (ASE) (2023), IEEE, pp. 446–458. [22] Kim, M., Sinha, S., and Orso, A. Llamaresttest: Effective rest api testing with small language models. Proceedings of the ACM on Software Engineering 2 , FSE (2025), 465–488. [23] Kim, M., Xin, Q., Sinha, S., and Orso, A. Automated test generation for rest apis: No time to rest yet. In Proceedings of the 31st ACM SIGSOFT International Symposium on Software Testing and Analysis (2022), pp. 289–301. [24] Klees, G., Ruef, A., Cooper, B., Wei, S., and Hicks, M. Evaluating fuzz testing. In Proceedings of the 2018 ACM SIGSAC conference on computer and communications security (2018), pp. 2123–2138. [25] Liu, Y., Li, Y., Deng, G., Liu, Y., Wan, R., Wu, R., Ji, D., Xu, S., and Bao, M. Morest: Model-based restful api testing with execution feedback. In Proceedings of the 44th International Conference on Software Engineering (2022), pp. 1406–1417. [26] Manès, V. J., Han, H., Han, C., Cha, S. K., Egele, M., Schwartz, E. J., and Woo, M. The art, science, and engineering of fuzzing: A survey. IEEE Transactions on Software Engineering 47 , 11 (2019), 2312–2331. , Vol. 1, No. 1, Article . Publication date: April 2026. 20 Ding Yang, Ruixiang Qian, Zhao Wei, Zhenyu Chen, and Chunrong Fang 
+
+[27] Masse, M. REST API design rulebook: designing consistent RESTful web service interfaces . " O’Reilly Media, Inc.", 2011. [28] Messaoudi, S., Shin, D., Panichella, A., Bianculli, D., and Briand, L. C. Log-based slicing for system-level test cases. In Proceedings of the 30th ACM SIGSOFT international symposium on software testing and analysis (2021), pp. 517–528. [29] Miller, B. P., Fredriksen, L., and So, B. An empirical study of the reliability of unix utilities. Communications of the ACM 33 , 12 (1990), 32–44. [30] Newman, S. Building microservices: designing fine-grained systems . O’Reilly Media, Inc., 2021. [31] Pautasso, C., Zimmermann, O., and Leymann, F. Restful web services vs." big"’web services: making the right architectural decision. In Proceedings of the 17th international conference on World Wide Web (2008), pp. 805–814. [32] Postman . 2025 state of the api report. https://www.postman.com/state-of-api/2025, 2025. [33] Qian, R., Zhang, Q., Fang, C., Guo, L., and Chen, Z. Funfuzz: Greybox fuzzing with function significance. ACM Transactions on Software Engineering and Methodology 34 , 4 (2025), 1–34. [34] Qian, R., Zhang, Q., Fang, C., Yang, D., Li, S., Li, B., and Chen, Z. Dipri: Distance-based seed prioritization for greybox fuzzing. ACM Transactions on Software Engineering and Methodology 34 , 1 (2024), 1–39. [35] Report, M. G. Cloud microservices market size, share & analysis 2035 report. https://www.marketgrowthreports.com/ market-reports/cloud-microservices-market-106525, 2025. [36] Saleem, G., Azam, F., Younus, M. U., Ahmed, N., and Yong, L. Quality assurance of web services: A systematic literature review. In 2016 2nd IEEE International Conference on Computer and Communications (ICCC) (2016), IEEE, pp. 1391–1396. [37] Schloegel, M., Bars, N., Schiller, N., Bernhard, L., Scharnowski, T., Crump, A., Ale-Ebrahim, A., Bissantz, N., Muench, M., and Holz, T. Sok: Prudent evaluation practices for fuzzing. In 2024 IEEE Symposium on Security and Privacy (SP) (2024), IEEE, pp. 1974–1993. [38] Software, S. Swagger. https://swagger.io, 2025. [39] Viglianisi, E., Dallago, M., and Ceccato, M. Resttestgen: automated black-box testing of restful apis. In 2020 IEEE 13th International Conference on Software Testing, Validation and Verification (ICST) (2020), IEEE, pp. 142–152. [40] Wu, F., Luo, Z., Zhao, Y., Du, Q., Yu, J., Peng, R., Shi, H., and Jiang, Y. Logos: Log guided fuzzing for protocol implementations. In Proceedings of the 33rd ACM SIGSOFT International Symposium on Software Testing and Analysis 
+
+(2024), pp. 1720–1732. [41] Wu, H., Xu, L., Niu, X., and Nie, C. Combinatorial testing of restful apis. In Proceedings of the 44th International Conference on Software Engineering (2022), pp. 426–437. [42] Zhang, M., and Arcuri, A. Open problems in fuzzing restful apis: A comparison of tools. ACM Transactions on Software Engineering and Methodology 32 , 6 (2023), 1–45. [43] Zhu, X., Wen, S., Camtepe, S., and Xiang, Y. Fuzzing: a survey for roadmap. ACM Computing Surveys (CSUR) 54 , 11s (2022), 1–36. , Vol. 1, No. 1, Article . Publication date: April 2026.

@@ -6,79 +6,79 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-04-18
-- 运行时间：2026-04-18 19:29:00 UTC
+- 最新运行日期：2026-04-19
+- 运行时间：2026-04-19 19:45:25 UTC
 - 运行状态：成功
 - 本次总论文数：19
 - 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日深挖 AI 可靠性底层架构，重点解析了“认知断路器”与企业级“有界自主”等 19 篇核心文献。
-研究指出，通过类型化动作契约与系统工程框架，可有效解决 AI 在复杂任务中的安全漂移与执行失控问题。
-建议优先研读两篇 9.0 分佳作，掌握如何利用工程化手段为大模型构建内在的“安全保险丝”。
-- 详情：[/202604/18/README](/202604/18/README)
+今日聚焦 AI 智能体安全防线，深度解析了从文件系统控制到机构化治理的 19 篇前沿成果。
+重点推荐通过重构文件系统防止智能体“盲目操作”的 9.0 分佳作，以及针对生成式 AI 安全的微观物理宣言。
+建议关注如何通过底层架构约束 AI 行为，确保智能体在处理敏感数据时的自主性与安全性。
+- 详情：[/202604/19/README](/202604/19/README)
 
 ### 精读区论文标签
-1. [The Cognitive Circuit Breaker: A Systems Engineering Framework for Intrinsic AI Reliability](/202604/18/2604.13417v1-the-cognitive-circuit-breaker-a-systems-engineering-framework-for-intrinsic-ai-reliability)  
+1. [Don't Let AI Agents YOLO Your Files: Shifting Information and Control to Filesystems for Agent Safety and Autonomy](/202604/19/2604.13536v2-dont-let-ai-agents-yolo-your-files-shifting-information-and-control-to-filesystems-for-agent-safety-and-autonomy)  
    标签：评分：9.0/10、query:agsec
-   evidence：LLM输出的内在可靠性监控与熔断机制
-2. [Bounded Autonomy for Enterprise AI: Typed Action Contracts and Consumer-Side Execution](/202604/18/2604.14723v1-bounded-autonomy-for-enterprise-ai-typed-action-contracts-and-consumer-side-execution)  
-   标签：评分：9.0/10、query:agsec
-   evidence：具有类型化动作合约和验证的有界自治架构
-3. [Seeing No Evil: Blinding Large Vision-Language Models to Safety Instructions via Adversarial Attention Hijacking](/202604/18/2604.10299v1-seeing-no-evil-blinding-large-vision-language-models-to-safety-instructions-via-adversarial-attention-hijacking)  
+   evidence：将控制权转移到文件系统以保障代理安全
+2. [Governed Reasoning for Institutional AI](/202604/19/2604.10658v1-governed-reasoning-for-institutional-ai)  
    标签：评分：8.0/10、query:agsec
-   evidence：通过操纵注意力模式来规避视觉语言模型的安全对齐
-4. [RCBSF: A Multi-Agent Framework for Automated Contract Revision via Stackelberg Game](/202604/18/2604.10740v1-rcbsf-a-multi-agent-framework-for-automated-contract-revision-via-stackelberg-game)  
+   evidence：AI智能体的治理决策基座和四层治理模型
+3. [Resilient Write: A Six-Layer Durable Write Surface for LLM Coding Agents](/202604/19/2604.10842v2-resilient-write-a-six-layer-durable-write-surface-for-llm-coding-agents)  
    标签：评分：8.0/10、query:agsec
-   evidence：多智能体输出优化的行为约束与风险预算
-5. [EmbodiedGovBench: A Benchmark for Governance, Recovery, and Upgrade Safety in Embodied Agent Systems](/202604/18/2604.11174v1-embodiedgovbench-a-benchmark-for-governance-recovery-and-upgrade-safety-in-embodied-agent-systems)  
+   evidence：针对编码Agent的预检风险评分和持久化写入层
+4. [AnyPoC: Universal Proof-of-Concept Test Generation for Scalable LLM-Based Bug Detection](/202604/19/2604.11950v1-anypoc-universal-proof-of-concept-test-generation-for-scalable-llm-based-bug-detection)  
+   标签：评分：8.0/10、query:libfuz
+   evidence：自动生成可执行的 PoC 测试以验证漏洞
+5. [Policy-Invisible Violations in LLM-Based Agents](/202604/19/2604.12177v1-policy-invisible-violations-in-llm-based-agents)  
    标签：评分：8.0/10、query:agsec
-   evidence：自主智能体系统的治理与安全控制策略
-6. [Transactional Attention: Semantic Sponsorship for KV-Cache Retention](/202604/18/2604.11288v1-transactional-attention-semantic-sponsorship-for-kv-cache-retention)  
+   evidence：LLM智能体的安全控制与策略违规检测
+6. [Credo: Declarative Control of LLM Pipelines via Beliefs and Policies](/202604/19/2604.14401v1-credo-declarative-control-of-llm-pipelines-via-beliefs-and-policies)  
    标签：评分：8.0/10、query:agsec
-   evidence：针对 API 密钥等敏感 Token 的 KV 缓存保留语义赞助机制
-7. [LASA: Language-Agnostic Semantic Alignment at the Semantic Bottleneck for LLM Safety](/202604/18/2604.12710v1-lasa-language-agnostic-semantic-alignment-at-the-semantic-bottleneck-for-llm-safety)  
+   evidence：用于规范Agent行为的声明式策略和语义控制平面
+7. [CBCL: Safe Self-Extending Agent Communication](/202604/19/2604.14512v1-cbcl-safe-self-extending-agent-communication)  
    标签：评分：8.0/10、query:agsec
-   evidence：语义瓶颈处的语义对齐以确保大模型安全
+   evidence：智能体通信和运行时语言扩展的安全不变性与约束
 
 ### 速读区论文标签
-1. [Preventing Safety Drift in Large Language Models via Coupled Weight and Activation Constraints](/202604/18/2604.12384v1-preventing-safety-drift-in-large-language-models-via-coupled-weight-and-activation-constraints)  
+1. [Benchmarks for Trajectory Safety Evaluation and Diagnosis in OpenClaw and Codex: ATBench-Claw and ATBench-CodeX](/202604/19/2604.14858v1-benchmarks-for-trajectory-safety-evaluation-and-diagnosis-in-openclaw-and-codex-atbench-claw-and-atbench-codex)  
    标签：评分：8.0/10、query:agsec
-   evidence：通过权重和激活耦合约束来保持 LLM 的安全性
-2. [HazardArena: Evaluating Semantic Safety in Vision-Language-Action Models](/202604/18/2604.12447v1-hazardarena-evaluating-semantic-safety-in-vision-language-action-models)  
+   evidence：代理系统的轨迹级安全评估与诊断
+2. [Agentic Microphysics: A Manifesto for Generative AI Safety](/202604/19/2604.15236v1-agentic-microphysics-a-manifesto-for-generative-ai-safety)  
    标签：评分：8.0/10、query:agsec
-   evidence：评估智能体动作中的语义安全与风险语境
-3. [HINTBench: Horizon-agent Intrinsic Non-attack Trajectory Benchmark](/202604/18/2604.13954v1-hintbench-horizon-agent-intrinsic-non-attack-trajectory-benchmark)  
-   标签：评分：8.0/10、query:agsec
-   evidence：智能体安全评估与内在风险审计
-4. [Calibrate-Then-Delegate: Safety Monitoring with Risk and Budget Guarantees via Model Cascades](/202604/18/2604.14251v1-calibrate-then-delegate-safety-monitoring-with-risk-and-budget-guarantees-via-model-cascades)  
-   标签：评分：8.0/10、query:agsec
-   evidence：具有风险保证和实例级决策的LLM安全监控
-5. [Dissecting Bug Triggers and Failure Modes in Modern Agentic Frameworks: An Empirical Study](/202604/18/2604.08906v1-dissecting-bug-triggers-and-failure-modes-in-modern-agentic-frameworks-an-empirical-study)  
+   evidence：智能体AI安全研究与交互层级机制
+3. [Rebooting Microreboot: Architectural Support for Safe, Parallel Recovery in Microservice Systems](/202604/19/2604.09963v1-rebooting-microreboot-architectural-support-for-safe-parallel-recovery-in-microservice-systems)  
    标签：评分：7.0/10、query:agsec
-   evidence：对智能体框架中的错误和故障模式进行实证研究
-6. [PilotBench: A Benchmark for General Aviation Agents with Safety Constraints](/202604/18/2604.08987v1-pilotbench-a-benchmark-for-general-aviation-agents-with-safety-constraints)  
+   evidence：使用微内核和指令集架构对自主修复代理进行安全控制
+4. [STRONG-VLA: Decoupled Robustness Learning for Vision-Language-Action Models under Multimodal Perturbations](/202604/19/2604.10055v2-strong-vla-decoupled-robustness-learning-for-vision-language-action-models-under-multimodal-perturbations)  
    标签：评分：7.0/10、query:agsec
-   evidence：评估具有安全约束的航空智能体在安全关键飞行轨迹预测中的表现
-7. [DeepGuard: Secure Code Generation via Multi-Layer Semantic Aggregation](/202604/18/2604.09089v1-deepguard-secure-code-generation-via-multi-layer-semantic-aggregation)  
+   evidence：多模态扰动下VLA模型的鲁棒性研究
+5. [MR-Coupler: Automated Metamorphic Test Generation via Functional Coupling Analysis](/202604/19/2604.10126v1-mr-coupler-automated-metamorphic-test-generation-via-functional-coupling-analysis)  
+   标签：评分：7.0/10、query:libfuz
+   evidence：通过功能耦合分析自动生成变态测试用例
+6. [Jailbreaking the Matrix: Nullspace Steering for Controlled Model Subversion](/202604/19/2604.10326v1-jailbreaking-the-matrix-nullspace-steering-for-controlled-model-subversion)  
    标签：评分：7.0/10、query:agsec
-   evidence：LLM代码生成的安全加固及层级漏洞检测
-8. [SAGE: A Service Agent Graph-guided Evaluation Benchmark](/202604/18/2604.09285v1-sage-a-service-agent-graph-guided-evaluation-benchmark)  
+   evidence：用于安全机制和受控颠覆的电路级干预
+7. [Latent Instruction Representation Alignment: defending against jailbreaks, backdoors and undesired knowledge in LLMs](/202604/19/2604.10403v1-latent-instruction-representation-alignment-defending-against-jailbreaks-backdoors-and-undesired-knowledge-in-llms)  
    标签：评分：7.0/10、query:agsec
-   evidence：基于图引导的服务智能体合规性评估
-9. [Towards Responsible Multimodal Medical Reasoning via Context-Aligned Vision-Language Models](/202604/18/2604.08815v1-towards-responsible-multimodal-medical-reasoning-via-context-aligned-vision-language-models)  
+   evidence：通过表示对齐防御越狱和后门
+8. [The Blind Spot of Agent Safety: How Benign User Instructions Expose Critical Vulnerabilities in Computer-Use Agents](/202604/19/2604.10577v1-the-blind-spot-of-agent-safety-how-benign-user-instructions-expose-critical-vulnerabilities-in-computer-use-agents)  
+   标签：评分：7.0/10、query:agsec
+   evidence：计算机使用智能体在非预期攻击条件下的安全评估
+9. [Vision-Language-Action Model, Robustness, Multi-modal Learning, Robot Manipulation](/202604/19/2604.10055v1-vision-language-action-model-robustness-multi-modal-learning-robot-manipulation)  
    标签：评分：6.0/10、query:agsec
-   evidence：带有安全说明和行为约束的结构化输出
-10. [From Indiscriminate to Targeted: Efficient RTL Verification via Functionally Key Signal-Driven LLM Assertion Generation](/202604/18/2604.08932v1-from-indiscriminate-to-targeted-efficient-rtl-verification-via-functionally-key-signal-driven-llm-assertion-generation)  
+   evidence：VLA模型针对多模态扰动的鲁棒性
+10. [Mask-Free Privacy Extraction and Rewriting: A Domain-Aware Approach via Prototype Learning](/202604/19/2604.10145v1-mask-free-privacy-extraction-and-rewriting-a-domain-aware-approach-via-prototype-learning)  
+   标签：评分：6.0/10、query:agsec
+   evidence：通过潜在语义进行隐私提取与重写
+11. [CodeComp: Structural KV Cache Compression for Agentic Coding](/202604/19/2604.10235v1-codecomp-structural-kv-cache-compression-for-agentic-coding)  
    标签：评分：6.0/10、query:libfuz
-   evidence：基于 LLM 的断言生成，用于功能验证和错误传播分析
-11. [Do LLMs Follow Their Own Rules? A Reflexive Audit of Self-Stated Safety Policies](/202604/18/2604.09189v1-do-llms-follow-their-own-rules-a-reflexive-audit-of-self-stated-safety-policies)  
-   标签：评分：6.0/10、query:agsec
-   evidence：安全策略和针对伤害基准的行为合规性
-12. [Toward Explanatory Equilibrium: Verifiable Reasoning as a Coordination Mechanism under Asymmetric Information](/202604/18/2604.09917v1-toward-explanatory-equilibrium-verifiable-reasoning-as-a-coordination-mechanism-under-asymmetric-information)  
-   标签：评分：6.0/10、query:agsec
-   evidence：可验证推理作为带有概率审计的协调机制
+   evidence：通过代码属性图结合静态程序分析
+12. [From Helpful to Trustworthy: LLM Agents for Pair Programming](/202604/19/2604.10300v1-from-helpful-to-trustworthy-llm-agents-for-pair-programming)  
+   标签：评分：6.0/10、query:libfuz
+   evidence：用于可靠代码和测试生成的自动反馈与迭代验证
 
 
 <div class="dpr-home-promo-card">

@@ -1,0 +1,599 @@
+Title: AnyPoC: Universal Proof-of-Concept Test Generation for Scalable LLM-Based Bug Detection
+
+URL Source: https://arxiv.org/pdf/2604.11950v1
+
+Published Time: Wed, 15 Apr 2026 00:06:11 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# Any PoC: Universal Proof-of-Concept Test Generation for Scalable LLM-Based Bug Detection 
+
+## Zijie Zhao 
+
+zijie4@illinois.edu University of Illinois Urbana-Champaign Champaign, USA 
+
+## Chenyuan Yang 
+
+cy54@illinois.edu University of Illinois Urbana-Champaign Champaign, USA 
+
+## Weidong Wang 
+
+weidongw@illinois.edu University of Illinois Urbana-Champaign Champaign, USA 
+
+## Yihan Yang 
+
+yihany5@illinois.edu University of Illinois Urbana-Champaign Champaign, USA 
+
+## Ziqi Zhang 
+
+ziqi24@illinois.edu University of Illinois Urbana-Champaign Champaign, USA 
+
+## Lingming Zhang 
+
+lingming@illinois.edu University of Illinois Urbana-Champaign Champaign, USA 
+
+## Abstract 
+
+While recent LLM-based agents can identify many candidate bugs in source code, their reports remain static hypotheses that require manual validation, limiting the practicality of automated bug de-tection. We frame this challenge as a test generation task: given a candidate report, synthesizing an executable proof-of-concept test, or simply a PoC — such as a script, command sequence, or crafted input — to trigger the suspected defect. Automated PoC genera-tion can act as a scalable validation oracle, enabling end-to-end autonomous bug detection by providing concrete execution evi-dence. However, naive LLM agents are unreliable validators: they are biased toward “success” and may reward-hack by producing plausible but non-functional PoCs or even hallucinated traces. To address this, we present Any PoC, a general multi-agent frame-work that (1) analyzes and fact-checks a candidate bug report, (2) it-eratively synthesizes and executes a PoC while collecting execution traces, and (3) independently re-executes and scrutinizes the PoC to mitigate hallucination and reward hacking. In addition, Any PoC also continuously extracts and evolves a PoC knowledge base to handle heterogeneous tasks. Any PoC operates on candidate bug reports regardless of their source and can be paired with different bug reporters. To demonstrate practicality and generality, we apply 
+
+Any PoC, with a simple agentic bug reporter, on 12 critical software systems across diverse languages/domains (many with millions of lines of code), including Firefox, Chromium, LLVM, OpenSSL, SQLite, FFmpeg, and Redis. Compared to the state-of-the-art cod-ing agents, e.g., Claude Code and Codex, Any PoC produces 1.3 ×
+
+more valid PoCs for true-positive bug reports and rejects 9.8 × more false-positive bug reports. To date, Any PoC has discovered 122 new bugs (105 confirmed , 86 already fixed ), with 45 generated PoCs adopted as official regression tests. 
+
+## CCS Concepts 
+
+• Software and its engineering → Software testing and de-bugging ; • Computing methodologies → Multi-agent systems ; •
+
+Security and privacy → Software security engineering. 
+
+## Keywords 
+
+Program Analysis, Test Generation, Agents, Large Language Models Computation 
+
+(a) LLM-based Program Analysis  
+
+> Manual Limitation
+> Computation
+
+(b) Fuzzing/Testing  
+
+> Coverage Ceiling
+> Computation
+
+(c) LLM Analysis+ Validation Oracle    
+
+> # of  Bugs
+> True Positives False Positives
+
+Figure 1: Computation scalability of bug finding. 
+
+## 1 Introduction 
+
+Automated bug detection based on Large Language Models (LLMs) has been extensively studied in recent years [ 2, 10 , 16 , 44 , 55 , 59 ,62 , 66 ]. Different from traditional static analysis [ 20 , 33 , 49 ] and dynamic testing [ 6, 18 , 21 , 46 ], recent LLM agents can autonomously explore the codebase and detect bugs in large systems. Those LLM-based bug detection tools from both industry [ 2 , 10 , 19 , 42 , 55 ] and academia [ 22 , 59 ] have shown great promise by finding hundreds of bugs and security vulnerabilities in real-world software systems. Existing LLM-based bug detection techniques often suffer from high false positive rates [ 22 , 28 , 59 ]. LLM agents may fail to gather the full context, misinterpret code semantics, or hallucinate, leading to invalid bug reports. While there are tools to mitigate this issue by using another model to validate the reports [ 31 ], the final outputs typically remain textual bug reports rather than concrete evidence. Thus, developers often need to manually verify whether the reports are real, which is difficult and time-consuming [ 5, 15 ]. This human-validation bottleneck fundamentally limits the scalability of LLM-based bug detection. Figure 1(a) shows the number of true bugs (green area) and false bugs (red area) as the computation increases. Due to the limitations of human validation (orange vertical line), LLM-based bug detection systems cannot easily scale to handle more bugs (indicated by the shaded area). In contrast, dynamic testing and fuzzing techniques [ 6 , 21 , 46 ]rely on concrete test executions and oracles (such as crashes and san-itizers [ 50 , 52 , 54 ]), to reliably indicate the presence of a bug without manual verification. For example, continuous and scalable fuzzing campaigns can discover tens of thousands of bugs [ 6]. As shown in 
+
+> arXiv:2604.11950v1 [cs.SE] 13 Apr 2026 Zhao et al.
+
+Figure 1(b), strong oracles allow fuzzing to scale to a large amount of computation with low false positive rates (the small red area). In recent years, LLM-based fuzzing techniques [ 13 , 36 , 45 , 61 , 63 ]have also been widely studied, and can substantially complement traditional fuzzers. However, we are limited by the fuzzing ceiling as shown in Figure 1(b). This ceiling arises from several factors: fuzzers typically rely on a restricted set of runtime oracles, can only exercise executable modules that are available and runnable, and must explore an enormous input and path space that is of-ten intractable for real-world systems. In practice, especially for large-scale systems with complex configurations, environment re-quirements, or hardware dependencies, the fuzzed binary often represents only a small fraction of the full codebase. As a result, even with more computation or LLM assistance, dynamic testing eventually reaches diminishing returns as discovering new behav-iors and bug-triggering paths becomes increasingly difficult. Our insight is to combine the advantages of both lines. LLM-based analysis for bug detection does not have a plateau because it can continuously cover more paths and edge cases through abstract reasoning. Fuzzing/testing does not rely on manual verification and can scale to larger computation because of strong automated oracles. We want to use strong and automatic oracles to validate the bugs from LLM-based detection systems so that we can effectively scale computation to more bugs. As shown in Figure 1(c), the number of bugs is not limited by the fuzzing ceiling nor human effort. To this end, we cast bug report validation as a test-generation problem: synthesizing an executable artifact that reliably triggers the suspected defect described in a candidate bug report. We call this artifact a proof-of-concept (PoC) test, or simply a PoC. A PoC can take different forms, such as a standalone script, command sequence, or crafted input, depending on the target system and bug type. By providing concrete execution-based evidence rather than a textual hypothesis alone, PoCs can substantially reduce the manual effort required to verify reported bugs and thus serve as a practical validation oracle for LLM-based bug detection. Recent work has started to explore test or PoC generation from bug reports, includ-ing agentic techniques [ 1 , 35 , 40 , 51 ]. However, reliably turning PoC generation into a general-purpose validation oracle remains challenging (§3): 
+
+• C1: LLM reward hacking. LLMs are rewarded to produce out-puts that appear to be successful, even if the outputs are incorrect. This usually leads to hallucinated or non-functional PoCs. As a validation oracle, a bad PoC is worse than no output, so the sys-tem must enforce either high-quality PoCs or faithful rejection. 
+
+• C2: Heterogeneity. Different systems require vastly different types of PoCs. A browser bug may need a multi-process script driving DevTools, while a compiler bug may need a crafted IR input. Determining which format is appropriate and whether a PoC genuinely demonstrates a bug is itself non-trivial. 
+
+• C3: Scalability. Generating valid PoCs requires extensive explo-ration of the codebase, build system, and tooling. Repeating this exploration for every bug in a large codebase is costly without a mechanism to accumulate and reuse knowledge. To tackle these challenges, we present Any PoC, a novel multi-agent framework for automated PoC generation with a self-evolving knowledge base (KB), detailed in §4. We carefully decompose the PoC generation task into several dedicated agents: analyzer, gener-ator, validator, and knowledge extractor. Each agent specializes in different aspects of the PoC generation process. Using a candidate bug report as input, Any PoC first validates factual correctness of the bug report, then generates an executable PoC together with exe-cution traces, which would be rigorously re-executed and examined by a validator agent to avoid hallucination and invalid assumptions. Moreover, we design agents to automatically extract, query, and evolve a knowledge base about the target codebase during the PoC generation process for scalability. This allows Any PoC to contin-uously learn and adapt to the unique characteristics of different codebases without relying on hard-coded rules or patterns. Any PoC is designed to be a general-purpose validation layer that works with any bug reporter, including LLM-based tools, traditional checkers, or even reports from humans. Any PoC is bug-type-, project-, and oracle- agnostic, allowing it to be applied to a wide range of soft-ware systems and bugs without special customization. We evaluate Any PoC on 12 real-world software systems across diverse languages/domains (many with millions of lines of code), including Chromium, Firefox, OpenSSL, SQLite, and FFmpeg. The results in §5 show that, compared with state-of-the-art baseline agents, e.g., Claude Code [ 3] and Codex [ 43 ], Any PoC produces 1.3 ×
+
+more valid PoCs for true-positive bug reports while rejecting 9.8 ×
+
+more false-positive reports. To further demonstrate its practical value, we pair Any PoC with a simple LLM-based bug reporter for new bug discovery on these systems. To date, Any PoC has already detected 122 new bugs, with 105 confirmed by developers, 86 fixed, and 45 generated PoCs adopted as regression tests. These results highlight the promising future of combining LLM-based bug detection and PoC generation as a powerful paradigm for automated software quality assurance. In summary, our main contributions are: 
+
+• Universal PoC generation framework for bug report val-idation. We design a universal and scalable multi-agent PoC generation system, Any PoC, for validating textual bug reports, enabling automated bug detection to scale to a large amount of computation without human intervention. 
+
+• Comprehensive Evaluation: We conduct extensive experi-ments on 12 real-world software systems ( e.g., Chromium, Fire-fox, LLVM, OpenSSL, FFmpeg, and Redis) to show the effective-ness of Any PoC over state-of-the-art coding agent systems, e.g., 
+
+Claude Code and Codex. 
+
+• Real-world impact: On those complex and fundamental real-world systems, Any PoC discovered 122 new bugs, with 105 
+
+confirmed and 86 fixed. Notably, 80 of the bugs were found in projects with over one million lines of code. Moreover, 45 
+
+generated PoCs have been adopted as official regression tests. 
+
+## 2 Background and Related Work 
+
+In this section, we first introduce existing bug detection techniques based on program analysis and their shared limitations, and then discuss existing work on PoC generation. 
+
+## 2.1 Program Analysis for Bug Detection 
+
+Traditional static analysis is a widely used methodology for scalable bug detection [ 20 , 33 , 49 ], but it often faces practical limitations, Any PoC : Universal Proof-of-Concept Test Generation for Scalable LLM-Based Bug Detection 
+
+Table 1: Comparison of Any PoC with prior test/PoC generation approaches. The External Dependency column means whether the solution requires a specific dependency. The Scaffold column means that the solution is flexible to different agent scaffolds.                                                        
+
+> Language External Dependency Bug Type PoC Type Scaffold FP Filtering New Bugs
+> Libro [27] Java javalang [56] Any Unit test N/A ××
+> Otter [1] Python Flake8 [67] Any Unit Test N/A ××
+> Explode.js [35] JavaScript Graph.js [17], Z3 [12] 4 classes JavaScript Program N/A ×44 PoCGen [51] JavaScript CodeQL [20] 5 classes JavaScript Program Fixed ××
+> SmartPoC [8] Solidity Foundry [9] Any Smart Contract Fixed ××
+> FaultLine [40] Python, Java None 4 classes Any Fixed ××
+> Any PoC Any None Any Any Any ✓122
+
+including high false positive rates, restricted bug coverage, and the need for substantial manual effort to construct specifications, rules, or checkers. As a result, existing analyzers often struggle to detect diverse and complex bugs in large real-world codebases [62]. Large language models (LLMs) offer a promising way to address some of these limitations. By leveraging rich semantic knowledge and stronger contextual reasoning, LLMs can help generalize be-yond manually encoded rules and support more flexible forms of code analysis. This has made LLM-based bug detection an increas-ingly promising direction for continuous and scalable code analysis. In academia, researchers have explored a range of LLM-powered approaches, including inferring taint specifications for external APIs (IRIS [ 32 ], Artemis [ 24 ]), synthesizing static analysis checkers (KNighter [ 62 ], QLCoder [ 57 ]), and directly scanning source code for vulnerabilities (Vul-RAG [ 16 ], RepoAudit [ 22 ]). Many compa-nies have also developed various LLM-based or agentic tools for code review, bug detection, and security auditing. Google’s Big Sleep project has found vulnerabilities in real-world codebases [ 55 ]. GitHub’s Copilot Code Review [ 19 ] and Cursor’s Bugbot [ 10 ] are two widely-used LLM-based tools for automated bug detection. More recently, OpenAI provides Codex Security [ 42 , 44 ] to find complex vulnerabilities, while Claude Code also supports security review [2] and code review [4]. Despite this promise, a critical limitation of current LLM-based bug detection systems is that they often generate large numbers of candidate bug reports, but many of these remain unverified hypothe-ses rather than confirmed bugs. Because LLMs are probabilistic and may misinterpret complex code semantics, execution conditions, or bug consequences, their outputs can still contain substantial false positives [ 59 , 62 ]. As a result, developers must manually inspect reported bugs to determine whether they are real, reproducible, and security-relevant. This validation process is costly, time-consuming, and requires significant domain expertise, making it a major bottle-neck for deploying LLM-based bug detection at scale. Therefore, a key next step is to develop automated validation techniques that can efficiently and reliably confirm the existence of reported bugs. 
+
+## 2.2 Test and PoC Generation 
+
+Test and PoC generation can automatically validate bug reports. Libro [ 27 ] used LLMs to generate bug-reproducing unit tests from bug reports for the Defects4J benchmark [ 26 ], but it is limited to the JUnit format. Plein et al . [47] studied the feasibility of LLM-based bug-report-to-test generation, while Qureshi et al . [48] further eval-uated the robustness of this setting via a cognitive-layered eval-uation. Recently, Otter [ 1] generates fail-to-pass tests from issue descriptions, with the explicit goal of validating candidate patches. More broadly, recent general software engineering agents such as SWE-agent [ 64 ] and Agentless [ 60 ] also incorporate reproduction test generation as part of issue resolution, using such tests to help confirm bugs and assess proposed fixes. While these techniques are useful for regression testing and patch validation, they generally rely on internal APIs, test harnesses, or developer-side infrastruc-ture. Thus, they are not designed to produce standalone evidence that a bug can be triggered across diverse realistic settings. Similarly, given a candidate bug report, PoC generation aims to automatically synthesize an executable artifact that directly trig-gers the reported bug or vulnerability. A working PoC is concrete evidence of the bug, enabling developers to quickly validate it. However, existing PoC generation works [ 35 , 40 , 51 ] have two lim-itations. First, they lack scalability to a wide range of programming languages, bug report formats, or PoC formats. Second, they are evaluated on a dataset with only true bugs, and do not explicitly handle false bug reports. Table 1 shows the comparison of Any PoC with prior approaches. Explode.js [ 35 ] is limited to JavaScript and a fixed set of common bug classes for Node.js. PoCGen [ 51 ] han-dles five vulnerability types in npm packages and relies heavily on the setup of CodeQL. More recently, SmartPoC [ 8 ] uses a fixed framework to generate PoC from smart contract bug reports, while FaultLine [ 40 ] supports four bug classes where dataflow analysis is necessary. In summary, existing work is insufficient for general-purpose bug-report validation due to scalability issues and limita-tions in handling false reports. 
+
+## 3 Problem Setting and Challenges 
+
+After identifying the limitations of existing work, we now define the problem to clarify the scope and requirements of our work. Let S denote a system, which can be a software application, li-brary, or any executable codebase. Let R denote a bug reporter that can produce many candidate bug reports R (S) for S. Each candidate report 𝑟 ∈ R (S) describes a potential defect in S and may include information about symptoms, conditions, locations, and consequences. A validator V takes as input a candidate bug report 𝑟 and the system S, and outputs either a valid PoC 𝑝 𝑟 or 
+
+⊥, where ⊥ indicates that 𝑟 is invalid or that a valid 𝑝 𝑟 cannot be generated. Zhao et al. 
+
+V (S , 𝑟 ) =
+
+(
+
+𝑝 𝑟 , if 𝑟 is valid and PoC is possible ,
+
+⊥, otherwise .
+
+Here, 𝑝 𝑟 is an executable artifact that triggers the bug report 𝑟 
+
+in S and demonstrates its existence. The goal of our work is to design a general and automated validator V that can efficiently and accurately generate 𝑝 𝑟 for a wide range of S and 𝑟 ∈ R (S) , without relying on manual effort. The V should also faithfully output ⊥
+
+when the candidate bug report is invalid or when a valid 𝑝 𝑟 cannot be generated. We assume that the existence of a valid 𝑝 𝑟 implies the validity of the corresponding 𝑟 , but not vice versa. The following points are explicitly out of scope for this work. (1) We do not aim to improve the capability of the bug reporter R.
+
+Any PoC is designed to be generalizable to different bug reporters. We assume that with more computational resources, R can produce more candidate bug reports, which may include more valid ones. (2) We do not aim to prove the non-existence of a bug, which is generally very difficult in practice for large systems [11, 41]. We identify the goal of the validator V and its generated proofs-of-concept 𝑝 𝑟 as follows: 
+
+G1: Generality. V should be able to handle arbitrary systems S
+
+and candidate bug reports 𝑟 ∈ R (S) , without being tailored to specific bug types or software domains. This requires the generated 
+
+𝑝 𝑟 to be heterogeneous and not rely on a single format or oracle. This is a key requirement that existing specialized PoC generation efforts do not address. 
+
+G2: Automation. V should operate without human intervention and with only minimal setup effort. In this way, V can scale to a large number of systems. 
+
+G3: Actionability. To reduce human effort, each 𝑝 𝑟 must contain definitive evidence of the manifestation of the bug 𝑟 . A valid 𝑝 𝑟 
+
+should exercise the system S through realistic usage scenarios and trigger the bug 𝑟 . This helps developers to quickly understand the bug and its severity. To realize these design requirements in practice, we need to overcome the following challenges: 
+
+C1: Mitigating LLM reward hacking and false positives in PoC generation. During standard LLM alignment and instruction tuning, existing benchmarks (such as SWE-bench [ 25 ]) predomi-nantly reward successful task completion. This can induce a form of reward hacking , where the model learns to prioritize the appear-ance of success over genuine accuracy. As shown in our evaluation §5.3, Claude Code with Opus 4.5 generates 142 plausible PoCs out of 144 bug reports, but only 26 of them are indeed valid. These plausible but invalid PoCs could mislead developers and require more intensive manual verification. For our validator V, we strictly prefer to faithfully reject the report by outputting ⊥ over gener-ating a non-functional 𝑝 𝑟 , in order to reduce manual verification effort. Constraining the model to prevent gaming the evaluation is crucial for ensuring the reliability of our validator and the overall effectiveness of Any PoC. 
+
+C2: Heterogeneous PoC formats across different systems. Dif-ferent software systems, and sometimes even different components within the same codebase, may require totally different PoC for-mats and oracles. It is impractical to define a single general PoC format that works across such systems. The challenge is twofold: (1) Generating PoCs that follow a required format often requires extensive exploration and understanding of the system; (2) Decid-ing whether a PoC actually represents a valid bug manifestation is hard. For example, a unit test that directly invokes internal APIs might be an invalid PoC because such APIs are not exposed to users. However, for other bugs, even directly modifying the codebase to trigger them may still be considered reasonable and valid. 
+
+C3: Scalability to large codebases and large numbers of bugs. 
+
+Resolving C2 alone is non-trivial because it requires LLM agents to extensively explore the codebase and available resources. In contin-uous validation settings, this cost is multiplied across large numbers of bug reports, making repeated exploration a major scalability bot-tleneck. As shown in §5.4, agents in Any PoC must repeatedly carry out common setup steps, such as rebuilding the system with specific sanitizers, across many PoC generation attempts. The knowledge needed for these steps may be project-specific, bug-class-specific, or even unique to an individual bug. However, hard-coding such knowledge would sacrifice generality. Thus, an important challenge is to design a system that enables LLM agents to automatically ac-quire and reuse knowledge across tasks while remaining general and avoiding manually encoded rules. 
+
+## 4 Approach 
+
+To address the challenges and satisfy the design requirements in §3, we design Any PoC to be a universal multi-agent framework that turns automated proof-of-concept (PoC) generation into a reliable oracle for validating textual bug reports. Figure 2 illustrates the overview of Any PoC. We decompose the PoC generation task into three dedicated agents — analyzer , generator , and checker . Start-ing with bug reports generated by any given bug detection tool, the analyzer agent first statically examines the report to filter out clearly invalid ones and summarizes the findings. Then, the genera-tor agent attempts to iteratively produce a PoC to trigger the bug. The generator agent passes the generated PoC and execution evi-dence to the checker agent. Finally, the checker agent independently re-executes the generated PoC and verifies whether the execution evidence proves the bug’s existence. As shown in Figure 2, the gen-erator agent has access to a self-evolving knowledge base (KB) that accumulates reusable knowledge across PoC generation attempts. A knowledge extractor agent distills useful knowledge from the 
+
+generator ’s trajectory and a knowledge filter agent validates such knowledge before it is committed to the KB. Any future generator 
+
+can leverage prior experience, avoiding redundant exploration. All agents are equipped with a common set of tools, including an editor, search utilities, and bash execution. 
+
+## 4.1 Bug Analysis 
+
+When presented with a candidate bug report, Any PoC first con-ducts a thorough analysis before attempting PoC generation. False bug reports might contain factual errors, such as incomplete analy-sis of the code, wrong assumptions about the system behavior, or overstated consequences. While these errors can possibly be discov-ered during the PoC generation process, making analysis a separate step has several advantages: (1) it can quickly filter out some false reports without needing to go through the more costly PoC genera-tion process; (2) conducting the detailed analysis requires extensive Any PoC : Universal Proof-of-Concept Test Generation for Scalable LLM-Based Bug Detection buggy():                                               
+
+> Line 1221 has an integer overflow that might cause OOB array access.
+> buggy():
+> Line 1221 has an integer overflow that might cause OOB array access.
+> buggy():
+> Line 1221 has an integer overflow that might cause OOB array access.
+> foo(x)
+> ⤷bar(y)
+> ⤷buggy(z)
+> z++;
+> ⤷Overflow
+> arr[z];
+> ⤷OOB Read
+> // poc.c
+> in =gen () ;
+> foo (in );
+> ❯CFLAGS=…
+> ❯clang poc.c
+> ❯./poc
+> Error: Invalid input to foo()
+> == ASan :heap-buffer-overflow
+> #0 0xd5ce in buggy …#1 0x141f in bar …#2 0xdc2c in foo …
+
+Codebase Access Execution Environment                
+
+> // poc.c
+> in =gen () ;
+> check (in );
+> foo (in );
+> #ASan Build
+> Use flag to disable xxx
+> #foo Input
+> Call check() before foo
+> ✗UBSan
+> ✓ASan
+> ✓
+
+Reachability  
+
+> ✓
+
+Consequence  
+
+> ✓
+
+Oracle Iteratively construct the PoC  
+
+> Feedback Execution
+
+Re-Execute Collect Evidence Feasibility Check 
+
+Analyzer Generator Checker 
+
+Knowledge Base Load Existing Create New      
+
+> Extractor Filter Trajectory Knowledge
+> Report+PoC
+> ✓Repair
+> ✓Test
+> ✓Assess
+> §
+
+4.1 §4.2 
+
+> §4.4 §4.3
+
+Figure 2: Overview of the Any PoC framework. 
+
+exploration, taking up a large portion of the limited context window. By separating the task, the subsequent generator can focus on the challenging task of PoC generation and benefit from a summary of the analysis results. Figure 3 shows an example trajectory of the analyzer agent. Sim-ilar to all figures showing trajectories in the rest of this section, the grey box represents agent thinking or reasoning; the purple box represents tool invocation; and the yellow box represents en-vironment feedback. As shown in the figure, the analyzer agent is given the bug report and asked to understand the bug mecha-nism, including the root cause, consequence, and required oracle to demonstrate the bug manifestation. The analyzer then determines the validity of the bug report based on all the collected context information and its reasoning about the bug mechanism. The ex-ample in Figure 3 is a false bug report for Wasmtime [ 7] claiming a call to ptr::copy_nonoverlapping(src, dst, size) with a nullptr 
+
+and size being zero is undefined behavior (UB) in Rust. The ana-lyzer agent first examined the codebase to confirm the presence of such a call with the claimed parameters. Then, while verifying the claimed UB consequence, the agent fetched two versions of Rust documentation using the web search tool. The analyzer agent noticed a discrepancy between two versions and realized that the semantics of the suspected function have changed. Finally, the an-alyzer confirmed the semantic change and correctly rejected this false report. This example shows that the analyzer agent is capable of conducting thorough analysis and fact-checking, significantly reducing the burden on the subsequent PoC generation, both by filtering out false reports and by potentially saving context-window space needed for such checking. 
+
+## 4.2 PoC Generation 
+
+If the bug report passes the analysis step, Any PoC then spawns a generator agent to produce a PoC for the candidate bug. We design the generation to include two main phases. During each phase, the agent can freely think and interact with the environment before Given a bug report, your job is to determine if it is a real bug or a false positive. 1. Look for evidence by exploring the codebase. 2. If valid, verify the claimed consequence and oracle information. 3. Summarize key files/functions, reasoning, root cause, and context...                                          
+
+> {Report: report_for_wasmtime_nullptr} ...
+> <think> <Read> backend.rs ... <think> <Grep> allocate ... ...
+> <think> <Read> PtrLen implement ... <think> <WebSearch> copy_... NULL ...
+> <think> <WebFetch> Rust Doc ... <think> <WebFetch> rustlang 1.49.0 ...
+> <think> <WebFetch> PR #131384 ... <think> <Bash> rustc --version ...
+> <think> <Read> compiled_blob ... ...
+> <think> No longer UB. Outdated. #Verdict: False Positive Report
+
+Figure 3: Example trajectory of the bug analysis agent. 
+
+finally deciding to stop. This design ensures the agent can focus on one important aspect of the task at a time. Figure 4 illustrates the workflow of a generator agent. In the prompt, we provide three pieces of contextual information: (1) the summary of the bug mechanism from the analyzer agent; (2) the bug report itself; (3) a snapshot of the knowledge base, which will be detailed later in §4.4. In Phase 1, the generator agent is asked to experiment with PoC generation and iterate on the PoC until it successfully triggers the bug. In the example, the agent explores the codebase, writes a PoC program, and uses valgrind [ 39 ] and gdb [53 ] to perform multiple rounds of debugging. The generator is instructed to extract a minimal PoC into a separate directory after the PoC can trigger the bug. Although a faithful agent should already have executed the PoC at this time, we do observe cases where the agent fails to execute the PoC correctly and finishes prematurely. To mitigate reward hacking and hallucination, we enter Phase 2 and send another prompt asking the agent to execute the generated PoC again and collect execution traces into a dedicated evidence directory. As shown in Figure 4, the generator carefully re-executes the final PoC and saves logs at the dedicated evidence directory. After this phase, the generator agent Zhao et al. Analyzer verified the bug is valid and provides the following context:                                                                                                
+
+> {Report: report_for_dss_seek} {Analyzer Summary} {Knowledge Base}
+> Experiment first and iterate on the PoC until it triggers the bug... If the bug is invalid or PoC is impossible, write IMPOSSIBLE.md and exit....
+> Phase 1
+> <think> <Read> mss4.c ... <think> <Write> create_dss.py ...
+> <think> <Bash> ./configure && make ... <think> <Bash> gdb -batch -ex ...
+> <think> <Bash> valgrind -ss 10 ... <think> <Write> bug_trigger.py ...
+> <think> <Bash> valgrind --track ... ...
+> Re-execute the final PoC and collect execution evidence at evidence/ ... Phase 2
+> <think> <Bash> ls -la poc/ ... <think> <Bash> python mts2.py ...
+> <think> <Bash> ffmpeg -i mts2.avi ... <think> <Bash> gdb -batch -ex ...
+> <think> <Bash> valgrind ffmpeg ... ...
+> <think> 11 uninit errors confirmed. #Status: Completed ✔
+
+Figure 4: Example trajectory of the PoC generator agent. 
+
+finishes preparing all the necessary artifacts for the subsequent validation step. During both Phase 1 and Phase 2, we instruct the agent to give up on the task if it thinks the bug report is invalid, or PoC generation is impossible under the current environment. If the generator agent gives up, it will output a short explanation and we will discard the bug report without further processing. 
+
+## 4.3 PoC Validation 
+
+A generated PoC alone is not sufficient to confirm a bug: the gener-ator agent may hallucinate execution results, produce a PoC that only appears to trigger the bug, or collect misleading evidence. Even if the execution triggers the bug, the PoC may rely on unrealistic assumptions or require an impractical setup, making it less useful for developers. For example, the generator agent might need to set unrealistic flags for the PoC to trigger the bug. To guard against these failure modes, Any PoC employs a separate evidence checker agent that independently re-executes and validates the PoC in a fresh environment. Crucially, the checker operates without access to the generator’s context window, ensuring that its judgment is not biased by the generator’s reasoning. Figure 5 shows the prompt and an example workflow for the evidence checker agent. The validation process is composed of three phases. In Phase 1, the checker agent is given the bug report with the PoC artifacts and the execution evidence produced by the generator agent. The checker is instructed to summarize what signals should be observed during the reproduction as an indication of the bug manifestation. The signal can be any observable output such as a sanitizer crash or the difference between two execution traces. In Figure 5, the bug report is about truncating a 64-bit number to a 32-bit number, thus potentially causing overflow. The checker reads the PoC and execution logs and determines the signal for this bug would be an Undefined Behavior Sanitizer error. Then, in Phase 2, the checker agent is asked to copy the PoC artifacts into a fresh workspace, independently re-execute the PoC, and collect new execution traces. The checker in the example executes the PoC in several different settings, but fails to observe any expected signal. Finally, in Phase 3, we ask the checker to check whether the new traces contain the expected signal and thus determine whether the Read the PoC artifacts and provided evidence ...                                                                                                           
+
+> {Report: report_for_fts3_nSize}
+> {Evidence Directory} {PoC Directory}
+> Summarize the evidence and signals to watch for in reproduction...
+> Phase 1
+> <think> <Bash> ls -la poc/ evidence/ ... <think> <Grep> nSize, nReq types ...
+> <think> <Read> poc.c +logs ... <think> <Grep> DEBUG.*fts3 ...
+> <think> <Read> sqlite3.c ... ...
+> Attempt to reproduce the PoC independently. Execute and collect evidence ... Report whether the reproduction succeeded or failed...
+> Phase 2
+> <think> <TodoWrite> Verify the bug... ... <think> <Bash> timeout 540 ./repro2 ...
+> <think> <Grep> MAX_ALLOC_SIZE ... <think> <Bash> clang -D...=3GB ...
+> <think> <Bash> ./poc_original ... ...
+> Evaluate if the PoC represents operations accessible by real users... Trust your own results. Determine the final status: Passed /InvalidEvidence /...
+> Phase 3
+> <think> <Read> run7.log ... <think> <Grep> Fts3UpdateMethod ...
+> <think> <Bash> tail -10 b11dda9.output ... ...
+> <think> Bug not unreachable. #Status: InvalidEvidence
+
+Figure 5: Example trajectory of the evidence checker agent. 
+
+PoC successfully triggers the bug. We explicitly instruct the checker to trust its own execution results over any evidence claimed by the generator. Here, since the checker could not trigger the bug in Phase 2, it carefully checks the execution logs and finally concludes the PoC as invalid. Beyond confirming the traces, we also ask the checker to evalu-ate whether the PoC represents a realistic scenario that real users or attackers could trigger through normal operations. This filters out PoCs that rely on unrealistic assumptions or impractical se-tups. Finally, if the checker agent determines that the PoC is valid, 
+
+Any PoC will output the bug report, the PoC artifacts, and the exe-cution evidence as the final output for human review. 
+
+## 4.4 Self-Evolving Knowledge Base 
+
+To allow the generator agent to effectively generate complex PoCs in large codebases like Firefox and Chromium, we also build a self-evolving knowledge base (KB) that accumulates reusable knowledge across PoC generation attempts. With the help of the knowledge base, the generator agent does not need to repeatedly explore the codebase to understand project-specific tools and caveats. 
+
+Structure. The knowledge base is a directory-based structure where each project has its own subdirectory, and each knowledge category also has its own subdirectory within the project subdi-rectory. Each knowledge entry is stored as a Markdown file in the corresponding category subdirectory. Each knowledge entry has four key properties: (1) core content, (2) keywords, (3) usefulness rating, (4) version number. The core content and keywords are the content of a Markdown file, where we do not enforce a specific format to allow for flexibility. The usefulness rating is a score from -10 to 10 that indicates how useful the entry is for PoC generation. Each generator can provide a rating for any knowledge item. We keep all the historical ratings for each item so that future generators can better judge which knowledge item to use. The version number is used to track the evolution of the entry. Any PoC : Universal Proof-of-Concept Test Generation for Scalable LLM-Based Bug Detection Knowledge Base Snapshot                                                                               
+
+> #Shared Knowledge
+> ## command_line_tools/ [keywords: debugging, sanitizer...] -addr2line Pie Offset [avg. rating: 7.3]
+> #Project Knowledge (firefox)
+> ## build/ [keywords: webauthn, macos, moz.build...] -Spidermonkey Debug Build [avg. rating: 7.0]
+> ## internal_tools/ [keywords: headless, marionette...] -Marionette Headless Debug [avg. rating: 7.2]
+> ## test_frameworks/ [keywords: crashtest, moz.build...] -Mochitest HTML [avg. rating: 8.4]
+> ## code/ [keywords: garbage collection, nursery...] -GC Nursery Allocation [avg. rating: 5.8]
+> ## poc_formats/ [keywords: http.server, jsapi-tests...] -Multi Origin iframe [avg. rating: 5.4]
+> IMPORTANT: Rate each knowledge file after reading via rate_knowledge: -10 (misleading) to 10 (helpful).
+
+Figure 6: An example knowledge base snapshot. 
+
+From our empirical experience during bug finding, we design a few high-level knowledge categories that are most useful for PoC generation. Namely, the categories include Command Line Tools ,
+
+Build System , Internal Tools , Test Frameworks , Code , and PoC Format .Figure 6 shows an example snapshot of a knowledge base. The 
+
+Command Line Tools category is shared across different projects, while the other categories are project-specific. The Build System ,
+
+Internal Tools , Test Frameworks categories contain knowledge about project-specific tooling. The Code category is used to save under-standing of code pieces that are heavily reused in the codebase. The 
+
+PoC Format category directly keeps the possible types of PoCs. 
+
+Snapshot and Usage. As mentioned earlier in §4.2, the generator agent is given information about the current knowledge base. We provide a succinct snapshot of KB with top-rated knowledge items in each category, together with their average historical ratings and keywords. Figure 6 shows an example snapshot of the knowledge base. The snapshot shows one example knowledge item title for each category. We also provide instructions for the generator to explore and search the KB content directories to find the content Markdown files. To help future PoC generation, the agent is also explicitly instructed to provide a new rating for each knowledge item it accessed. 
+
+Extraction and Evolution. By default, Any PoC starts working on a project with an empty initial knowledge base. It builds up and evolves the knowledge base on the fly during PoC generation. After each PoC generation attempt, regardless of succeeding or failing, we task a knowledge extractor agent to examine the generator’s trajectory. The extractor is given a short and index-based represen-tation of the trajectory, together with tools to inspect the details of each step on demand. If the extractor notices reusable knowledge from the trajectory, we instruct the extractor to either create new knowledge, or update existing knowledge. This makes sure that if a knowledge item is incorrect or incomplete, the self-evolving knowl-edge base has a chance to fix or improve it. Both new knowledge creation and updates are implemented as custom tools. 
+
+Filtering. During our implementation, we found that current fron-tier models tend to report knowledge that is too specific to the particular bug they are working on, which is less reusable for future PoC generation. Plus, the extractor sometimes places knowledge entries in the wrong categories, making them hard to be found and used later. To counter these issues, we introduce another simple filter agent. Whenever the extractor agent reports a knowledge item, the filter agent is invoked to determine if the knowledge is reusable and if it is categorized correctly. If the filter agent notices problems with the item, it will provide feedback to the extractor agent, and the extractor agent can choose to report again with updated content or give up on this piece of knowledge. 
+
+## 5 Evaluation 
+
+To evaluate the effectiveness of Any PoC, we answer the following research questions: 
+
+• RQ1: Can Any PoC satisfy the generality requirements (§3) and support heterogeneous systems, bugs, and PoC types? 
+
+• RQ2: How effective is Any PoC in being used as a validation oracle for LLM-based bug detection? 
+
+• RQ3: How does each component in Any PoC contribute to its effectiveness? We will first illustrate the experimental setup in §5.1. Then we answer RQ1 in §5.2, and compare Any PoC with baselines in §5.3. Finally, we will study the effectiveness of each component in §5.4. 
+
+## 5.1 Experimental Setup 
+
+Bug Reporter. As PoC generation approaches (both Any PoC and baselines) require a bug report as input, we implement a basic agentic bug reporter following the recent KNighter work [ 62 ] in our evaluation. We refer to it as LLM-Reporter and use it across Any PoC and baselines for a fair comparison. The reporter uses historical bug-fixing commits as bug patterns to find additional bugs. It first selects commits within a time window, then iteratively constructs patterns from the commits. For each pattern, the reporter searches for similar buggy code in the codebase and generates candidate bug reports. We acknowledge that there is space to improve the bug reporter to generate more candidate reports, but it is orthogonal to the effectiveness of Any PoC. In our evaluation, we found that 
+
+LLM-Reporter produces a sufficient number of true bugs to study the effectiveness of Any PoC. We leave it as part of future work to further improve the bug reporter. 
+
+Systems Under Test (SUTs). We evaluate Any PoC on real-world and large-scale systems. We select 12 software across different domains that are widely used by billions of users across the world. The systems are listed in Table 3. Nine of these systems have over 10K stars on GitHub and six of the systems have over one million lines of code. The selected systems have also been widely studied by earlier software testing and analysis work [14, 23, 29, 37, 58]. 
+
+Bug Finding Setup. To find new bugs in each system and demon-strate Any PoC’s effectiveness, we first run LLM-Reporter to gener-ate candidate bug reports. We ask the reporter to use time windows ranging from 6 months to 2 years for different systems based on their historical bug-fixing activity. Then we run Any PoC on each candidate bug report to validate it. Any PoC can support arbitrary agent scaffolds, and we select two representative agents: Claude Code [ 3] and Codex [ 43 ], and couple them with a mixture of models, including Claude Sonnet 4.5 & 4.6, Opus 4.5 & 4.6, and GPT-5.3-Codex. Agents can use the default tools of the scaffolds, such as editor, search, web search, and bash execution. We only restrict the Zhao et al. 
+
+Table 2: Systems under test in our bug finding campaign.                                                     
+
+> Project Language LoC Stars Domain
+> Chromium C++, JavaScript 23M 23.2K Browser, Javascript Runtime Firefox C++, JavaScript 18.9M 11.6K Browser, Javascript Runtime LLVM C, C++ 9.9M 23K Compiler Hermes C, C++, JavaScript 3.9M 10.8K Javascript Runtime OpenSSL C3.5M 29.8K Cryptography FFmpeg C1.3M 58.1K Multimedia Wasmtime Rust 520K 17.8K WebAssembly Runtime Redis C241K 73.5K Distributed Database SQLite C156K 9.2K Database FreeType C140K 784 Font Library QuickJS C94K 2.8K Javascript Runtime Memcached C60K 14.1K Distributed Database
+
+Table 3: New bugs detected by Any PoC. 
+
+Project Total Confirmed Fixed Test Pending 
+
+Firefox 32 32 23 16 –OpenSSL 17 16 11 5 1LLVM 11 4 4 4 7Chromium 9 6 4 3 3FreeType 9 9 9 – –SQLite 9 8 8 2 1Wasmtime 9 9 8 7 –FFmpeg 8 8 8 – –Redis 6 6 4 4 –QuickJS 5 5 5 3 –Memcached 4 1 1 – 3Hermes 3 1 1 1 2
+
+Total 122 105 86 45 17 
+
+use of interactive tools, such as AskUserQuestion in Claude Code, to enable autonomous validation. We construct the Docker image for each system, including the source code and a built binary. 
+
+Baselines. Given the diverse types of large-scale systems Any PoC can handle, there are no existing dedicated PoC generation tools that can support such heterogeneous settings. Thus, we choose the state-of-the-art general-purpose LLM coding agents as baselines: Claude Code [ 3 ] with Opus 4.5 and Codex [ 43 ] with GPT-5.2-Codex. To ensure a fair comparison, we evaluate two variants of Any PoC, each with the same agent scaffold and model as the baseline. Namely, 
+
+Any PoC Claude for comparison with Claude Code, and Any PoC Codex 
+
+for Codex. All agents are given the same bug reports and task descriptions, and run in the same Docker environments. 
+
+## 5.2 Generality and Practicality 
+
+Table 3 shows the bugs Any PoC detected. To date, Any PoC has detected 122 new bugs across all 12 systems. 105 bugs are confirmed by developers, 86 are fixed, and the rest are still pending. In addition, 45 generated PoCs have been adopted as official regression tests. 
+
+System Generality. We observe that Any PoC is effective across all SUTs, implemented in diverse languages such as C, C++, Rust, and JavaScript (Table 2). Note that we do not need to customize any rules or patterns for each system, and Any PoC does not rely on any specific dependencies to navigate in and interact with the systems. Wrong Behavior (22)                       
+
+> Miscompilation (10)
+> Assert. (9)
+> ICE (7)
+> TC (2)
+> OOB Read (15)
+> Use After Free (6)
+> OOB Write (5)
+> UBI (5)
+> NPD +Panic (17)
+> SO (3)
+> DL (1)
+> Resource Leak (13)
+> Int O/U (7)
+> Logic (41%) Memory Safety (25%) Availability (17%)
+> Leak (11%) Numeric (6%)
+
+Figure 7: Bug type distribution. ICE: internal compiler error, TC: type confusion, NPD: null pointer dereference, SO: stack overflow, DL: deadlock, OOB: out-of-bounds, UBI: use-before-initialization, Int O/U: integer over/underflow, Assert.: assertion failure. This flexibility even allows Any PoC to automatically find bugs in domain-specific languages (DSL). For example, LLVM uses a DSL called TableGen [ 34 ]. Within the NVIDIA backend’s instruction def-initions expressed in this DSL, Any PoC identified a sign-inversion bug that leads to silent miscompilation of sitofp in any SM90+ (Hopper) kernel that converts a 1-bit integer to bfloat . Existing works that rely on specific parsers or static analyzers would struggle to find such bugs. 
+
+Bug Type Generality. Figure 7 shows the type distribution of the bugs detected by Any PoC. Any PoC can automatically handle diverse kinds of bugs, spanning logic errors, robustness issues, and security vulnerabilities. Any PoC finds many logic errors that are overlooked by existing tools and developers. For example, Any PoC discovers a spec-compliance bug in Firefox’s JavaScript engine SpiderMonkey [ 38 ] for the Await feature. During the fix, Firefox developers noticed that this behavior is never tested by the official specification test suite. Without overly focusing on security-only issues, Any PoC shows great potential in upholding general software quality. At the same time, Any PoC is also able to find many memory safety issues and security vulnerabilities. For example, Any PoC detects a use-before-initialization bug in Firefox’s support for SVG fonts. This vulnerability was fixed within one day and later assigned a CVE number CVE-2026-2806. 
+
+PoC Format Generality. Any PoC can generate PoCs in various formats. Given 12 different systems, the ways to interact with them and the ways bugs manifest are vastly different. Figure 8 shows a bug detected by Any PoC in Firefox’s JavaScript JIT engine. The bug occurs when a string operand used with a unary operator is converted to a number by the JIT compiler. This bug causes the op-timized machine code to always fail, forcing execution to fall back to the slower interpreter. This silent miscompilation does not raise any error or produce any incorrect results. Any PoC automatically generates a compact performance test that proves the bug through execution-time measurements, as shown on the left of Figure 8. This enables developers to identify and fix the issue quickly, without manually inspecting JIT-generated machine code, as illustrated on Any PoC : Universal Proof-of-Concept Test Generation for Scalable LLM-Based Bug Detection + int32_t unused ;                                          
+
+> +if (! GetInt32FromStringPure (cx_ ,
+> +val_ .toString (), &unused ))
+> +{
+> +return AttachDecision :: NoAction ;
+> +}
+> var N =200000 ;
+> for (var i =0;i<N;i++ ){
+> result_buggy = -" 2147483648 "; }
+> for (var i =0;i<N;i++ ){
+> result_good = -" 42 "; }
+> Buggy case (-"2147483648"): 165 ms Good case (-"42"): 5 ms Slowdown ratio: 31.1x
+> ✓PoC
+> ✓Evidence
+> ✓Fix
+> cmp $0x1FFF6, % r11d
+> # is input a string?
+> ...
+> jz call_parse
+> # no -> call VM to parse
+> ...
+> call_parse :
+> call StringToInt32
+> # VM call: try to parse string as int32 # "2147483648" > INT32_MAX # ALWAYS FAILS
+> test $0xFF, % dl
+> # did conversion succeed?
+> ...
+> jmp ic_miss
+> # ALWAYS BAILS OUT HERE
+> ...
+> ic_miss :
+> movq 0x10 (% rdi ), % rdi
+> jmpq (% rdi )
+> # slow path every time
+> !JIT-Generated Machine Code
+
+Figure 8: Bug example in Firefox’s JavaScript JIT engine. Table 4: Comparison of Any PoC against baseline agents. 
+
+True Reports False Reports 
+
+Agent Model ⊥ Inv. Val. ⊥ Inv. Val. Cost 
+
+Gold — 0 0 48 96 0 0 —Claude Code Opus 4.5 0 22 26 2 94 0 $2.71 Codex GPT-5.2-Codex 2 22 24 16 80 0 $1.53 
+
+Any PoC Claude Opus 4.5 9 1 38 84 12 0 $6.47 
+
+Any PoC Codex GPT-5.2-Codex 23 0 25 92 4 0 $3.18 
+
+the right of Figure 8. Without depending on specific format require-ments, Any PoC can automatically identify the most appropriate PoC format for different bugs. 
+
+Developer Feedback. During our bug-finding process, we received extensive positive feedback from developers. For example, Firefox maintainers reached out to learn about Any PoC and commented: 
+
+“Thank you for reporting all these correctness bugs in SpiderMonkey! High quality bug reports and we noticed many great findings :)” 
+
+Wasmtime maintainers expressed interest in potentially applying 
+
+Any PoC in the CI pipeline and noted: 
+
+“Thanks for a really high quality bug report! . . . plus the nice regression test . . . ” 
+
+The maintainers of FreeType suggest running Any PoC on un-fuzzed code paths to find additional interesting bugs not covered by fuzzing. This highlights the potential of Any PoC as a complement to fuzzing thanks to its ability to easily cover more code paths. For several bugs in OpenSSL, developers explicitly requested that the PoC generated by Any PoC be added as a regression test. 
+
+## 5.3 Validation Effectiveness 
+
+As described in §2 and §3, a key challenge of using PoC test gen-eration is to correctly reject invalid reports while still generating valid PoCs for true bug reports. 
+
+Setup. Existing datasets commonly used for PoC generation task [ 30 ,58 , 65 ] are not sufficient for two reasons. First, existing datasets only contain true bugs and therefore cannot fully evaluate the effective-ness of Any PoC. Second, existing datasets are usually restricted to specific types of bugs or PoC formats, so they are insufficient to eval-uate the generality of Any PoC. To overcome the above challenges, we use both true and false reports generated by LLM-Reporter to construct a dataset of reports covering diverse bug types over com-plex systems. We construct the dataset with reports generated by 
+
+LLM-Reporter during the bug finding campaign with a cutoff time of 2026-02-10. By that time, LLM-Reporter generated 1214 reports covering 7 of the selected SUTs (Chromium, Firefox, OpenSSL, FFm-peg, SQLite, Wasmtime, Redis). We manually inspected the reports and include all 48 true bug reports from these reports. Due to the cost limit, we cannot evaluate on all the false reports. Instead, we randomly sampled twice as many false reports as true reports. In total, this dataset contains 144 bug reports with 48 true reports and 96 false reports. We evaluate the two variants of Any PoC and baseline agents on this dataset. For each bug report, we ask the agent to generate a valid PoC or report impossible otherwise. For each generated PoC, we manually verify its validity. We require the PoC to trigger the bug by interacting with the corresponding system and to show concrete evidence, such as a sanitizer crash or a difference between two execution traces. We mark PoCs as invalid for the following scenarios: (1) the PoC is a standalone program that only mimics the SUT behavior without actually exercising the buggy code paths; (2) the PoC invokes the SUT’s internal APIs, relies on invalid input data, or requires unrealistic setup, whereas the bug can be triggered through normal interaction with public interfaces instead; (3) the PoC encounters execution errors that are not related to the bug. 
+
+Results. Table 4 shows the comparison results. The Gold row shows ground truth values. For the True Reports column, Any PoC Claude 
+
+is able to generate 46% more valid PoCs than the vanilla Claude Code, while Any PoC Codex also outperforms the vanilla Codex. No-tably, both Any PoC Claude and Any PoC Codex produce near-zero invalid PoCs, whereas about half of plausible PoCs generated by baseline agents are non-functional or invalid PoCs. For the False Reports columns, vanilla Claude Code and Codex almost always claim to have successfully generated PoCs for the false bug reports. They fail to reject 98% and 83% of the false bug reports, respectively. This high invalid rate indicates that vanilla agents tend to game the task by generating only plausible PoCs that do not provide any concrete evidence of the bug. On the contrary, Any PoC Claude and Any PoC Codex 
+
+can correctly reject significantly more false bug reports, generating 7.8 × and 20.0 × fewer false positive PoCs, respectively. The low invalid rate of Any PoC shows its potential in being used as a scal-able and reliable validation oracle for LLM-based bug detection. This result highlights that vanilla agents cannot serve as a reliable validation oracle, as they provide little additional value beyond static bug reports. This is also consistent with Anthropic’s recent findings that generating exploits is substantially more challenging than identifying bugs for modern LLMs [5]. According to Table 4, Any PoC incurs higher costs than baseline agents because producing a valid PoC typically requires substan-tially more codebase exploration, along with multiple rounds of debugging and refinement. In contrast, baseline agents often gener-ate nonfunctional PoCs, such as isolated toy examples or merely restating the suspected vulnerable code. As a result, their task is Zhao et al. (a) Usage Count Distribution        
+
+> 0
+> 8
+> 16
+> 24
+> 32
+> 40 36
+> 1
+> 20
+> 2
+> 10
+> 3
+> 9
+> 4
+> 3
+> 5
+> 5
+> 6
+> 3
+> 7
+> 1
+> 8
+> 2
+> 9
+> 2
+> 10 11
+> 1
+> 12
+> Number of Uses
+> # of  Knowledge  Items
+> (b) Average Rating Distribution
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> 1
+> 0
+> 4
+> 1
+> 6
+> 2
+> 4
+> 3
+> 5
+> 4
+> 10
+> 5
+> 9
+> 6
+> 22
+> 7
+> 18
+> 8
+> 12
+> 9
+> Average Rating
+
+Figure 9: Knowledge usage counts and average ratings. 
+
+inherently easier and requires fewer tokens. In fact, without the systematic re-execution and evidence checking implemented in 
+
+Any PoC, simply allocating more computation to baseline agents does not naively lead to better outcomes. Furthermore, developer time also needs to be considered. Baseline agents produce many more invalid PoCs, where each one requires nontrivial triage ef-fort from developers. This downstream cost easily outweighs the additional token consumption of Any PoC. To avoid potentially overfitting to LLM-generated bug reports, we further collect bug reports raised by real users but rejected by the developers. We collected the 5 latest bug reports for each system in our earlier dataset, totaling 35 reports. On this set, Claude Code and Codex fail to reject almost all reports (97% and 86%, respectively). Any PoC Codex correctly rejects all these false reports, while Any PoC Claude only misses 1 report. These results align with the main results and further show the effectiveness of Any PoC as a validation oracle. In summary, our evaluation shows that Any PoC correctly rejects invalid bug reports while generating high-quality valid PoCs for true bug reports. This result proves the effectiveness of Any PoC as a validation oracle for scalable end-to-end automated LLM-based bug detection. 
+
+## 5.4 Ablation Study 
+
+We study the contribution of each component described in §4. Due to resource limit, we study the best performing variant Any PoC Claude 
+
+in this ablation study. 
+
+Agents We study the effectiveness of the three main agents by counting the ratio of false reports each rejects in §5.3. For the False Reports columns in Table 4, Any PoC Claude rejected 84 false reports. First, the analyzer agent rejects 12 (14.3%) reports after statically analyzing the source code and deciding that these bug reports are not valid. Then the generator agent handles the rest of bug reports. After more dynamic analysis, the generator agent rejects 57 (67.9%) false reports. This shows that the generator is crucial when rejecting complex false bugs after dynamic execution. Finally, the checker agent further rejects 15 (17.8%) of the false reports after scrutinizing the PoCs and execution traces. Each component rejects a significant amount of false reports, contributing to the overall effectiveness. 
+
+Knowledge Base. We also evaluate the contribution of the self-evolving knowledge base (KB). We first compare Any PoC’s perfor-mance with and without it. Due to resource limitations, we rerun the Any PoC Claude variant with and without KB only on the 48 valid bug reports for this study, since invalid reports normally do not reach the generator agent and KB usage. Similarly, since the ana-lyzer agent also does not utilize KB and can introduce noise, we rerun PoC generation for these 48 bug reports with the analyzer disabled. Our evaluation found that Any PoC can generate 39 PoCs with KB, but only 36 PoCs without KB, showing an 8.3% improve-ment. We further collect the usage statistics of the knowledge base. Figure 9 shows the distribution of knowledge item usage counts and average ratings across 92 knowledge items (266 total times used). Across 48 PoC generations, each generation on average used 2.9 knowledge items with a median of 2.0. The average rating of the knowledge items is 6.3 with a median of 7.0. This indicates that the generator agent does take advantage of the accumulated knowledge and believes they are useful in generating PoCs. We also found that the top 5 most-used knowledge items are related to recurring tasks, such as setting up sanitizers and debugging tools, and using the SUT’s testing framework. The 92 knowledge items together underwent 64 version updates. On average, each version update increases the average rating by 0.56 compared to the pre-vious version. This demonstrates that Any PoC can continuously improve the quality of the knowledge base while generating PoCs on the fly. 
+
+## 6 Threats to Validity 
+
+Internal. One threat to validity is that agents, either baseline or 
+
+Any PoC, might cheat the evaluation in §5.3 by accessing online resources that contain working PoCs or related discussion. We cannot disable network access because many complex PoC gen-eration tasks indeed require access to online resources, such as documentation or additional dependencies. To mitigate this, we first use LLMs to search for evidence of cheating behaviors in the trajectories. Furthermore, two of the authors manually checked all trajectories and did not find any cheating. We acknowledge that this is not a perfect solution. For example, the agents may still hide the cheating behavior within a complex script. However, we believe our mitigation is effective enough to reduce the risk of cheating and thus ensure the validity of the evaluation. Also, this threat does not affect the main evaluation in §5.2 since there are no existing PoCs at the time we discover those bugs. 
+
+External. The main external threat to our claims of generality lies in the target systems that we apply Any PoC on. These sys-tems might not be representative of the entire software ecosystem. To mitigate this, we specifically include mature industrial soft-ware systems that exercise common software engineering practices. These systems are heavily reviewed, tested, and fuzzed. They span many different programming languages and domains. The systems have also been extensively used in software testing and analysis work [ 14 , 23 , 29 , 37 , 58 ]. We believe our mitigation is sufficient to demonstrate the generality of Any PoC. 
+
+## 7 Conclusion 
+
+We presented Any PoC, a universal PoC generation framework that can serve as a scalable validator for LLM-based bug detection. We conducted extensive experiments on real-world software systems to demonstrate the effectiveness of Any PoC. Across 12 large-scale, critical software systems (many with millions of lines of code), 
+
+Any PoC detected 122 new bugs/vulnerabilities, with 105 already confirmed by developers and 86 fixed. 45 PoCs have also been adopted as official regression tests. Any PoC : Universal Proof-of-Concept Test Generation for Scalable LLM-Based Bug Detection 
+
+## References 
+
+[1] Toufique Ahmed, Jatin Ganhotra, Rangeet Pan, Avraham Shinnar, Saurabh Sinha, and Martin Hirzel. 2025. Otter: Generating Tests from Issues to Validate SWE Patches. In Forty-second International Conference on Machine Learning . https: //openreview.net/forum?id=b0jYs6JOZu [2] Anthropic. 2025. Automated Security Reviews in Claude Code. Claude Help Center. https://support.claude.com/en/articles/11932705-automated-security-reviews-in-claude-code [3] Anthropic. 2025. Claude Code. https://github.com/anthropics/claude-code. [4] Anthropic. 2026. Code Review - Claude Code Docs. https://code.claude.com/ docs/en/code-review [5] Anthropic. 2026. Partnering with Mozilla to improve Firefox’s security. https: //www.anthropic.com/news/mozilla-firefox-security. [6] Abhishek Arya, Oliver Chang, Jonathan Metzman, Kostya Serebryany, and Dongge Liu. 2016. OSS-Fuzz. https://github.com/google/oss-fuzz. https: //github.com/google/oss-fuzz [7] Bytecode Alliance. 2026. Wasmtime: A lightweight WebAssembly runtime that is fast, secure, and standards-compliant. https://github.com/bytecodealliance/ wasmtime. [8] Longfei Chen, Ruibin Yan, Taiyu Wong, Yiyang Chen, and Chao Zhang. 2025. SmartPoC: Generating Executable and Validated PoCs for Smart Contract Bug Reports. arXiv preprint arXiv:2511.12993 (2025). [9] Foundry Contributors. 2026. Foundry: A blazing fast, portable and modular toolkit for Ethereum application development written in Rust. https://github. com/foundry-rs/foundry. [10] Cursor. 2026. Bugbot. https://cursor.com/bugbot. [11] O. J. Dahl, E. W. Dijkstra, and C. A. R. Hoare (Eds.). 1972. Structured programming .Academic Press Ltd., GBR. [12] Leonardo De Moura and Nikolaj Bjørner. 2008. Z3: an efficient SMT solver. In 
+
+Proceedings of the Theory and Practice of Software, 14th International Conference on Tools and Algorithms for the Construction and Analysis of Systems (Budapest, Hungary) (TACAS’08/ETAPS’08) . Springer-Verlag, Berlin, Heidelberg, 337–340. [13] Yinlin Deng, Chunqiu Steven Xia, Haoran Peng, Chenyuan Yang, and Lingming Zhang. 2023. Large language models are zero-shot fuzzers: Fuzzing deep-learning libraries via large language models. In Proceedings of the 32nd ACM SIGSOFT international symposium on software testing and analysis . 423–435. [14] Will Dietz, Peng Li, John Regehr, and Vikram Adve. 2012. Understanding Integer Overflow in C/C++. In Proceedings of the 2012 International Conference on Software Engineering (Zurich, Switzerland) (ICSE 2012) . IEEE Press, Piscataway, NJ, USA, 760–770. http://dl.acm.org/citation.cfm?id=2337223.2337313 [15] Xueying Du, Jiayi Feng, Yi Zou, Wei Xu, Jie Ma, Wei Zhang, Sisi Liu, Xin Peng, and Yiling Lou. 2026. Reducing False Positives in Static Bug Detection with LLMs: An Empirical Study in Industry. arXiv:2601.18844 [cs.SE] https://arxiv. org/abs/2601.18844 [16] Xueying Du, Geng Zheng, Kaixin Wang, Jiayi Feng, Wentai Deng, Mingwei Liu, Bihuan Chen, Xin Peng, Tao Ma, and Yiling Lou. 2024. Vul-rag: Enhanc-ing llm-based vulnerability detection via knowledge-level rag. arXiv preprint arXiv:2406.11147 (2024). [17] Mafalda Ferreira, Miguel Monteiro, Tiago Brito, Miguel E. Coimbra, Nuno Santos, Limin Jia, and José Fragoso Santos. 2024. Efficient Static Vulnerability Analysis for JavaScript with Multiversion Dependency Graphs. Proc. ACM Program. Lang. 
+
+8, PLDI, Article 164 (June 2024), 25 pages. doi:10.1145/3656394 [18] Gordon Fraser and Andrea Arcuri. 2011. Evosuite: automatic test suite generation for object-oriented software. In Proceedings of the 19th ACM SIGSOFT symposium and the 13th European conference on Foundations of software engineering . 416–419. [19] GitHub. 2025. Copilot code review now generally available. GitHub Changelog. https://github.blog/changelog/2025-04-04-copilot-code-review-now-generally-available/ [20] GitHub. 2026. CodeQL. https://codeql.github.com/. [21] Google. 2026. Syzkaller. https://github.com/google/syzkaller/. [22] Jinyao Guo, Chengpeng Wang, Xiangzhe Xu, Zian Su, and Xiangyu Zhang. 2025. RepoAudit: An Autonomous LLM-Agent for Repository-Level Code Auditing. In 
+
+Forty-second International Conference on Machine Learning . https://openreview. net/forum?id=TXcifVbFpG [23] Ahmad Hazimeh, Adrian Herrera, and Mathias Payer. 2020. Magma: A ground-truth fuzzing benchmark. Proceedings of the ACM on Measurement and Analysis of Computing Systems 4, 3 (2020), 1–29. [24] Yuchen Ji, Ting Dai, Zhichao Zhou, Yutian Tang, and Jingzhu He. 2025. Artemis: Toward Accurate Detection of Server-Side Request Forgeries through LLM-Assisted Inter-Procedural Path-Sensitive Taint Analysis. Proceedings of the ACM on Programming Languages 9, OOPSLA1 (2025), 1349–1377. [25] Carlos E. Jimenez, John Yang, Alexander Wettig, Shunyu Yao, Kexin Pei, Ofir Press, and Karthik R. Narasimhan. 2024. SWE-bench: Can Language Models Resolve Real-world Github Issues?. In The Twelfth International Conference on Learning Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024 . OpenRe-view.net. https://openreview.net/forum?id=VTF8yNQM66 [26] René Just, Darioush Jalali, and Michael D. Ernst. 2014. Defects4J: a database of existing faults to enable controlled testing studies for Java programs. In 
+
+Proceedings of the 2014 International Symposium on Software Testing and Analysis 
+
+(San Jose, CA, USA) (ISSTA 2014) . Association for Computing Machinery, New York, NY, USA, 437–440. doi:10.1145/2610384.2628055 [27] Sungmin Kang, Juyeon Yoon, and Shin Yoo. 2023. Large Language Models are Few-Shot Testers: Exploring LLM-Based General Bug Reproduction. In Proceedings of the 45th International Conference on Software Engineering (Melbourne, Victoria, Australia) (ICSE ’23) . IEEE Press, 2312–2323. doi:10.1109/ICSE48619.2023.00194 [28] Jon Kaplan. 2026. Building a better Bugbot. Cursor Blog. https://cursor.com/ blog/building-bugbot [29] George Klees, Andrew Ruef, Benji Cooper, Shiyi Wei, and Michael Hicks. 2018. Evaluating fuzz testing. In Proceedings of the 2018 ACM SIGSAC conference on computer and communications security . 2123–2138. [30] Hwiwon Lee, Ziqi Zhang, Hanxiao Lu, and Lingming Zhang. 2025. SEC-bench: Automated Benchmarking of LLM Agents on Real-World Software Security Tasks. In The Thirty-ninth Annual Conference on Neural Information Processing Systems .https://openreview.net/forum?id=QQhQIqons0 [31] Haonan Li, Yu Hao, Yizhuo Zhai, and Zhiyun Qian. 2024. Enhancing static analysis for practical bug detection: An llm-integrated approach. Proceedings of the ACM on Programming Languages 8, OOPSLA1 (2024), 474–499. [32] Ziyang Li, Saikat Dutta, and Mayur Naik. 2024. IRIS: LLM-assisted static analysis for detecting security vulnerabilities. arXiv preprint arXiv:2405.17238 (2024). [33] LLVM Project. 2026. Clang Static Analyzer. https://clang-analyzer.llvm.org/. [34] LLVM Project. 2026. TableGen Overview. https://llvm.org/docs/TableGen/. [35] Filipe Marques, Mafalda Ferreira, André Nascimento, Miguel E. Coimbra, Nuno Santos, Limin Jia, and José Fragoso Santos. 2025. Automated Exploit Generation for Node.js Packages. Proc. ACM Program. Lang. 9, PLDI, Article 201 (June 2025), 26 pages. doi:10.1145/3729304 [36] Ruijie Meng, Martin Mirchev, Marcel Böhme, and Abhik Roychoudhury. 2024. Large Language Model guided Protocol Fuzzing.. In NDSS .[37] Jonathan Metzman, László Szekeres, Laurent Simon, Read Sprabery, and Ab-hishek Arya. 2021. Fuzzbench: an open fuzzer benchmarking platform and service. In Proceedings of the 29th ACM joint meeting on European software en-gineering conference and symposium on the foundations of software engineering .1393–1403. [38] Mozilla Foundation. 2026. SpiderMonkey JavaScript/WebAssembly Engine. https: //spidermonkey.dev/. [39] Nicholas Nethercote and Julian Seward. 2007. Valgrind: a framework for heavy-weight dynamic binary instrumentation. SIGPLAN Not. 42, 6 (June 2007), 89–100. doi:10.1145/1273442.1250746 [40] Vikram Nitin, Baishakhi Ray, and Roshanak Zilouchian Moghaddam. 2025. FaultLine: Automated Proof-of-Vulnerability Generation Using LLM Agents. arXiv:2507.15241 [cs.SE] https://arxiv.org/abs/2507.15241 [41] Peter W. O’Hearn. 2019. Incorrectness logic. Proc. ACM Program. Lang. 4, POPL, Article 10 (Dec. 2019), 32 pages. doi:10.1145/3371078 [42] OpenAI. 2025. Introducing Aardvark: OpenAI’s agentic security researcher. https://openai.com/index/introducing-aardvark/. [43] OpenAI. 2025. OpenAI Codex CLI. https://github.com/openai/codex. [44] OpenAI. 2026. Codex Security: now in research preview. https://openai.com/ index/codex-security-now-in-research-preview/ [45] Xianfei Ou, Cong Li, Yanyan Jiang, and Chang Xu. 2024. The mutators reloaded: Fuzzing compilers with large language model generated mutation operators. In 
+
+Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 4 . 298–312. [46] Carlos Pacheco and Michael D Ernst. 2007. Randoop: feedback-directed random testing for Java. In Companion to the 22nd ACM SIGPLAN conference on Object-oriented programming systems and applications companion . 815–816. [47] Laura Plein, Wendkûuni C Ouédraogo, Jacques Klein, and Tegawendé F Bissyandé. 2024. Automatic generation of test cases based on bug reports: a feasibility study with large language models. In Proceedings of the 2024 IEEE/ACM 46th International Conference on Software Engineering: Companion Proceedings . 360– 361. [48] Irtaza Sajid Qureshi, Zhen Ming, et al . 2025. Test Case Generation from Bug Reports via Large Language Models: A Cognitive Layered Evaluation Framework. 
+
+arXiv preprint arXiv:2510.05365 (2025). [49] Semgrep. 2026. Semgrep. https://github.com/semgrep/semgrep. [50] Konstantin Serebryany, Derek Bruening, Alexander Potapenko, and Dmitriy Vyukov. 2012. {AddressSanitizer }: A fast address sanity checker. In 2012 USENIX annual technical conference (USENIX ATC 12) . 309–318. [51] Deniz Simsek, Aryaz Eghbali, and Michael Pradel. 2025. PoCGen: Gen-erating Proof-of-Concept Exploits for Vulnerabilities in Npm Packages. arXiv:2506.04962 [cs.CR] https://arxiv.org/abs/2506.04962 [52] Dokyung Song, Julian Lettner, Prabhu Rajasekaran, Yeoul Na, Stijn Volckaert, Per Larsen, and Michael Franz. 2019. SoK: Sanitizing for security. In 2019 IEEE Symposium on Security and Privacy (SP) . IEEE, 1275–1295. [53] Richard Stallman, Roland Pesch, Stan Shebs, et al . 2025. Debugging with GDB: The GNU Source-Level Debugger . Free Software Foundation, Boston, MA. https: //www.gnu.org/software/gdb/documentation/ GDB Version 17.1. Zhao et al. 
+
+[54] Evgeniy Stepanov and Konstantin Serebryany. 2015. MemorySanitizer: fast detector of uninitialized memory use in C++. In 2015 IEEE/ACM International Symposium on Code Generation and Optimization (CGO) . IEEE, 46–55. [55] Big Sleep team. 2024. From Naptime to Big Sleep: Using Large Language Models To Catch Vulnerabilities In Real-World Code. https://googleprojectzero.blogspot. com/2024/10/from-naptime-to-big-sleep.html. [56] Chris Thunes. 2020. javalang: Pure Python Java parser and tools. https://github. com/c2nes/javalang. [57] Claire Wang, Ziyang Li, Saikat Dutta, and Mayur Naik. 2025. QLCoder: A Query Synthesizer For Static Analysis of Security Vulnerabilities. arXiv preprint arXiv:2511.08462 (2025). [58] Zhun Wang, Tianneng Shi, Jingxuan He, Matthew Cai, Jialin Zhang, and Dawn Song. 2025. CyberGym: Evaluating AI Agents’ Cybersecurity Capabilities with Real-World Vulnerabilities at Scale. arXiv:2506.02548 [cs.CR] https://arxiv.org/ abs/2506.02548 [59] Qiushi Wu, Yue Xiao, Dhilung Kirat, Kevin Eykholt, Jiyong Jang, and Douglas Lee Schales. 2025. One Bug, Hundreds Behind: LLMs for Large-Scale Bug Discovery. arXiv:2510.14036 [cs.SE] https://arxiv.org/abs/2510.14036 [60] Chunqiu Steven Xia, Yinlin Deng, Soren Dunn, and Lingming Zhang. 2024. Agentless: Demystifying llm-based software engineering agents. arXiv preprint arXiv:2407.01489 (2024). [61] Chunqiu Steven Xia, Matteo Paltenghi, Jia Le Tian, Michael Pradel, and Lingming Zhang. 2024. Fuzz4all: Universal fuzzing with large language models. In Pro-ceedings of the IEEE/ACM 46th International Conference on Software Engineering .1–13. [62] Chenyuan Yang, Zijie Zhao, Zichen Xie, Haoyu Li, and Lingming Zhang. 2025. KNighter: Transforming Static Analysis with LLM-Synthesized Checkers. In 
+
+Proceedings of the ACM SIGOPS 31st Symposium on Operating Systems Principles 
+
+(Seoul, Republic of Korea) (SOSP ’25) . Association for Computing Machinery, New York, NY, USA. doi:10.1145/3731569.3764827 [63] Chenyuan Yang, Zijie Zhao, and Lingming Zhang. 2025. KernelGPT: Enhanced Kernel Fuzzing via Large Language Models (ASPLOS ’25) . Association for Com-puting Machinery, New York, NY, USA, 560–573. doi:10.1145/3676641.3716022 [64] John Yang, Carlos E Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao, Karthik R Narasimhan, and Ofir Press. 2024. SWE-agent: Agent-Computer Interfaces Enable Automated Software Engineering. In The Thirty-eighth Annual Conference on Neural Information Processing Systems . https://arxiv.org/abs/2405. 15793 [65] Andy K Zhang, Neil Perry, Riya Dulepet, Joey Ji, Celeste Menders, Justin W Lin, Eliot Jones, Gashon Hussein, Samantha Liu, Donovan Julian Jasper, Pura Peetathawatchai, Ari Glenn, Vikram Sivashankar, Daniel Zamoshchin, Leo Glik-barg, Derek Askaryar, Haoxiang Yang, Aolin Zhang, Rishi Alluri, Nathan Tran, Rinnara Sangpisit, Kenny O Oseleononmen, Dan Boneh, Daniel E. Ho, and Percy Liang. 2025. Cybench: A Framework for Evaluating Cybersecurity Capabilities and Risks of Language Models. In The Thirteenth International Conference on Learning Representations . https://openreview.net/forum?id=tc90LV0yRL [66] Xin Zhou, Ting Zhang, and David Lo. 2024. Large language model for vulner-ability detection: Emerging results and future directions. In Proceedings of the 2024 ACM/IEEE 44th International Conference on Software Engineering: New Ideas and Emerging Results . 47–51. [67] Tarek Ziadé, Ian Cordasco, and Anthony Sottile. 2024. flake8: Your Tool for Style Guide Enforcement. https://github.com/PyCQA/flake8. Version 7.1.1.

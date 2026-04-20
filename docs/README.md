@@ -6,79 +6,79 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-04-19
-- 运行时间：2026-04-19 19:45:25 UTC
+- 最新运行日期：2026-04-20
+- 运行时间：2026-04-20 19:51:50 UTC
 - 运行状态：成功
 - 本次总论文数：19
 - 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日聚焦 AI 智能体安全防线，深度解析了从文件系统控制到机构化治理的 19 篇前沿成果。
-重点推荐通过重构文件系统防止智能体“盲目操作”的 9.0 分佳作，以及针对生成式 AI 安全的微观物理宣言。
-建议关注如何通过底层架构约束 AI 行为，确保智能体在处理敏感数据时的自主性与安全性。
-- 详情：[/202604/19/README](/202604/19/README)
+今日精选19篇前沿论文，深度聚焦大模型智能体（Agent）在复杂场景下的安全防御与漏洞治理。
+重点关注通过符号化护栏（Symbolic Guardrails）强化智能体安全性，并警惕看似无害的用户指令如何诱发计算机操作类智能体的严重漏洞。
+建议关注智能体在特定领域（如计算机操作）的安全边界，在追求效率的同时需警惕“灰色地带”的潜在风险。
+- 详情：[/202604/20/README](/202604/20/README)
 
 ### 精读区论文标签
-1. [Don't Let AI Agents YOLO Your Files: Shifting Information and Control to Filesystems for Agent Safety and Autonomy](/202604/19/2604.13536v2-dont-let-ai-agents-yolo-your-files-shifting-information-and-control-to-filesystems-for-agent-safety-and-autonomy)  
+1. [Symbolic Guardrails for Domain-Specific Agents: Stronger Safety and Security Guarantees Without Sacrificing Utility](/202604/20/2604.15579v1-symbolic-guardrails-for-domain-specific-agents-stronger-safety-and-security-guarantees-without-sacrificing-utility)  
    标签：评分：9.0/10、query:agsec
-   evidence：将控制权转移到文件系统以保障代理安全
-2. [Governed Reasoning for Institutional AI](/202604/19/2604.10658v1-governed-reasoning-for-institutional-ai)  
+   evidence：用于Agent安全和保障的符号护栏技术
+2. [The Blind Spot of Agent Safety: How Benign User Instructions Expose Critical Vulnerabilities in Computer-Use Agents](/202604/20/2604.10577v2-the-blind-spot-of-agent-safety-how-benign-user-instructions-expose-critical-vulnerabilities-in-computer-use-agents)  
    标签：评分：8.0/10、query:agsec
-   evidence：AI智能体的治理决策基座和四层治理模型
-3. [Resilient Write: A Six-Layer Durable Write Surface for LLM Coding Agents](/202604/19/2604.10842v2-resilient-write-a-six-layer-durable-write-surface-for-llm-coding-agents)  
+   evidence：非预期攻击条件下计算机使用智能体的安全评估
+3. [$λ_A$: A Typed Lambda Calculus for LLM Agent Composition](/202604/20/2604.11767v1-a-a-typed-lambda-calculus-for-llm-agent-composition)  
    标签：评分：8.0/10、query:agsec
-   evidence：针对编码Agent的预检风险评分和持久化写入层
-4. [AnyPoC: Universal Proof-of-Concept Test Generation for Scalable LLM-Based Bug Detection](/202604/19/2604.11950v1-anypoc-universal-proof-of-concept-test-generation-for-scalable-llm-based-bug-detection)  
+   evidence：智能体组合的形式语义与类型安全
+4. [AgentSPEX: An Agent SPecification and EXecution Language](/202604/20/2604.13346v1-agentspex-an-agent-specification-and-execution-language)  
+   标签：评分：8.0/10、query:agsec
+   evidence：LLM智能体工作流的显式控制流和模块化结构
+5. [Don't Let AI Agents YOLO Your Files: Shifting Information and Control to Filesystems for Agent Safety and Autonomy](/202604/20/2604.13536v1-dont-let-ai-agents-yolo-your-files-shifting-information-and-control-to-filesystems-for-agent-safety-and-autonomy)  
+   标签：评分：8.0/10、query:agsec
+   evidence：将控制权转移到文件系统以实现 Agent 安全和动作约束
+6. [Dive into Claude Code: The Design Space of Today's and Future AI Agent Systems](/202604/20/2604.14228v1-dive-into-claude-code-the-design-space-of-todays-and-future-ai-agent-systems)  
+   标签：评分：8.0/10、query:agsec
+   evidence：智能编程工具的安全与保障设计原则
+7. [LLMs taking shortcuts in test generation: A study with SAP HANA and LevelDB](/202604/20/2604.14437v1-llms-taking-shortcuts-in-test-generation-a-study-with-sap-hana-and-leveldb)  
    标签：评分：8.0/10、query:libfuz
-   evidence：自动生成可执行的 PoC 测试以验证漏洞
-5. [Policy-Invisible Violations in LLM-Based Agents](/202604/19/2604.12177v1-policy-invisible-violations-in-llm-based-agents)  
-   标签：评分：8.0/10、query:agsec
-   evidence：LLM智能体的安全控制与策略违规检测
-6. [Credo: Declarative Control of LLM Pipelines via Beliefs and Policies](/202604/19/2604.14401v1-credo-declarative-control-of-llm-pipelines-via-beliefs-and-policies)  
-   标签：评分：8.0/10、query:agsec
-   evidence：用于规范Agent行为的声明式策略和语义控制平面
-7. [CBCL: Safe Self-Extending Agent Communication](/202604/19/2604.14512v1-cbcl-safe-self-extending-agent-communication)  
-   标签：评分：8.0/10、query:agsec
-   evidence：智能体通信和运行时语言扩展的安全不变性与约束
+   evidence：针对LevelDB等软件库的自动化测试生成
 
 ### 速读区论文标签
-1. [Benchmarks for Trajectory Safety Evaluation and Diagnosis in OpenClaw and Codex: ATBench-Claw and ATBench-CodeX](/202604/19/2604.14858v1-benchmarks-for-trajectory-safety-evaluation-and-diagnosis-in-openclaw-and-codex-atbench-claw-and-atbench-codex)  
+1. [PolicyBank: Evolving Policy Understanding for LLM Agents](/202604/20/2604.15505v1-policybank-evolving-policy-understanding-for-llm-agents)  
    标签：评分：8.0/10、query:agsec
-   evidence：代理系统的轨迹级安全评估与诊断
-2. [Agentic Microphysics: A Manifesto for Generative AI Safety](/202604/19/2604.15236v1-agentic-microphysics-a-manifesto-for-generative-ai-safety)  
+   evidence：大模型智能体的策略理解与授权约束
+2. [Into the Gray Zone: Domain Contexts Can Blur LLM Safety Boundaries](/202604/20/2604.15717v1-into-the-gray-zone-domain-contexts-can-blur-llm-safety-boundaries)  
    标签：评分：8.0/10、query:agsec
-   evidence：智能体AI安全研究与交互层级机制
-3. [Rebooting Microreboot: Architectural Support for Safe, Parallel Recovery in Microservice Systems](/202604/19/2604.09963v1-rebooting-microreboot-architectural-support-for-safe-parallel-recovery-in-microservice-systems)  
-   标签：评分：7.0/10、query:agsec
-   evidence：使用微内核和指令集架构对自主修复代理进行安全控制
-4. [STRONG-VLA: Decoupled Robustness Learning for Vision-Language-Action Models under Multimodal Perturbations](/202604/19/2604.10055v2-strong-vla-decoupled-robustness-learning-for-vision-language-action-models-under-multimodal-perturbations)  
-   标签：评分：7.0/10、query:agsec
-   evidence：多模态扰动下VLA模型的鲁棒性研究
-5. [MR-Coupler: Automated Metamorphic Test Generation via Functional Coupling Analysis](/202604/19/2604.10126v1-mr-coupler-automated-metamorphic-test-generation-via-functional-coupling-analysis)  
+   evidence：对抗性交互与安全边界松弛
+3. [VulWeaver: Weaving Broken Semantics for Grounded Vulnerability Detection](/202604/20/2604.10767v1-vulweaver-weaving-broken-semantics-for-grounded-vulnerability-detection)  
    标签：评分：7.0/10、query:libfuz
-   evidence：通过功能耦合分析自动生成变态测试用例
-6. [Jailbreaking the Matrix: Nullspace Steering for Controlled Model Subversion](/202604/19/2604.10326v1-jailbreaking-the-matrix-nullspace-steering-for-controlled-model-subversion)  
+   evidence：用于漏洞检测的静态分析与依赖图
+4. [Mobile GUI Agent Privacy Personalization with Trajectory Induced Preference Optimization](/202604/20/2604.11259v1-mobile-gui-agent-privacy-personalization-with-trajectory-induced-preference-optimization)  
    标签：评分：7.0/10、query:agsec
-   evidence：用于安全机制和受控颠覆的电路级干预
-7. [Latent Instruction Representation Alignment: defending against jailbreaks, backdoors and undesired knowledge in LLMs](/202604/19/2604.10403v1-latent-instruction-representation-alignment-defending-against-jailbreaks-backdoors-and-undesired-knowledge-in-llms)  
+   evidence：移动智能体的隐私个性化与保护性动作
+5. [Agentic Driving Coach: Robustness and Determinism of Agentic AI-Powered Human-in-the-Loop Cyber-Physical Systems](/202604/20/2604.11705v1-agentic-driving-coach-robustness-and-determinism-of-agentic-ai-powered-human-in-the-loop-cyber-physical-systems)  
    标签：评分：7.0/10、query:agsec
-   evidence：通过表示对齐防御越狱和后门
-8. [The Blind Spot of Agent Safety: How Benign User Instructions Expose Critical Vulnerabilities in Computer-Use Agents](/202604/19/2604.10577v1-the-blind-spot-of-agent-safety-how-benign-user-instructions-expose-critical-vulnerabilities-in-computer-use-agents)  
+   evidence：自主智能体和人机交互系统的安全控制策略
+6. [Long-Horizon Plan Execution in Large Tool Spaces through Entropy-Guided Branching](/202604/20/2604.12126v1-long-horizon-plan-execution-in-large-tool-spaces-through-entropy-guided-branching)  
+   标签：评分：7.0/10、query:libfuz
+   evidence：工具集成智能体和API交互的自动化评估
+7. [CompliBench: Benchmarking LLM Judges for Compliance Violation Detection in Dialogue Systems](/202604/20/2604.12312v1-complibench-benchmarking-llm-judges-for-compliance-violation-detection-in-dialogue-systems)  
    标签：评分：7.0/10、query:agsec
-   evidence：计算机使用智能体在非预期攻击条件下的安全评估
-9. [Vision-Language-Action Model, Robustness, Multi-modal Learning, Robot Manipulation](/202604/19/2604.10055v1-vision-language-action-model-robustness-multi-modal-learning-robot-manipulation)  
-   标签：评分：6.0/10、query:agsec
-   evidence：VLA模型针对多模态扰动的鲁棒性
-10. [Mask-Free Privacy Extraction and Rewriting: A Domain-Aware Approach via Prototype Learning](/202604/19/2604.10145v1-mask-free-privacy-extraction-and-rewriting-a-domain-aware-approach-via-prototype-learning)  
-   标签：评分：6.0/10、query:agsec
-   evidence：通过潜在语义进行隐私提取与重写
-11. [CodeComp: Structural KV Cache Compression for Agentic Coding](/202604/19/2604.10235v1-codecomp-structural-kv-cache-compression-for-agentic-coding)  
+   evidence：评估LLM裁判对Agent合规性违规检测的能力
+8. [Safety Training Modulates Harmful Misalignment Under On-Policy RL, But Direction Depends on Environment Design](/202604/20/2604.12500v1-safety-training-modulates-harmful-misalignment-under-on-policy-rl-but-direction-depends-on-environment-design)  
+   标签：评分：7.0/10、query:agsec
+   evidence：强化学习微调大模型中的安全训练与有害对齐失调
+9. [DynamicsLLM: a Dynamic Analysis-based Tool for Generating Intelligent Execution Traces Using LLMs to Detect Android Behavioural Code Smells](/202604/20/2604.10661v1-dynamicsllm-a-dynamic-analysis-based-tool-for-generating-intelligent-execution-traces-using-llms-to-detect-android-behavioural-code-smells)  
    标签：评分：6.0/10、query:libfuz
-   evidence：通过代码属性图结合静态程序分析
-12. [From Helpful to Trustworthy: LLM Agents for Pair Programming](/202604/19/2604.10300v1-from-helpful-to-trustworthy-llm-agents-for-pair-programming)  
+   evidence：使用大模型生成执行轨迹进行代码分析
+10. [Verify Before You Fix: Agentic Execution Grounding for Trustworthy Cross-Language Code Analysis](/202604/20/2604.10800v1-verify-before-you-fix-agentic-execution-grounding-for-trustworthy-cross-language-code-analysis)  
    标签：评分：6.0/10、query:libfuz
-   evidence：用于可靠代码和测试生成的自动反馈与迭代验证
+   evidence：基于执行落地的智能体漏洞分析验证
+11. [Resilient Write: A Six-Layer Durable Write Surface for LLM Coding Agents](/202604/20/2604.10842v1-resilient-write-a-six-layer-durable-write-surface-for-llm-coding-agents)  
+   标签：评分：6.0/10、query:agsec
+   evidence：LLM编程智能体的预检风险评分和内容过滤
+12. [Reducing Hallucination in Enterprise AI Workflows via Hybrid Utility Minimum Bayes Risk (HUMBR)](/202604/20/2604.11141v1-reducing-hallucination-in-enterprise-ai-workflows-via-hybrid-utility-minimum-bayes-risk-humbr)  
+   标签：评分：6.0/10、query:agsec
+   evidence：高风险企业工作流中的幻觉缓解
 
 
 <div class="dpr-home-promo-card">

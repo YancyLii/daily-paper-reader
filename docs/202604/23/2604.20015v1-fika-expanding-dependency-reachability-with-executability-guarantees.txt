@@ -1,0 +1,663 @@
+Title: FIKA: Expanding Dependency Reachability with Executability Guarantees
+
+URL Source: https://arxiv.org/pdf/2604.20015v1
+
+Published Time: Thu, 23 Apr 2026 00:15:21 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+> 1
+
+# FIKA : Expanding Dependency Reachability with Executability Guarantees 
+
+Yogya Gamage ∗, Meriem Ben Chaaben ∗, Martin Monperrus †, Benoit Baudry ∗∗Universit´ e de Montr´ eal, Montr´ eal, Canada 
+
+> †
+
+KTH Royal Institute of Technology, Stockholm, Sweden 
+
+> ∗
+
+{yogya.gamage,meriem.ben.chaaben,benoit.baudry }@umontreal.ca †monperrus@kth.se 
+
+Abstract —Automated third-party library analysis tools help developers by addressing key dependency management chal-lenges, such as automating version updates, detecting vulner-abilities, and detecting breaking updates. Dependency reacha-bility analysis aims at improving the precision of dependency management, by reducing the space of dependency issues to the ones that actually matter. Most tools for dependency reachability analysis are static and fundamentally limited by the absence of execution. In this paper, we propose FIKA , a pipeline for providing guarantees of executability for third-party library call sites. FIKA generates code that is executed, and whose execution trace provides guarantees that a third-party library call site is actually reachable. We apply our approach to a dataset of eight Java projects to empirically evaluate the effectiveness of FIKA . On average, 54% of these call sites are covered by the existing test suites, and therefore, have evidence for their executability. FIKA 
+
+further improves this coverage by 20% and is able to demonstrate executability for 2363 dependency methods. In six out of eight projects, FIKA provides strong guarantees that more than 75% of call sites are executable. We further demonstrate that FIKA 
+
+is capable of improving the results provided by Semgrep, a state-of-the-art static vulnerability reachability analysis tool. We show that FIKA can help prioritize the vulnerability updates with stronger guarantees of executability in cases where Semgrep yields inconclusive reachability results. 
+
+I. I NTRODUCTION 
+
+When developing software, developers write code and import third-party libraries, that are fetched from package registries through package managers [1]. Software reuse is essential for modern software development [2], and yet, when third-party libraries are not properly managed, it can lead to a range of software maintenance challenges. These include dependency incompatibilities [3], security vulnerabilities [4], breaking updates [5], and phantom dependencies that are used in the code but not properly declared in dependency configuration files [6]. These issues can ultimately result in build failures, production bugs, or catastrophic software supply chain attacks such as Log4Shell [7]. In the past decade, several methods and tools have emerged to address the challenges of dependency management [8]. Automated version update tools notify developers when their third-party libraries are outdated [9], and vulnerability scan-ning tools alert developers when a known vulnerable version is present among the dependencies of a project [10]. These tools rely on lockfiles [11] or Software Bills of Materials (SBOMs) [12] to determine the exact list of third-party li-braries for a project. As their notifications are based solely on the names and versions of the dependencies rather than on the actual usage of libraries by the project codebase, they often produce false positives, and create notification fatigue for developers [13]. In order to focus dependency management on the actual interactions between a project and its dependencies, the recent tools have introduced a step of third-party library reachability analysis. This step aims to identify the third-party library methods that are actually used. State-of-the-art dependency reachability analysis relies on the static analysis of complete dependency codebases [14], [15]. While this increases the precision of dependency management, it can still produce false alarms [16], since static reachability does not guarantee that a third-party method is truly executable from the project’s codebase. In this paper, we propose an end-to-end automated pipeline, called FIKA , to improve the guarantees that a given third-party library is truly executable in an application. In case of success, FIKA produces a concrete piece of code which we call a reachability scenario that can be executed from the client project to demonstrate executability. FIKA ’s first step performs static analysis of the client project’s code to identify all invocations of third-party methods, i.e. third-party library call sites. Then, FIKA checks whether a static path exists from a public method to such a third-party library call site. The second step executes the test suite of the project to determine which of the third-party library call sites are already executable, hence need no further care. The third step aims at increasing the guarantees of executability of third-party library call sites. For each call site that is not reached by an existing test, we generate a new reachability scenario with a Large Language Model (LLM) based pipeline. We prompt the LLM to generate a reachability scenario for the public method that eventually triggers the third-party library call site, with the sole goal of covering that target call site. We leverage the static code analysis and dynamic analysis from the two first steps to provide rich context for the LLM to generate a reachability scenario. To demonstrate the feasibility of our end-to-end pipeline, we implement the approach for Java projects. We evaluate the effectiveness of our tool by analyzing 8 client projects and their third-party libraries. Our results show that, on average, 54% of third-party method invocations are covered by the existing test suite. We demonstrate that FIKA 
+
+can generate successful reachability scenarios and provide  
+
+> arXiv:2604.20015v1 [cs.SE] 21 Apr 2026 2
+> Fig. 1: The architecture of FIKA . It takes the project source code as input. Static analysis produces a set of call sites of third-party libraries, which is then used to create reachability scenarios for invoking non-covered call sites. The generated reachability scenarios are validated and integrated following successful validation.
+
+evidence of executability for a total of 2363 third-party library call sites. Overall, FIKA increases the executability guarantees for, on average, 20% more third-party library call sites. To evaluate the usage of FIKA in a real-world application, we analyze 13 modules with reported vulnerabilities using both  
+
+> FIKA
+
+and the state-of-the-art vulnerability reachability analysis tool Semgrep. We show that FIKA can confirm the executability of vulnerable third-party libraries in cases where Semgrep pro-duces ambiguous results, thereby helping developers prioritize vulnerability fixes. To the best of our knowledge, FIKA is the first tool capable of improving the executability analysis of third-party libraries through automated reachability scenario generation. In summary, our key contributions are as follows.  
+
+> •
+
+An architecture for generating reachability scenario that provably reach dependencies and trigger third-party library interactions.  
+
+> •
+
+A publicly available prototype tool FIKA for Java to expand the evidence of executability of Maven third-party library call sites.  
+
+> •
+
+An empirical evaluation over eight Java projects, demon-strating that FIKA can reach 609 new dependency call sites.  
+
+> •
+
+A demonstration that FIKA ’s reachability scenario generation clearly improves the precision of the vulnerable dependency reachability diagnosis compared to the state-of-the-art reach-ability analysis tool Semgrep. II. FIKA 
+
+This section describes FIKA , a framework that extends the guarantees of executability for third-party library call sites within a project. These guarantees enable the explicit identification of third-party library usage. 
+
+A. Key concepts 
+
+We first introduce terminology we use throughout the paper, and present the related concepts to the design of FIKA .
+
+Project A project (p) is a collection of source code files written in an object oriented programming language. The project declares dependencies on external libraries or frameworks in dependency specification file (e.g. pom.xml in Maven). A project defines explicit entry points, such as a main function, or publicly accessible methods that allow the code to be invoked by other projects. These public methods are generally the targets for writing test cases, as they represent the intended usage of the project’s functionality. 
+
+Third-party library A third-party library ( tpl ) is a reusable set of functions developed by external parties, available on a package registry. A project ( p) depends on a third-party library (tpl ) either because it lists tpl in its dependency specification file (direct dependency), or a third-party library may be resolved indirectly for the project via other declared third-party libraries (indirect dependency). 
+
+Reachability of a third-party library method We define 
+
+library reachability as the possibility of a given entry point method ( me) in a project ( p) to invoke a target method ( mt)in a third-party library ( tpl ). 
+
+Call Path When a target method ( mt) is reachable from an entry point ( me), there exists a path connecting these two methods. Such a call path consists of the entry point me (root of the path), the target method mt (end of the path), and additional methods between mt and me. We denote the direct caller of the target md. If the entry point directly calls the target, then me and md refer to the same method. 
+
+Third-party library call site We define a third-party library call site as any direct invocation to a method available in its third-party libraries, within the project ( p). Such a call site is located in method md of ( p), and invoked method mt is defined in third-party library ( tpl ). Therefore, we denote them as mdp and mtpl , respectively. One third-party library method 
+
+mtpl , may have multiple call sites within a project p, as there can be multiple mdp that call the same mtpl .Because all libraries added to the project classpath can be used by the project, we do not distinguish between methods coming from direct third-party libraries and those added indirectly. If any method from a direct or indirect third-party library is invoked from the project, we consider this as a direct third-party library call site. Indirect call sites, where a third-party library method is invoked via another third-party library method, are out of scope for this study. 
+
+Reachability scenario We call reachability scenario a code snippet that invokes a me and initializes the project state 3
+
+in order to trigger a call path reaching the target mdp and invoke a mtpl . To execute a reachability scenario in isolation, we implement, and run it within a unit testing framework, and use test coverage tools to confirm executability. This resembles a unit test case, except that its purpose is to collect evidence of third-party library call site executability, and hence a reachability scenario does not include any assertion. 
+
+B. Overview 
+
+We present an overview of FIKA in Figure 1. The system takes the project as input. In the static reachability analysis phase, FIKA generates a static call graph for the project. It then generates a detailed record of statically reachable third-party library call sites and the associated context details for those call sites (see subsubsection II-C3). In its dynamic analysis phase, FIKA runs the project’s test suite and then outputs the list of third-party library call sites that are covered by the existing test suite and therefore have evidence of executability. Every call site that is not covered is passed as a target to an LLM-based reachability scenario generation pipeline, whose goal is to generate a reachability scenario for covering the target. In the validation step, FIKA builds and runs the generated reachability scenarios. In case of success, the new reachability scenario covers a new target and provides proof of the executability of the corresponding third-party library call site. After this step, FIKA produces an extended list of newly covered third-party library call sites with evidence of ex-ecutability. Executability analysis is important for the precise analysis of third-party library interactions. In the following subsections, we describe the steps of FIKA in detail. 
+
+C. Static analysis 
+
+Given a project ( p) and its dependency specification file, 
+
+> FIKA
+
+’s static analysis phase aims at identifying all third-party library call sites, as well as the candidate paths from the public methods ( me) of p that invoke these methods. 
+
+1) Call graph generation: We generate a static call graph for the project by considering all public methods within the project as entry points. The call graph is dependency wide, it includes all dependency classes in the call graph. There are three main static analysis algorithms for creating call graphs in object oriented languages: Class Hierarchy Analysis (CHA), Rapid Type Analysis (RTA), and Variable Type Analysis (VTA) [16]. CHA identifies potential target methods based only on the declared types of variables and the class hierarchy. RTA applies more filters and limits potential target methods to classes that are more likely to be instantiated. VTA is a further specialized algorithm that tracks the flow of variables and considers pointer behavior. We use the CHA algorithm to construct the call graph because, compared to RTA and VTA, CHA does not remove edges based on the likelihood of instantiation and therefore misses the fewest edges in the resulting call graph [17]. 
+
+2) Identify paths to call sites: In this step, FIKA computes the call paths that reach third-party library call sites, consisting of a pair of mtpl and mdp , from public methods. We first reverse the generated call graph to represent the callee-to-caller relationship. Next, we look for third-party library call sites within the project. In any call site, if the mdp is not a public method, we traverse the call graph breadth-first until we find a public method, which we consider as a potential entry point (me). This breadth-first-search gives us one of the shortest paths to reach a public method from a non-public mdp . Note that there might be multiple paths from one public method to a call site. However, to handle the potential explosion in the number of paths, for further dynamic analysis, we select only one static path per tuple ( me, mdp , mtpl ): the first path through a breadth-first search, and therefore a shortest path. 
+
+3) Call path context extraction: Once FIKA has detected call paths, we extract additional context details about each path. This context is used in the subsequent steps of FIKA re-lated to dynamic analysis and reachability scenario generation with LLMs. First, we extract the source code for methods along the call path as source code snippets. Then, we annotate the source code snippets by adding a comment before each line that includes a method invocation that is part of the call path. Second, we collect everything that is necessary to initialize the project entry point and invoke the public method ( me): the constructors, the instance or class variables of the class to which the entry-point method ( me) belongs. If the constructors are not public, we collect public factory methods. We also collect methods, if any, that set values for instance or class variables. At the end of this step, the extracted context consists of a set of source code snippets: code of methods along the call paths, code of the constructors and setters of me, and all instance or class variables and imports related to the invocation of me.This is a big chunk of textual information about the call path under consideration. 
+
+D. Dynamic analysis 
+
+The goal of FIKA ’s dynamic analysis is to determine which call paths identified during the static analysis are executable. We first check whether the statically identified call sites are already covered by the developer-written test suite of the project. To do so, we execute the existing tests and collect coverage details. We consider all the third-party library call sites that are part of the covered statements as executable. For the non-covered call sites, we generate new reachability scenarios. These scenarios are automatically generated with a novel LLM-based reachability scenario generation pipeline, as explained in the subsequent section. Once the generation is completed, we execute the successfully generated reachability scenarios, as a means to exercise non-covered call paths. The combination of developer-written tests and reachability scenarios provides concrete guarantees about the reachability and executability of third-party library call sites in the project. 
+
+E. LLM-based reachability scenario generation 
+
+For each call site not covered by developer-written tests, we generate a reachability scenario with the help of an LLM, with the goal of dynamically reaching the call site. 4
+
+1) Reachability scenario generation: We first create astructured prompt that provides the LLM with all information that we extracted in the static analysis phase: (i) the ordered call path from the public entry-point method ( me) to the target third-party library call site, (ii) the context (source code of all project methods along this path, instantiation information, see subsubsection II-C3). The goal of LLM-based reachability scenario generation pipeline is to generate a reachability sce-nario that calls the entry-point ( me) with the goal of reaching the third-party library call sites. We instruct the LLM to not include any assertions, avoid modifying existing methods, and minimize mocking as mocks may create potentially infeasible call paths. The complete prompt is available on GitHub. 
+
+2) Reachability scenario validation: In this step, FIKA 
+
+validates the generated reachability scenarios against a set of criteria to verify their quality and ability to invoke the target third-party library call site. When a plausible reachability scenario is generated, FIKA adds the reachability scenario to the project and checks it against a set of static rules. These rules detect any alteration of the behavior of methods along the call path through method overriding or anonymous inner classes. For example, in Java, using pattern matching, the rules check whether the generated code includes the @Over-ride annotation indicating method overriding, the pattern class ... extends ... indicating class extension, or the pattern new ClassName() { ... } indicating anonymous inner classes. If any enforced rule is violated, FIKA generates targeted feedback describing the violation and integrates it into the next prompt for the reachability scenario generation pipeline. If the static rules are satisfied, FIKA compiles and executes the generated reachability scenario. Recall that, to implement and execute a reachability scenario, we rely on a testing framework, similar to how a unit test is executed within the project. FIKA then verifies whether the reachability scenario compiles successfully and whether the target third-party library call site is reached based on code coverage. For compilation errors or execution errors, FIKA extracts the relevant diagnostic output from the logs and includes the lines marked with error-level indicators (such as [ERROR] in Maven) in the feedback for the next prompt. When a reachability scenario executes successfully but does not reach the target call site, FIKA reports which methods along the call path were covered and where execution diverged. Reachability scenario generation is retried with the collected execution feedback until the reachability scenario success-fully reaches the target call site or a stopping criterion is met. A successful reachability scenario generation verifies the executability of the call site, whereas an unsuccessful attempt indicates that either FIKA is not capable of verifying the dynamic reachability or that the call site is indeed not executable. 
+
+F. Illustrative Example 
+
+We present an end-to-end example in which we analyze the 
+
+Graphhopper project with FIKA , identify a non-covered third-party library call site, and generate a new reachability scenario that can reach it. 
+
+Graphhopper is a popular open-source routing library and web server for OpenStreetMap data. Its core module provides routing functionality, and the class CHPreparationGraph ,within the routing package, represents the graph data structure used for fast long-distance route calculations. When analyzing Graphhopper , FIKA determines that the third-party library method (mtpl ), IndirectSort. mergesort , from dependency com.carrotsearch. hppc , which is called by the direct caller (mdp )
+
+> com.graphhopper.routing.ch.CHPreparationGraph. OrigGraph.Builder.build
+
+, is not covered by any existing test. FIKA also identifies that this call site can be statically reached through the entry point (me) 
+
+> com.graphhopper.routing.ch.CHPreparationGraph. prepareForContraction
+
+in two hops. In the call path context extraction step, FIKA extracts the source code snippets of methods along the call path as shown in Figure 2, and other source code snippets that are required to invoke the me
+
+as shown in Figure 3. We include the content of both Figure 2 and Figure 3 in the prompt. The path to reach mtpl from me contains one direct caller (mdp ) in between. By prompting the LLM with the extracted context details, FIKA generates a reachability scenario, shown in Figure 4, that invokes me and reaches mdp . This reachabil-ity scenario creates an object of the entry point class CHPrepa-rationGraph by calling the factory method edgeBased . The 
+
+edgeBased method requires three parameters: two integers and one object of type TurnCostFunction . FIKA manages to create a real object, turnCostFunction of the TurnCostFunction class, and passes it along with the integers 5 and 10 to the edgeBased 
+
+method. edgeBased then returns a graph object, which allows the reachability scenario to invoke the entry point method me,
+
+prepareForContraction() .In the final step, static validation, compilation, and the target reachability check all succeed. Consequently, this new generated reachability scenario is a proof of ex-ecutability of mtpl , com.carrotsearch.hppc.sorting. IndirectSort.mergesort , from the Graphhopper project. This confirmation can be used by third-party library analysis tools that rely on coverage, such as coverage-based debloating tools [18], vulnerability analysis tools [19], and third-party library privilege detection tools [20]. 
+
+G. Implementation 
+
+We implement FIKA in Java as a proof of concept. The implementation of all components in FIKA is publicly available at https://github.com/sparkrew/fika. In this section, we describe the design decisions behind the implementation of FIKA .
+
+1) Static analysis: We generate the call graph with 
+
+SootUp [21]. Once the call graph is generated, we identify the third-party library call paths and the methods involved along these call paths. However, these method names are in bytecode, and when extracting context information for the path from the source code, we, need to map bytecode method names to source level method names. For this, we use Spoon [22] to query and extract the source code programmatically by building the Abstract Syntax Tree (AST) of the project. 5
+
+Fig. 2: An illustrative example where FIKA identifies an entry point method me (highlighted in yellow ) that statically invokes a method mdp (highlighted in pink ) that directly calls a mtpl 
+
+(highlighted in green ). The example is taken from the class 
+
+CHPreparationGraph of the Graphhopper project. All source code snippets are extracted by FIKA , and are included in the prompt, except for the source code of mtpl , which is not part of the 
+
+Graphhopper project. (a) me From class CHPreparationGraph                           
+
+> 1public void prepareForContraction() {
+> 2checkNotReady();
+> 3// PATH: Test should invoke the next CHPreparationGraph$OrigGraph$Builder.build(...) [step in execution path]
+> 4origGraph = (edgeBased) ?origGraphBuilder. build() :null;
+> 5origGraphBuilder =null;
+> 6ready =true;
+> 7}
+
+(b) mdp From class CHPreparationGraph.OrigGraph.Builder                                
+
+> 1OrigGraph build() {
+> 2// PATH: Test should invoke the next IndirectSort. mergesort(...) [step in execution path]
+> 3int[] sortOrder =
+> 4IndirectSort. mergesort (
+> 50, fromNodes.elementsCount,
+> 6new IndirectComparator. AscendingIntComparator(fromNodes.buffer ));
+> 7//[[4 more lines in the extracted method]]
+> 8}
+
+(c) mtpl From class com.carrotsearch.hppc.sorting.IndirectSort                   
+
+> 1public static int[] mergesort (int start, int length, IntBinaryOperator comparator) {
+> 2final int[] src =createOrderArray(start, length);
+> 3return mergesort(src, comparator);
+> 4}
+
+2) Dynamic analysis: For dynamic analysis we determine call site coverage with the coverage reports generated by JaCoCo. To check whether the third-party library call sites of interest are covered by the executed tests, we parse the JaCoCo reports and verify whether the line at which the third-party library call site is invoked is marked as covered. 
+
+3) LLM-based reachability scenario generation: FIKA uses DeepSeek V3.2 as the LLM for the reachability scenario synthesis backend. We use DeepSeek V3.2 as it is one of the strongest LLMs for code generation at the time of the implementation of FIKA . FIKA accesses the DeepSeek V3.2 via its API [23]. The iterative reachability scenario generation and validation workflow is orchestrated using LangChain [24] and LangGraph [25]. Based on preliminary experiments conducted on a subset of projects, we set the maximum number of regeneration attempts to 5, as additional iterations beyond this threshold rarely result in successful reachability scenario generation and the marginal benefit does not justify the in-creased computational cost. As the unit testing frameworks for implementing and executing the generated reachability scenarios, we use JUnit5 together with the Surefire Maven Plugin .
+
+Fig. 3: Extra source code snippets extracted by FIKA as call path context. These details are required by the reachability scenario generation pipeline to correctly invoke me during the reachability scenario generation process. Only the source code snippets relevant to the example generated reachability scenarios are shown here. The full example, including the full prompt and all execution logs, is available on GitHub. (a) Imports  
+
+> 1com.graphhopper.routing.ch.CHPreparationGraph. TurnCostFunction
+
+(b) Factory methods / Constructors             
+
+> 1public static CHPreparationGraph edgeBased(int nodes, int edges, TurnCostFunction turnCostFunction) {
+> 2return new CHPreparationGraph(nodes, edges, true, turnCostFunction);
+> 3}
+
+(c) Setters                     
+
+> 1public void addEdge(int from, int to, int edge, double weightFwd, double weightBwd) {
+> 2//[[11 more lines in the extracted call path context]]
+> 3}
+
+Fig. 4: An example generated reachability scenario by FIKA that proves the dynamic reachability of a third-party library call site 
+
+.                                                                   
+
+> 1package com.graphhopper.routing.ch;
+> 2import com.graphhopper.routing.ch.CHPreparationGraph. TurnCostFunction;
+> 3import org.junit.jupiter.api.Test;
+> 45public class FikaTest {
+> 6@Test
+> 7public void testMergesort() {
+> 8// Create an edge-based CHPreparationGraph to ensure origGraphBuilder is not null
+> 9TurnCostFunction turnCostFunction =(in, via, out) -> 0;
+> 10 CHPreparationGraph graph =CHPreparationGraph. edgeBased(5, 10, turnCostFunction);
+> 11 // Add at least one edge to ensure the builder has data to sort
+> 12 graph.addEdge(0, 1, 0, 1.0, 1.0);
+> 13 // This call should traverse through origGraphBuilder.build()
+> 14 // and eventually invoke IndirectSort.mergesort
+> 15 graph. prepareForContraction();
+> 16 }
+> 17 }
+
+III. E VALUATION METHODOLOGY 
+
+In this section, we present our dataset of open source Java projects, and then introduce the research questions that struc-ture the empirical evaluation of FIKA . The first two research questions correspond to the outputs of FIKA , and the third research question evaluates the LLM-based reachability sce-nario generation pipeline. The final research question explores how FIKA improves state-of-the-art reachability analysis tools and helps developers prioritize and manage their dependencies effectively. 
+
+A. Dataset 
+
+We analyze a set of public GitHub projects using FIKA 
+
+and evaluate its ability to find evidence for the dynamic 6
+
+TABLE I: Projects used in our first part of evaluation along with their selected modules. We provide links to the GitHub repositories, commit SHAs, lines of code, the number of entry points, the number of test cases, test coverage, and the number of direct dependencies with compile or provided scope. The total number of direct and indirect dependencies, including both compile and provided scopes, is given in parentheses.                                                                
+
+> Project Module Commit SHA LoCs Entry Points Tests Cov. Dir. deps (All deps)
+> flink core 61f9ffe 120k 7463 7655 66% 8 (12)
+> graphhopper core 1c811e5 70k 3332 2561 84% 10 (18)
+> jooby jooby d2272e7 25k 2677 123 24% 5 (6)
+> mybatis-3 --57c7c41 71k 6139 1990 87% 8 (9)
+> pdfbox pdfbox 3260022 102k 5818 700 60% 3 (4)
+> tablesaw json faf0d54 879 120 14 70% 3 (22)
+> tika core bb785a2 30k 1629 309 46% 5 (16)
+> poi-tl poi-tl 58fdb6c 30k 1488 127 78% 5 (36)
+
+reachability of third-party library call sites. We start from the set of 30 open-source Java Maven projects collected by Soto-Valero et al. [26]. We choose it because it is curated according to criteria that align with our requirements: mature, real-world projects with at least one compile-scoped third-party library, at least one developer-written test and that build with Maven. From these projects, we remove two projects whose current versions have migrated from Maven to Gradle. Then, we select the projects that use JUnit5 and filter out five projects that depend on TestNG or JUnit4. We also discard nine projects that depend on Java versions lower than 17. This leaves 14 projects. Then, we compile and execute their tests. If the execution is unsuccessful, we check out to the most recent tag of the project as tagged commits indicate a more stable update. If that version also fails to build and run the tests, we discard that project. We discard a total of five projects due to such build failures. We discard one additional project, 
+
+checkstyle , because it is a meta-level static analysis tool. Finally, we select 8 projects that use JUnit5 and successfully build with Java 17 or higher at the time of experimenting. Statistics about the selected 8 projects to answer the first three research questions are given in Table I. The second column shows the module we analyze when the project is a multi module project. We select the same modules as Soto Valero et al. [26]. The third column provides the commit hash and a link to the analyzed version of each project. The next two columns report the number of lines of Java code (LoC) according to the Unix cloc command, and the number of entry points (public methods) identified by SootUP. These two metrics are indicators of the size of the projects. The following two columns give the number of test cases executed by the Maven surefire plugin, and the test coverage reported by the JaCoCo plugin. All modules, except tablesaw-json module, have more than 20k lines of Java code, and 1k entry points. The flink-core module has the highest number of tests at 7655, whereas the json module of tablesaw has only 14 tests. Test coverage across the projects ranges from 84% in 
+
+graphhopper-core to 24% in jooby . The last column pro-vides the number of direct compile and provided scoped third-party libraries as resolved in the Maven dependency tree. We do not consider sub-modules from the same project as third-party libraries. The sum of both direct and indirect third-party libraries is shown in brackets. The maximum number of direct third-party libraries (10) is observed in graphhopper-core .In terms of indirect third-party libraries, some projects with a lower number of direct third-party libraries are resolved with a higher number of indirect third-party libraries. For example, 
+
+poi-tl has a total of 36 third-party libraries, although only five of them are direct. We use these 8 modules to answer the first three research questions. For the final research question, we use all the modules from the 8 projects which we explain in detail in the next section. 
+
+B. Protocol 
+
+We answer the following four research questions in order to evaluate FIKA .
+
+RQ1: To what extent do developer-written tests provide dynamic guarantees of third-party library executability? 
+
+In RQ1, our goal is to look at how many third-party library call sites within a project are verified as executable after running the developer-written test suites. To answer this question, we first run FIKA to generate the call graph and identify all third-party library call sites that are statically reachable from a me. Then, using FIKA , we check how many of the identified call sites are covered by the current project tests. To allow the collection of test coverage, we add JaCoCo maven plugin, if it is not already present in the projects. We report the number of third-party library call sites that are effectively triggered, as evidenced by the existing project test suites. Doing this, we also establish a baseline that FIKA ’s reachability scenario generation pipeline can improve upon. 
+
+RQ2: To what extent can FIKA improve dynamic guar-antees of third-party library executability? 
+
+With this RQ, we evaluate the ability of FIKA to perform a targeted reachability scenario generation to dynamically reach third-party library call sites. Here, using FIKA , we attempt to provide evidence for the executability of third-party library call sites that are not invoked by any test in the project’s test suite. This demonstrates the added value of FIKA .At this stage, FIKA has a list of call paths to reach third-party library call sites from public project methods. We filter out the call paths to call sites that are already covered by the existing test suite. We sort the remaining paths according to their length. The shorter paths are selected first for reachability scenario generation, as path length is an indication of the potential difficulty of generating a reachability scenario. Then, we generate reachability scenarios with FIKA , for one path at a time, following the sorted order. Recall that each call path has a unique combination of me, mdp , and mtpl . When a successful reachability scenario is generated for a call site (a combination of mdp , and mtpl ), if the same call site appears again with a different me, FIKA proceeds to the next candidate, as the goal is to collect evidence for the executability of that third-party library call site, not to have multiple reachability scenarios. After this process, we calculate the number of success-ful reachability scenarios generated by FIKA and report the improved evidence of executability for third-party library 7
+
+call sites. A key indicator here is the number of additional third-party library call sites for which we have evidence of executability, compared to the original test suites. 
+
+RQ3: How do FIKA ’s design decisions impact the effec-tiveness of the generated reachability scenarios? 
+
+In RQ3, we conduct an incremental ablation study to analyze three aspects of the proposed approach: (i) the impact of providing path related data retrieved from static analysis, (ii) the impact of adding entry point related context alongside the path information, and (iii) the impact of the feedback mechanism. In the first configuration (BL1), we create a baseline prompt that provides only the project method containing the target call site ( mdp ) to the LLM, without including the path to a public entry method. This setting allows us to evaluate whether the static analysis step, which identifies paths to reach third-party library call sites, actually improves the reachability scenario generation process. In the second configuration (BL2), the prompt includes both the path and the implementations of all methods along that path. However, we do not provide additional entry point related context, such as constructors, factory methods, or field declarations of the class to which the entry point belongs. This configuration allows us to evaluate whether providing this additional contextual information improves the LLM’s ability to generate successful reachability scenarios. In the third configuration, which corresponds to the com-plete approach, we incorporate the feedback mechanism and evaluate whether the errors or constraint violations from previ-ous attempts can guide the LLM toward successful reachability scenario generation. 
+
+RQ4: How can FIKA ’s executability analysis improve state-of-the-art third-party library reachability analysis tools? 
+
+To evaluate how FIKA can address a real-world problem, we apply it to analyze vulnerability reachability. To reduce false positives, recent vulnerability analysis tools typically perform some kind of reachability analysis, using specific patterns to determine which vulnerable functions are reachable. FIKA 
+
+can improve vulnerability reachability analysis by providing executability guarantees for the identified vulnerable functions. As a baseline for vulnerability reachability analysis, we use Semgrep 1, an open-source, state-of-the-art static application security testing tool, which has also been used as a baseline in previous studies [27], [28]. One key feature of Semgrep is to detect security issues introduced by third-party libraries. Semgrep’s reachability analysis classifies a Common Vul-nerabilities and Exposures (CVE) in a third-party library as either reachable , undetermined , or unreachable . This analysis is based on a set of static rules. A reachability rule can be manually defined for a CVE and consists of patterns that identify the use of vulnerable methods originating from third-party libraries. The CVE is marked as reachable if the pattern is matched, otherwise it is unreachable . A few rules do not define a pattern and instead simply look for the presence of the third-party library in the dependency tree. In that case, 
+
+> 1https://semgrep.dev
+
+Semgrep marks the CVE as either reachable or undetermined ,whose exact semantics are not publicly documented. As case studies for the vulnerability analysis, we select the eight projects listed in Table I and consider all of their Maven modules. We run Semgrep on all modules at the same commits listed in Table I and find only one reachable vulnerability (in poi-tl ). Since we need at least one baseline result for Semgrep, we go in the past for the remaining projects, by checking out the oldest commit that can be successfully compiled and executed with Java 17+ and JUnit 5. We choose the oldest executable commit because it maximizes the likelihood of having outdated, vulnerable third-party libraries. In this way, we identify 12 additional modules with reachable vulnerabilities, summing to 13 modules. We then run FIKA on the selected 13 module versions with at least one reachable vulnerability according to Semgrep. We record whether each vulnerable mtpl reported by Semgrep is present in the code base, regardless of whether there exists a path to reach it. For cases where Semgrep defines a pattern, we use the same pattern to identify the corresponding vulnerable 
+
+mtpl and verify its executability with FIKA . For cases where Semgrep does not define a pattern, we check the executability of any method originating from the vulnerable third-party library. We consider two metrics in this RQ. (i) how often vul-nerable methods reported as reachable or undetermined by Semgrep can be confirmed in the code base with the static analysis of FIKA , and (ii) for those cases, how often they can be proven to be reachable by FIKA .IV. E XPERIMENTAL RESULTS 
+
+In this section, we present the results from the evaluation of  
+
+> FIKA
+
+with the selected eight projects and using the protocol listed in subsection III-B. A summary of the answers to our first three research questions is presented in Table II, and the answer to the final research question is presented in Table IV. 
+
+RQ1: To what extent do developer-written tests provide dynamic guarantees of third-party library executability? 
+
+With this research question, we analyze how many third-party library call sites are proven to be executable based on the execution of existing developer-written project test suites. The results are presented in the RQ1 column of Table II. The mtpl column shows the number of unique third-party library methods ( mtpl ) invoked in each project. The second column, TPL call sites , shows the number of call sites that are reachable from public methods of the project as identified by FIKA . The third column reports the call sites that are shown to be executable through developer-written tests. As shown in Table I, almost all projects in our dataset have more than 100 developer-written test cases. These test suites cover some, but not all, third-party library call sites. For example, in graphhopper , 276 unique dependency methods are called within the project code. These 276 methods appear across 668 call sites, since a single mtpl may be invoked by multiple mdp . Out of the 668 call sites, 469 (70%) are covered by the existing tests. The least covered project is pdfbox ,8
+
+TABLE II: Results from the evaluation of FIKA on the first three research questions. RQ1 relates to the execution of existing tests. mtpl 
+
+shows the number of unique mtpl used in each project, and TPL CALL SITES gives the number of call sites. D YNAMIC GUARANTEES 
+
+(T ESTS ) presents the total number of call sites, that have the guarantees of dynamic reachability through developer-written tests. RQ2 reflects the ability of FIKA to improve the dynamic reachability guarantees. D YNAMIC GUARANTEES (R. SCENARIOS ) presents the call sites covered by new reachability scenarios as a fraction of those for which generation is attempted. The next two columns, T OTAL GUARANTEES 
+
+and A DDITIONAL GUARANTEES BY FIKA , presents the total number of call sites that have dynamic guarantees of reachability and the improvement achieved by FIKA . RQ3 presents a comparison of FIKA ’s design decisions, where each column shows the successful cases generated with the baselines (BL1, BL2) and across iterations (I1–I5).                                                                                                                               
+
+> PROJECT RQ1 RQ2 RQ3
+> mtpl
+> TPL
+> CALL SITES
+> DYNAMIC GUARANTEES
+> (TESTS )DYNAMIC GUARANTEES
+> (R. SCENARIOS )TOTAL GUARANTEES
+> ADDITIONAL GUARANTEES BY FIKA
+> BL1 BL2 I1 I2 I3 I4 I5
+> flink 109 143 46/143 (32%) 47/97 (48%) 93/143 (65%) 33% 12 28 28 39 43 44 47
+> graphhopper 276 668 469/668 (70%) 77/199 (39%) 546/668 (82%) 12% 12 41 53 64 70 77 77
+> jooby 33 52 22/52 (42%) 28/30 (93%) 50/52 (96%) 54% 11 13 19 26 27 28 28
+> mybatis-3 35 49 19/49 (39%) 23/30 (77%) 42/49 (86%) 47% 711 23 23 23 23 23
+> pdfbox 49 591 108/591 (18%) 223/483 (46%) 331/591 (56%) 38% 123 146 153 188 199 212 223
+> tablesaw 26 50 35/50 (70%) 7/15 (47%) 42/50 (84%) 14% 2355567
+> tika 23 30 8/30 (27%) 15/22 (68%) 23/30 (77%) 50% 2813 14 15 15 15
+> poi-tl 812 1636 1047/1636 (64%) 189/589 (32%) 1236/1636 (76%) 12% 52 137 90 144 159 178 189 Total 1363 3219 1754/3219 (54%) 609/1465 (42%) 2363/3219 (73%) 19% 221 387 384 503 541 583 609
+
+where only 108 out of 591 (18%) call sites are covered, even though the overall test coverage of the project is 60%. This is because in pdfbox , the most frequently used third-party library calls are related to logging from the org.apache. commons.logging library and these logging call sites are often executed in situations that normal execution does not reach, such as edge cases where errors are thrown or when debugging is needed. Developer-written tests generally cover third-party library call sites under three scenarios. First, developers recognize that a third-party library method’s behavior directly impacts the client project and therefore write test cases that explicitly test its behavior. For example, in the project Tika , the class 
+
+TikaInputStream extends TaggedInputStream from the third-party library commons-io:commons-io . Within this class, the method mark overrides the corresponding method in the superclass and also explicitly invokes it. Since the behavior of mark is an essential part of the overall program behavior, the developers of Tika have added nine tests in the test class TikaInputStreamTest that invoke mark and include assertions to validate its behavior. Second, developers do not target a specific third-party library call site but instead test its direct caller, and as a result, the third-party library call site is also invoked. In this case, no assertion directly targets the mtpl , but the test may still depend on its behavior. For example, in Tika , the mdp 
+
+seekTo method calls the mtpl skipFully from the third-party library commons-io:commons-io . Three developer-written test cases directly invoke and validate the behavior of seekTo , and as a result, skipFully is also invoked, and is indirectly tested. Third, developers write tests for a method that triggers the third-party library call site without intending to test the behavior of the mtpl or its direct caller. These tests still expose third-party library interactions with the project, al-though they do not explicitly evaluate their correctness. For example, the public method extractRootElement (mdp ) in the class XmlRootExtractor in Tika invokes the constructor 
+
+UnsynchronizedByteArrayInputStream (mtpl ) from the third-party library commons-io:commons-io . There is no dedicated test class for XmlRootExtractor , and no test explicitly calls the mdp . However, the method getMimeType 
+
+in the class MimeTypes invokes the mdp and is covered by two developer-written tests. Thus, in this case, the mtpl also gets covered, even though it is not explicitly intended by the developers. Overall, good developer-written test suites in Java projects naturally trigger third-party library call sites. Yet, only 54% of call sites across these well-tested projects are covered by the existing tests, highlighting the need for additional reachability scenarios to confirm their executability, as well as the need for FIKA .
+
+Answer to RQ1 : Developer-written test suites confirm the executability of 18% and up to 70% of third-party library call sites, depending on the project. On the one hand, this supports our idea of getting guarantees of executability through test execution. On the other hand, it highlights the need for an automated tool like FIKA to strengthen the level of such guarantees. 
+
+RQ2: To what extent can FIKA improve dynamic guarantees of third-party library executability? 
+
+With RQ2, we evaluate FIKA ’s ability to improve the exe-cutability guarantees of third-party libraries by generating new reachability scenarios. The reachability scenario generation focuses on the call sites which are not covered by the existing tests, hereby providing value. We present the results in the column RQ2 of Table II. As shown in the column DYNAMIC GUARANTEES 
+
+(R. SCENARIOS ), FIKA generates successful new reachability scenarios for all projects, covering new call sites that are not exercised by the existing test suites. For pdfbox , FIKA 
+
+produces 223 successful reachability scenarios, covering 46% of the attempted targets, which is more than twice as much as what the original test suite covers. They reach the error-related call sites involving third-party library methods such as 9
+
+Fig. 5: An example generated reachability scenario by FIKA that goes through a call chain of length 08 to reach a call site with mtpl ,
+
+Log.debug() that is not covered by developer-written tests. The comments within [[]] are not part of the original reachability scenario. They are included only to keep the example succinct.                                                                              
+
+> 1package org.apache.pdfbox.pdfparser;
+> 2// [[5 imports in the actual reachability scenario]]
+> 34public class LogdebugFikaTest {
+> 5@Test
+> 6public void testParseToLogDebug() throws IOException {
+> 7// [[3 comment lines]]
+> 8String fdfContent ="%FDF-1.2\n" +
+> 9// [[9 more lines]]
+> 10 "%%EOF";
+> 11 byte[] fdfBytes =fdfContent.getBytes();
+> 12 RandomAccessRead source =new RandomAccessReadBuffer(new ByteArrayInputStream(fdfBytes));
+> 13 FDFParser parser =new FDFParser(source);
+> 14 try {
+> 15 parser.parse();
+> 16 }catch (IOException e) {
+> 17 // Expected -the file is not avalid FDF, but we only care about
+> 18 // executing the call chain up to Log.debug ()
+> 19 }}}
+
+TABLE III: Distribution of path lengths for generated reachability scenarios                                         
+
+> PROJECT PATH LENGTH
+> 1234+
+> flink 27 15 50
+> graphhopper 62 10 41
+> jooby 26 020
+> mybatis-3 21 200
+> pdfbox 73 123 11 16
+> tablesaw 4300
+> tika 14 100
+> poi-tl 169 18 11Total 396 172 23 18
+
+Log.error and Log.warn , which are typically not triggered by developer-written tests, as discussed above. For example, the reachability scenario presented in Figure 5, starts from the entry point FDFParser.initialParse() , goes through 7 more hops to reach the third-party library call site with the 
+
+mtpl , org.apache.commons.logging.Log.debug .For jooby , FIKA provides executability guarantees for 28 out of the 30 previously non-confirmed call sites, which is almost perfect. The remaining two call sites have non-trivial preconditions that are hard to satisfy, and FIKA fails to gen-erate a reachability scenario that meets these conditions. For example, the public method Jooby.getTmpdir may reach the mtpl com.typesafe.config.Config.getString only under the condition that (i) an internal cache is null 
+
+and (ii) the Environment variable is correctly initialized, so that getEnvironment().getConfig().getString can execute. The current reachability scenario generation pipeline does not manage to construct that state. It is important that the generated reachability scenarios can trigger paths longer than one, as some call sites can only be reached through multiple hops. In Table III, we present the path lengths of the reachability scenarios generated by FIKA .The results show that FIKA can successfully generate reacha-bility scenarios for call sites that are deep within the project code. In larger modules such as graphhopper , pdfbox , and 
+
+poi-tl , 18 paths extend beyond four hops. We also observe that the majority of paths have lengths of 1 or 2 (568 out of 609). This is because FIKA prioritizes shorter paths when they exist.  
+
+> FIKA
+
+significantly improves third-party library executability guarantees by generating new reachability scenarios. The ad-ditional evidence for dynamic reachability provided by FIKA ,shown in the column A DDITIONAL GUARANTEES BY FIKA 
+
+of Table II, exceeds 12% for every project. As a result, the total executability (T OTAL GUARANTEES ) exceeds 50% for all projects after applying FIKA and averages 73%. 
+
+Answer to RQ2 : FIKA successfully generates new reach-ability scenarios that provide executability guarantees for many previously non-covered third-party library call sites across all projects. It is capable of reaching call sites that, in some cases, require traversing paths of more than four method calls. The improvement achieved by FIKA ranges from a 12% increase in graphhopper to 54% in jooby .
+
+RQ3: How do FIKA ’s design decisions impact the effective-ness of the generated reachability scenarios? 
+
+This research question evaluates how the prompt design in  
+
+> FIKA
+
+influences the results. In Table II (RQ3), we compare two baselines: BL1 uses a prompt without path details, and BL2 includes path details but omits entry-point-related context. We also show the results of the full configuration across feedback iterations (I1–I5). For all projects, the configuration BL1 shows the lowest performance. Without information about the path, the LLM has to generate a reachability scenario for the mdp without knowing whether it is directly invocable. Consequently, many generated reachability scenarios, including those that execute successfully, rely on reflection to access private fields and methods, which makes the generated reachability scenarios very brittle. Adding path information in BL2 consistently improves performance across all projects. For example, the number of successful reachability scenarios increases from 12 to 28 for flink , from 12 to 41 for graphhopper , and from 52 to 137 for poi-tl . This demonstrates that FIKA ’s static analysis phase improves the quality of the generated reachability scenarios by constraining the LLM to follow a feasible invocation path rather than guessing access patterns. Compared to the full prompt with all contextual information, BL2 achieves lower performance for most projects. The only exception is poi-tl , where BL2 slightly exceeds the first iteration of FIKA (137 vs. 90). This suggests that, in some cases, the LLM can succeed when provided with limited context, whereas in most projects the additional entry-point-related context in the full prompt provides an immediate benefit. The second part of the RQ3 section of Table II shows that the feedback loop of reachability scenario generation pipeline is effective. For most projects, the number of successful reach-ability scenario generation attempts increases across iterations 10 
+
+(e.g. pdfbox : 153 →223; poi-tl : 90 →189), indicating that iterative refinement helps the model recover from constraint violations, compilation errors, and execution errors. Contrarily,  
+
+> mybatis-3
+
+shows no improvement after the first iteration (23 in I1 and 23 in I5). When investigating mybatis-3 , we find that the failed cases primarily involve call paths with methods that require complex objects as parameters. As a result, the LLM often fails to initialize the correct objects and produces reachability scenarios that do not compile. After receiving feedback such as cannot find symbol (often caused by hallucinated types or variables), the LLM attempts to fix the issue by trying alternative object constructions. However, these attempts still fail to satisfy the required object states, and the reachability scenarios remain non-compilable. Path information is the single most impactful prompt com-ponent: it prevents the LLM from generating brittle reflection-based reachability scenarios and constrains it to follow a statically feasible invocation path. FIKA ’s static analysis phase to extract this contextual information is therefore essential before attempting reachability scenario generation. Iterative targeted feedback is also effective and helps the LLM fix hallucinations. 
+
+Answer to RQ3 : FIKA ’s design decisions all positively impact its effectiveness and lead to the generation of more successful reachability scenarios. Call-path details and entry-point context in the prompt, combined with iterative feedback, guide the LLM to successfully produce many reachability scenarios across iterations. 
+
+RQ4: How can FIKA ’s executability analysis improve state-of-the-art third-party library reachability analysis tools? 
+
+With this research question, we evaluate the usefulness of FIKA for vulnerability reachability analysis. We compare 
+
+> FIKA
+
+’s dynamic reachability analysis to the state-of-the-art static reachability analysis of Semgrep. In Table IV, we report the results of Semgrep’s CVE reachability analysis as follows. The first column is the module name. In column 2, S TRONG REACH . ACC . S EM GREP refers to Semgrep matching a specific code pattern to determine reach-ability of a vulnerable library method; in column 5, L OOSE REACH . ACC . S EM GREP , refers to reachability determined by the presence of the third-party library in the dependency tree according to SemGrep; in column 8, U NDET . A CC . S EMGREP 
+
+refers to Semgrep reporting the reachability as undetermined. For each Semgrep diagnosis, we also collect two metrics from 
+
+> FIKA
+
+: mtpl CALL SITE PRESENT , the number of CVEs for which FIKA can statically determine at least one call site; and EXEC . A CC . FIKA , the number of CVEs for which FIKA can provide executability guarantees. Semgrep identifies 16 CVEs as reachable based on a well-defined pattern of vulnerable mtpl usage, which is strong static reachability evidence (modulo dead code). For all the 16 CVEs, FIKA also statically identifies the call site containing the corresponding mtpl . In addition, FIKA augments this static reachability analysis with executability guarantees for 14 of the 16 cases. Semgrep’s loose reachability analysis reports 26 reachable CVEs across 7 modules, based on the presence of the third-party library in the dependency tree. By opposition to this loose diagnosis, FIKA reports concrete reachability evidence for 12 of these CVEs across 4 modules: FIKA statically finds invocations of vulnerable mtpl and generates reachability scenarios for all 12 of them. When Semgrep leaves developers uncertain about whether a vulnerable dependency is actually used, FIKA pinpoints the call sites and provides executable reachability scenarios for them. This helps developers to verify real usage and take precise, targeted mitigation actions instead of relying on coarse signals. Semgrep further classifies 135 CVEs as undetermined across all 13 modules. For these CVEs, Semgrep rules do not contain patterns to determine reachability, and developers cannot act upon this diagnosis without significant additional manual analysis. Out of the same 135 CVEs, FIKA finds that 35 are invoked in the project, and automatically generates a reachability scenario for 31 CVEs. In these cases, FIKA 
+
+provides developers with guarantees about CVE reachability. The reachability scenarios generated by FIKA can be directly used by developers to understand the interactions between the library code and the project code, and mitigate the impact of the CVEs accordingly. In Table V, we present the list of 59 CVEs for which FIKA 
+
+augments the results of Semgrep with guarantees of executabil-ity. The in the columns Semgrep and FIKA indicates strong reachability: for Semgrep, it means that a pattern is mapped to identify reachability, and for FIKA , it means the identification of the vulnerable mtpl in the code base with static analysis. and indicate loose and undetermined reachability reported by Semgrep, respectively. The ⋆ indicates the executability of the vulnerable mtpl as reported by FIKA .From row 1 to 16 of Table V, we present each 16 CVEs for which Semgrep reports reachability based on the defined static patterns. For example, in row 13, org.springframework :spring-expression , a third-party library of the poi-tl 
+
+module, contains a vulnerability related to uncontrolled re-source consumption, identified as CVE-2023-208634 . Sem-grep reports this vulnerability as reachable by matching a call to parseExpression(...) on any object within code that imports org.springframework.expression.spel. standard.SpelExpressionParser . This call site ap-pears within the mdp compute method of the class  
+
+> SpELRenderDataCompute
+
+in poi-tl , and FIKA detects the call site along with the path to reach it. FIKA further improves the results of Semgrep by providing evidence of the call site executability. The 12 CVEs for which FIKA provides executability guar-antees, while Semgrep reports only loose reachability, are shown from row 17 to row 28 in Table V. For example, in 
+
+> jooby-utow
+
+, 7 CVEs (rows 22–28) are identified as reachable by Semgrep based only on the presence of io.undertow :undertow-core in the dependency tree. FIKA provides stronger reachability evidence by confirming the existence of call sites invoking the dependency and providing executability guarantees for them. From row 29 to row 59, we present the 31 cases where 11 
+
+TABLE IV: Number of unique CVEs that Semgrep classifies as reachable or undetermined in each scanned module, along with their executability according to FIKA . S TRONG REACH . ACC . S EMGREP and L OOSE REACH . ACC . S EMGREP present the number of CVEs that Semgrep classifies as reachable with and without well-defined pattern matching, respectively. U NDET . ACC . S EMGREP present the number of CVEs that Semgrep classifies as having undetermined reachability. mtpl CALL SITE PRESENT reports the number of call sites associated with CVEs that exist in the project, regardless of their executability. E XEC . ACC . F IKA shows the number of call sites that FIKA determines to be executable.                                                                                                                               
+
+> MODULE
+> STRONG REACH .
+> ACC .SEM GREP
+> mtpl
+> CALL SITE PRESENT
+> EXEC .
+> ACC .FIKA
+> LOOSE REACH .
+> ACC .SEM GREP
+> mtpl
+> CALL SITE PRESENT
+> EXEC .
+> ACC .FIKA
+> UNDET .
+> ACC .SEM GREP
+> mtpl
+> CALL SITE PRESENT
+> EXEC .
+> ACC .FIKA
+> flink-parquet 22250020 11
+> flink-runtime 22250024 22
+> flink-protobuf 111000500
+> flink-orc 11141121 32
+> flink-metrics-datadog 110000300
+> graphhopper-core 111222511
+> graphhopper-web-bundle 11122217 33
+> jooby-netty 222000555
+> jooby-jetty 111000666
+> jooby-http2-netty 110000441
+> jooby-http2-jetty 111100744
+> jooby-utow 111777333
+> poi-tl 11100015 33
+> Total 16 16 14 26 12 12 135 35 31
+
+Semgrep reports undetermined reachability, but FIKA reports a positive result with executability guarantees. For example, in jooby-netty (rows 38–42) and jooby-jetty (rows 43–48), Semgrep reports 5 and 6 CVEs, respectively, for which reachability is undetermined. For each of them, FIKA 
+
+finds call sites where the vulnerable third-party libraries are invoked, identifies paths that reach them, and provides concrete proofs of executability. In these 31 cases, FIKA provides strong reachability guarantees where Semgrep is unable to determine any usage of the vulnerable third-party libraries in the project code. By making the third-party library interactions explicit,  
+
+> FIKA
+
+converts ambiguous results into verifiable evidence that developers can act upon. 
+
+Answer to RQ4 : FIKA is the state-of-the-art for provid-ing reachability guarantees of CVEs, clearly improving over Semgrep. These reachability guarantees, demonstrated with executable reachability scenarios let developers take prioritization decisions regarding the remediation of their dependency attack surface. V. D ISCUSSION 
+
+Time budget for reachability scenario generation with FIKA 
+
+Table VI reports the reachability scenario generation and execution times for the non-covered call sites in the eight modules used in RQ1-RQ3. It includes the time for generating reachability scenarios via the DeepSeek API, and executing the generated reachability scenarios. The experiments are conducted on a Gentoo Linux server with 200 GB RAM and two Intel Xeon Silver 4310 processors. The main cost in time comes from reachability scenario generation. This step can take several hours, and in some cases more than a day. The duration depends on the number and complexity of non-covered call sites, as well as the behavior of the underlying language model and its API. Reachability scenario execution is short for all modules and mainly depends on the number of generated reachability scenarios. Across all eight modules with DeepSeek V3.2, the total cost of reachability scenario generation is 4.52 USD, with an average cost of 0.0074 USD per successful reachability scenario. According to this time budget, developers who wish to use FIKA can decide not to run it on every commit. Instead, they can consider running it for a thorough dependency check before each release of their project, and focus the reachability scenario generation on non-covered call sites that have been introduced since the latest release. Future work on FIKA could also associate priorities to non-covered call sites, for example focus on sites that invoke a third-party library that has a known CVE. 
+
+Threats to validity 
+
+One main threat to validity of our study is the dependence on static analysis to identify the paths to third-party library method calls. Some invocations of third-party libraries may occur only at runtime or may be obfuscated, meaning our static analysis could miss them. This threat is minimized by our dynamic analysis step, where we invoke each statically identified method dynamically, increasing the chances of in-directly reaching other statically invisible functionality. Our choice of the prompt and the number of iterations of the feedback loop are another threat to validity of the reachability scenario generation pipeline. To mitigate this, we evaluate the impact of our design decisions through an incremental ablation study. The choice of the LLM also impacts the results, and a more powerful LLM could result in better outcomes. However, as the main goal of implementing FIKA is not to evaluate the ability of different LLMs to generate reachability scenarios, but rather to provide a proof of concept, we do not experiment with different LLMs. The final threat to validity concerns the transferability of our approach to Gradle, Kotlin, or other ecosystems and to other Java testing frameworks. In the latter case, our approach re-quires only minimal changes, specifically adapting the prompt to the LLM. However, in the former case, for other ecosystems, our approach or findings may not be directly transferable. 12 
+
+TABLE V: CVEs for which FIKA augments the results of Semgrep by providing strong guarantees of reachability. The results reported by Semgrep and FIKA are illustrated using four symbols: indicates that Semgrep detects reachability via well-defined patterns and FIKA 
+
+detects reachability by identifying an invocation of the vulnerable method; indicates that Semgrep reports reachability based only on the presence of the dependency in the dependency tree; indicates that reachability is undetermined by Semgrep; and ⋆ indicates that FIKA 
+
+confirms the executability of the vulnerable method. 
+
+# CVE MODULE VUL TPL SEMGREP FIKA 
+
+1 CVE-2024-7254 flink-orc com.google.protobuf:protobuf-java ⋆
+
+2 CVE-2024-7254 graphhopper-core com.google.protobuf:protobuf-java ⋆
+
+3 CVE-2024-7254 flink-protobuf com.google.protobuf:protobuf-java ⋆
+
+4 CVE-2025-12183 flink-runtime at.yawk.lz4:lz4-java ⋆
+
+5 CVE-2025-66566 flink-runtime at.yawk.lz4:lz4-java ⋆
+
+6 CVE-2025-46762 flink-parquet org.apache.parquet:parquet-avro ⋆
+
+7 CVE-2024-7254 flink-parquet com.google.protobuf:protobuf-java ⋆
+
+8 CVE-2024-7254 graphhopper-web-bundle com.google.protobuf:protobuf-java ⋆
+
+9 CVE-2025-58056 jooby-netty io.netty:netty-codec-http ⋆
+
+10 CVE-2024-47535 jooby-netty io.netty:netty-common ⋆
+
+11 CVE-2024-13009 jooby-jetty org.eclipse.jetty:jetty-server ⋆
+
+12 CVE-2025-5115 jooby-http2-jetty org.eclipse.jetty.http2:http2-common ⋆
+
+13 CVE-2023-208634 poi-tl org.springframework:spring-expression ⋆
+
+14 CVE-2023-4639 jooby-utow io.undertow:undertow-core ⋆
+
+15 CVE-2021-0341 flink-metrics-datadog com.squareup.okhttp3:okhttp 
+
+16 CVE-2025-55163 jooby-http2-netty io.grpc:grpc-netty-shaded 
+
+17 CVE-2021-22569 flink-orc com.google.protobuf:protobuf-java ⋆
+
+18 CVE-2022-3509 graphhopper-core com.google.protobuf:protobuf-java ⋆
+
+19 CVE-2021-22569 graphhopper-core com.google.protobuf:protobuf-java ⋆
+
+20 CVE-2022-3509 graphhopper-web-bundle com.google.protobuf:protobuf-java ⋆
+
+21 CVE-2021-22569 graphhopper-web-bundle com.google.protobuf:protobuf-java ⋆
+
+22 CVE-2024-1635 jooby-utow io.undertow:undertow-core ⋆
+
+23 CVE-2024-5971 jooby-utow io.undertow:undertow-core ⋆
+
+24 CVE-2025-12543 jooby-utow io.undertow:undertow-core ⋆
+
+25 CVE-2023-1108 jooby-utow io.undertow:undertow-core ⋆
+
+26 CVE-2024-4027 jooby-utow io.undertow:undertow-core ⋆
+
+27 CVE-2024-3884 jooby-utow io.undertow:undertow-core ⋆
+
+28 CVE-2024-6162 jooby-utow io.undertow:undertow-core ⋆
+
+29 CVE-2024-23454 flink-orc org.apache.hadoop:hadoop-common ⋆
+
+30 CVE-2022-3171 flink-orc com.google.protobuf:protobuf-java ⋆
+
+31 CVE-2024-23454 flink-runtime org.apache.hadoop:hadoop-common ⋆
+
+32 CVE-2025-48924 flink-runtime org.apache.commons:commons-lang3 ⋆
+
+33 CVE-2024-23454 flink-parquet org.apache.hadoop:hadoop-common ⋆
+
+34 CVE-2022-3171 graphhopper-core com.google.protobuf:protobuf-java ⋆
+
+35 CVE-2022-3171 graphhopper-web-bundle com.google.protobuf:protobuf-java ⋆
+
+36 CVE-2020-8908 graphhopper-web-bundle com.google.guava:guava ⋆
+
+37 CVE-2023-2976 graphhopper-web-bundle com.google.guava:guava ⋆
+
+38 CVE-2024-29025 jooby-netty io.netty:netty-codec-http ⋆
+
+39 CVE-2025-67735 jooby-netty io.netty:netty-codec-http ⋆
+
+40 CVE-2025-58057 jooby-netty io.netty:netty-codec ⋆
+
+41 CVE-2023-34462 jooby-netty io.netty:netty-handler ⋆
+
+42 CVE-2025-25193 jooby-netty io.netty:netty-common ⋆
+
+43 CVE-2024-8184 jooby-jetty org.eclipse.jetty:jetty-server ⋆
+
+44 CVE-2023-26049 jooby-jetty org.eclipse.jetty:jetty-server ⋆
+
+45 CVE-2023-26048 jooby-jetty org.eclipse.jetty:jetty-server ⋆
+
+46 CVE-2023-40167 jooby-jetty org.eclipse.jetty:jetty-http ⋆
+
+47 CVE-2024-6763 jooby-jetty org.eclipse.jetty:jetty-http ⋆
+
+48 CVE-2025-11143 jooby-jetty org.eclipse.jetty:jetty-http ⋆
+
+49 CVE-2023-34462 jooby-http2-netty io.netty:netty-handler ⋆
+
+50 CVE-2024-8184 jooby-http2-jetty org.eclipse.jetty:jetty-server ⋆
+
+51 CVE-2023-26049 jooby-http2-jetty org.eclipse.jetty:jetty-server ⋆
+
+52 CVE-2023-26048 jooby-http2-jetty org.eclipse.jetty:jetty-server ⋆
+
+53 CVE-2023-44487 jooby-http2-jetty org.eclipse.jetty.http2:http2-server ⋆
+
+54 CVE-2023-1973 jooby-utow io.undertow:undertow-core ⋆
+
+55 CVE-2024-3653 jooby-utow io.undertow:undertow-core ⋆
+
+56 CVE-2024-1459 jooby-utow io.undertow:undertow-core ⋆
+
+57 CVE-2025-31672 poi-tl org.apache.poi:poi-ooxml ⋆
+
+58 CVE-2025-48924 poi-tl org.apache.commons:commons-lang3 ⋆
+
+59 CVE-2024-38808 poi-tl org.springframework:spring-expression ⋆
+
+VI. R ELATED WORK 
+
+To the best of our knowledge, no prior tool generates reachability scenarios specifically for dynamic reachability analysis of third-party libraries. In this section, we discuss previous work relevant to our approach, including studies on program reachability analysis and dynamic analysis of third-party libraries. A few recent works on program reachability analysis focus on improving the scalability and efficiency of call graph generation in the presence of third-party libraries. Keshani 
+
+et al. [15] introduce a fast and lightweight approach called Frankenstein for complete static call graph generation, which processes third-party libraries individually and stitches them together afterward. Similarly, Wang et al. [29] propose a library-aware reachability analysis tool that is efficient enough to be integrated into IDEs. Although such static reachability analysis methods are efficient, they suffer from imprecision and unsoundness [17], [30]. FIKA performs dynamic analysis guided by static analysis and LLMs to overcome the limita-tions of purely static reachability analysis. Hybrid approaches that combine both static and dynamic reachability analysis are used by a few other related tools. 13                           
+
+> TABLE VI: Execution times for the 8 projects across FIKA . Column 2 reports the number of non-covered call sites which are the targets for the LLM-based generation of reachability scenarios. Columns 3 and 4 report the times to generate and execute the reachability scenarios.
+> Project # of non-covered call sites Reach. scenario generation time Reach. scenario execution time
+> flink 97 4 h 58 min 23s
+> graphhopper 199 5 h 54 min 22s
+> jooby 30 21 min 3s
+> mybatis-3 30 1 h 9 min 1m 4s
+> pdfbox 483 28 h 2 min 18s
+> tablesaw 15 9 min 8s
+> tika 22 33 min 12s
+> poi-tl 589 19 h 14 min 18s
+
+Mockingbird [31], a tool to analyze Java programs, uses static analysis to identify potentially vulnerable code regions before dynamically executing those regions using mock ob-jects. GAPS [32] analyzes method reachability in Android applications through a hybrid framework that uses static call graph traversal to guide dynamic execution. FIKA also aims to benefit from both static and dynamic reachability analysis.  
+
+> FIKA
+
+specifically targets the third-party library call sites, and aims to provide strong guarantees of executability for dependency usage. When it comes to the vulnerability analysis of third-party libraries, ecosystem-scale studies show that even though many projects depend on vulnerable libraries, only a very small fraction actually include call paths that reach the vulnerable functions [33]. Ponta et al. [34] propose Steady, a tool that determines if the vulnerable parts of a third-party library are actually reachable. It monitors code through test execution to see which parts are used. In our work, we find that even well-tested client projects cover, on average, only 55% of third-party library call sites. This limited coverage reduces the tool’s ability to detect dynamically reachable vulnerabilities. Vulnerability exploitation tools also use dynamic analysis to target and exercise vulnerable functions. Transfer, a tool introduced by Kang et al. [35], uses test mimicry to create vulnerability exploits by copying specific program states and inputs from a library’s own tests to check whether a client project can reach those same states. Vesta [19] improves on this by extracting parameters directly from known exploit code and injecting those values into a client project’s tests to confirm exploitability. Magneto [36] further handles complex scenarios where a vulnerable function is buried deep within long call chains. It uses a step-wise approach that breaks the chain into individual hops and processes each hop separately. Zhao et al. [37] propose a similar fuzzing-based approach for exploiting vulnerabilities in C/C++. Compared to these tools, FIKA focuses on analyzing the executability of third-party library methods rather than exploiting vulnerabilities. Instead of relying on existing exploit code or test artifacts, we extract execution context directly from the client project. We synthesize complete, executable code that triggers the full call chain end-to-end, rather than exploring it incrementally. This allows FIKA to provide guarantees of executability for dependency call sites. Apart from vulnerability analysis, third-party library reach-ability is often performed indirectly in broader dependency analysis work. Studies that perform dynamic analysis of third-party libraries typically identify the usage of third-party li-braries as a preliminary step, through the execution of existing tests. Soto-Valero et al. [18] propose a methodology for removing unused third-party libraries based on test coverage reports. However, as many projects do not have comprehensive test suites, this approach can lead to incorrectly removing de-pendencies whose methods are not executed during testing but are still required in production, potentially leading to failures. Amusuo et al. [20] use test execution to trigger runtime third-party library interactions and determine the resource accesses exercised by third-party libraries. In this case as well, weak test suites can result in incomplete results. Jayasuriya et al. [38] study the behavioral breaking changes in third-party libraries by running the client project test suites. The authors mention that about 40% of all projects do not have a test suite, and even those that do rarely cover all third-party library call sites. From another perspective, Raj et al. [39] find that only 32% of client projects use third-party library methods that are covered by library test suites. With FIKA , we aim to address these limitations and improve dynamic analysis of third-party library behavior by generating reachability scenarios that can cover a wider range of third-party library methods. VII. C ONCLUSION 
+
+In this paper, we propose the tool FIKA to identify exe-cutable third-party library call sites in a project and provide guarantees of their executability. To determine executability,  
+
+> FIKA
+
+runs developer-written test suites and identifies the call sites that are already proven to be executable. For the call sites that are not covered by the existing tests, FIKA extracts the paths required to reach them, along with path-related context, through static analysis. Then, using this rich context,  
+
+> FIKA
+
+prompts an LLM to generate a reachability scenario that can trigger the non-covered call sites and serve as concrete evidence of their executability. To evaluate our approach, we select eight real-world Java Maven projects, analyze their third-party library usage, and generate reachability scenarios for the non-covered third-party library call sites. Our results indicate that around half of the third-party library call sites are not covered even by well-written developer test suites. With 
+
+> FIKA
+
+, we show that, when provided with rich context, LLMs can cover previously non-covered call sites, even those deep in the codebase. Overall, FIKA increases executability guarantees of third-party library call sites by 20%. We also show that FIKA can improve state-of-the-art vul-nerability scanning tools such as Semgrep. FIKA goes beyond static approximations of Semgrep by exposing real execu-tion paths to vulnerable functions. It reduces uncertainty and provides concrete, actionable evidence of vulnerability reachability. Building on this work, it is possible to improve the accuracy of dependency analysis tools across different use cases. We identify five such applications: revealing runtime access privileges of third-party libraries (such as file or net-work access), detecting breaking library updates, improving the accuracy of coverage-based debloating or third-party li-brary specialization tools, and identifying implicit third-party libraries. 14 
+
+VIII. D ATA AVAILABILITY STATEMENT 
+
+The implementation of FIKA is publicly available on GitHub. A detailed setup for running the selected projects used in the evaluation of FIKA , along with all execution data and ablation studies, is also available on GitHub. The Semgrep execution results are provided at Semgrep Experiments. REFERENCES [1] R. Cox, “Surviving Software Dependencies: Software reuse is finally here but comes with risks,” Communications of the ACM , vol. 17, p. 24–47, Apr. 2019. [2] P. Mohagheghi and R. Conradi, “Quality, productivity and economic benefits of software reuse: a review of industrial studies,” Empirical Software Engineering , vol. 12, p. 471–516, Oct. 2007. [3] T. Rausch, W. Hummer, P. Leitner, and S. Schulte, “An Empirical Analysis of Build Failures in the Continuous Integration Workflows of Java-Based Open-Source Software,” in Proceedings of the International Conference on Mining Software Repositories (MSR) , pp. 345–355, 2017. [4] P. Ladisa, H. Plate, M. Martinez, and O. Barais, “SoK: Taxonomy of Attacks on Open-Source Software Supply Chains,” in Proceedings of the Symposium on Security and Privacy (S&P) , 2023. [5] F. Reyes, Y. Gamage, G. Skoglund, B. Baudry, and M. Monperrus, “BUMP: A Benchmark of Reproducible Breaking Dependency Up-dates,” in Proceedings of the International Conference on Software Analysis, Evolution and Reengineering (SANER) , pp. 159–170, 2024. [6] S. Larson, “Unmasking Phantom Dependencies with Software Bill-of-Materials as Ecosystem-Neutral Metadata.” Python Software Founda-tion, 2025. [7] R. Hiesgen, M. Nawrocki, T. C. Schmidt, and M. W¨ ahlisch, “The Log4j Incident: A Comprehensive Measurement Study of a Critical Vulnerability,” IEEE Transactions on Network and Service Management ,vol. 21, no. 6, pp. 5921–5934, 2024. [8] L. Williams, G. Benedetti, S. Hamer, R. Paramitha, I. Rahman, M. Tamanna, G. Tystahl, N. Zahan, P. Morrison, Y. Acar, M. Cukier, C. K¨ astner, A. Kapravelos, D. Wermke, and W. Enck, “Research Directions in Software Supply Chain Security,” ACM Transactions on Software Engineering and Methodology , May 2025. [9] H. Mohayeji, A. Agaronian, E. Constantinou, N. Zannone, and A. Sere-brenik, “Securing dependencies: A comprehensive study of dependabot’s impact on vulnerability mitigation,” Empirical Software Engineering ,vol. 30, no. 3, 2025. [10] A. Dann, H. Plate, B. Hermann, S. E. Ponta, and E. Bodden, “Identifying Challenges for OSS Vulnerability Scanners - A Study & Test Suite,” 
+
+IEEE Transactions on Software Engineering , vol. 48, no. 9, pp. 3613– 3625, 2022. [11] Y. Gamage, D. Tiwari, M. Monperrus, and B. Baudry, “The design space of lockfiles across package managers,” Empirical Software Engineering ,vol. 31, no. 3, p. 63, 2026. [12] M. Balliu, B. Baudry, S. Bobadilla, M. Ekstedt, M. Monperrus, J. Ron, A. Sharma, G. Skoglund, C. Soto-Valero, and M. Wittlinger, “Challenges of producing software bill of materials for java,” IEEE Security & Privacy , vol. 21, no. 6, pp. 12–23, 2023. [13] S. Mirhosseini and C. Parnin, “Can automated pull requests encourage software developers to upgrade out-of-date dependencies?,” in 2017 32nd IEEE/ACM International Conference on Automated Software En-gineering (ASE) , pp. 84–94, 2017. [14] C. Soto-Valero, N. Harrand, M. Monperrus, and B. Baudry, “A com-prehensive study of bloated dependencies in the maven ecosystem,” 
+
+Empirical Software Engineering , 2021. [15] M. Keshani, G. Gousios, and S. Proksch, “Frankenstein: fast and lightweight call graph generation for software builds,” Empirical Soft-ware Engineering , vol. 29, no. 1, p. 1, 2024. [16] L. Sui, J. Dietrich, M. Emery, S. Rasheed, and A. Tahir, “On the sound-ness of call graph construction in the presence of dynamic language features - a benchmark and tool evaluation,” in Programming Languages and Systems , pp. 69–88, Springer International Publishing, 2018. [17] J. Samhi, R. Just, T. F. Bissyand´ e, M. D. Ernst, and J. Klein, “Call graph soundness in android static analysis,” in The ACM International Conference on the Foundations of Software Engineering (FSE) , ISSTA 2024, p. 945–957, Association for Computing Machinery, 2024. [18] C. Soto-Valero, T. Durieux, N. Harrand, and B. Baudry, “Coverage-based debloating for java bytecode,” ACM Transactions on Software Engineering and Methodology , vol. 32, Apr. 2023. [19] Z. Chen, X. Hu, X. Xia, Y. Gao, T. Xu, D. Lo, and X. Yang, “Exploiting Library Vulnerability via Migration Based Automating Test Generation,” in Proceedings of the International Conference on Software Engineering (ICSE) , 2024. [20] P. Amusuo, K. A. Robinson, T. Singla, H. Peng, A. Machiry, S. Torres-Arias, L. Simon, and J. C. Davis, “ ztd JAV A : Mitigating software supply chain vulnerabilities via zero-trust dependencies,” in 2025 IEEE/ACM 47th International Conference on Software Engineering (ICSE) , (Los Alamitos, CA, USA), IEEE Computer Society, May 2025. [21] K. Karakaya, S. Schott, J. Klauke, E. Bodden, M. Schmidt, L. Luo, and D. He, “Sootup: A redesign of the soot static analysis framework,” in Tools and Algorithms for the Construction and Analysis of Systems ,pp. 229–247, Springer Nature Switzerland, 2024. [22] R. Pawlak, M. Monperrus, N. Petitprez, C. Noguera, and L. Seinturier, “Spoon: A library for implementing analyses and transformations of java source code,” Software: practice & experience , vol. 46, no. 9, p. 1155–1179, 2016. [23] DeepSeek-AI, A. Liu, A. Mei, B. Lin, and B. X. et al., “Deepseek-v3.2: Pushing the frontier of open large language models,” 2025. [24] LangChain, Inc., “Langchain.” https://github.com/langchain-ai/ langchain, 2023. Accessed: 2025. [25] LangChain, Inc., “Langgraph: Stateful, multi-actor applications with llms.” https://github.com/langchain-ai/langgraph, 2024. Accessed: 2025. [26] C. Soto-Valero, D. Tiwari, T. Toady, and B. Baudry, “Automatic special-ization of third-party java dependencies,” IEEE Transactions on Software Engineering , vol. 49, no. 11, pp. 5027–5045, 2023. [27] X. Zhang, X. Du, H. Chen, Y. He, W. Niu, and Q. Li, “ Automatically Generating Rules of Malicious Software Packages via Large Language Model ,” in Proceedings of the International Conference on Dependable Systems and Networks (DSN) , pp. 734–747, June 2025. [28] G. Matute, W. Ni, T. Barik, A. Cheung, and S. E. Chasins, “Syntactic Code Search with Sequence-to-Tree Matching: Supporting Syntactic Search with Incomplete Code Fragments,” Proceedings of the Confer-ence on Programming Language Design and Implementation (PLDI) ,pp. 2051–2072, 2024. [29] C. Wang, L. Lin, C. Wang, J. Huang, C. Wu, and R. Wu, “Reachcheck: Compositional library-aware call graph reachability analysis in the ides,” 
+
+ACM Transactions on Software Engineering and Methodology , Sept. 2025. [30] J. Samhi, M. Miltenberger, M. Alecci, S. Arzt, T. Bissyand´ e, and J. Klein, “Do you have 5 min? improving call graph analysis with runtime information,” in The ACM International Conference on the Foundations of Software Engineering (FSE) , p. 540–544, 2025. [31] D. Lockwood, B. Holland, and S. Kothari, “Mockingbird: A framework for enabling targeted dynamic analysis of java programs,” in 2019 IEEE/ACM 41st International Conference on Software Engineering: Companion Proceedings (ICSE-Companion) , pp. 39–42, 2019. [32] S. Doria and E. Losiouk, “Gaps: Guiding dynamic android analysis with static path synthesis,” arXiv preprint arXiv:2511.23213 , 2025. [33] A. M. Mir, M. Keshani, and S. Proksch, “On the effect of transitivity and granularity on vulnerability propagation in the maven ecosystem,” in 2023 IEEE International Conference on Software Analysis, Evolution and Reengineering (SANER) , pp. 201–211, 2023. [34] S. E. Ponta, H. Plate, and A. Sabetta, “Detection, assessment and mitigation of vulnerabilities in open source dependencies,” Empirical Software Engineering , vol. 25, no. 5, pp. 3175–3215, 2020. [35] H. J. Kang, T. G. Nguyen, B. Le, C. S. P˘ as˘ areanu, and D. Lo, “Test mimicry to assess the exploitability of library vulnerabilities,” in 
+
+Proceedings of the International Symposium on Software Testing and Analysis , p. 276–288, 2022. [36] Z. Zhou, Y. Yang, S. Wu, Y. Huang, B. Chen, and X. Peng, “Magneto: A step-wise approach to exploit vulnerabilities in dependent libraries via llm-empowered directed fuzzing,” in Proceedings of the 39th IEEE/ACM International Conference on Automated Software Engineering , ASE ’24, p. 1633–1644, Association for Computing Machinery, 2024. [37] Y. Zhao, M. Wu, X. Hu, S. Wang, M. Luo, and X. Xia, “Triggering and Detecting Exploitable Library Vulnerability from the Client by Directed Greybox Fuzzing,” arXiv preprint arXiv:2604.04102 , 2026. [38] D. Jayasuriya, V. Terragni, J. Dietrich, and K. Blincoe, “Understanding the impact of apis behavioral breaking changes on client applications,” in Proceedings of the International Conference on the Foundations of Software Engineering (FSE) , 2024. [39] R. Raj and D. E. Costa, “Towards Supporting Open Source Library Maintainers with Community-Based Analytics,” in Proceedings of the International Conference on Software Engineering (ICSE) , 2026.

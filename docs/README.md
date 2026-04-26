@@ -6,79 +6,78 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-04-23
-- 运行时间：2026-04-23 20:10:58 UTC
+- 最新运行日期：2026-04-26
+- 运行时间：2026-04-26 20:06:57 UTC
 - 运行状态：成功
 - 本次总论文数：19
 - 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日深度剖析 AI 智能体安全防线，涵盖从视觉注入到硬件漏洞的 19 篇前沿研究。
-核心揭示了视觉语言模型中的信任边界混淆风险，并推出了针对硬件安全的 LLM 越狱基准 HarmChip。
-建议开发者警惕计算机操作智能体在 UI 交互中的时序攻击，并引入人工引导的损害恢复机制。
-- 详情：[/202604/23/README](/202604/23/README)
+今日深度解析 19 篇前沿成果，重点攻克智能体计算机架构与 API 自动化测试两大核心难题。
+满
+- 详情：[/202604/26/README](/202604/26/README)
 
 ### 精读区论文标签
-1. [If you're waiting for a sign... that might not be it! Mitigating Trust Boundary Confusion from Visual Injections on Vision-Language Agentic Systems](/202604/23/2604.19844v1-if-youre-waiting-for-a-sign-that-might-not-be-it-mitigating-trust-boundary-confusion-from-visual-injections-on-vision-language-agentic-systems)  
+1. [MASFuzzer: Fuzz Driver Generation and Adaptive Scheduling via Multidimensional API Sequences](/202604/26/2604.17977v1-masfuzzer-fuzz-driver-generation-and-adaptive-scheduling-via-multidimensional-api-sequences)  
+   标签：评分：10.0/10、query:libfuz
+   evidence：自动化模糊测试驱动生成与多维API序列构建
+2. [From Craft to Kernel: A Governance-First Execution Architecture and Semantic ISA for Agentic Computers](/202604/26/2604.18652v1-from-craft-to-kernel-a-governance-first-execution-architecture-and-semantic-isa-for-agentic-computers)  
+   标签：评分：10.0/10、query:agsec
+   evidence：用于智能体计算机确定性安全控制的语义指令集架构与执行架构
+3. [CapSeal: Capability-Sealed Secret Mediation for Secure Agent Execution](/202604/26/2604.16762v1-capseal-capability-sealed-secret-mediation-for-secure-agent-execution)  
    标签：评分：9.0/10、query:agsec
-   evidence：缓解多模态智能体中覆盖用户意图的视觉注入攻击
-2. [HarmChip: Evaluating Hardware Security Centric LLM Safety via Jailbreak Benchmarking](/202604/23/2604.17093v1-harmchip-evaluating-hardware-security-centric-llm-safety-via-jailbreak-benchmarking)  
-   标签：评分：8.0/10、query:agsec
-   evidence：评估硬件设计工作流中LLM针对恶意输出和木马的安全性
-3. [Cat-DPO: Category-Adaptive Safety Alignment](/202604/23/2604.17299v2-cat-dpo-category-adaptive-safety-alignment)  
-   标签：评分：8.0/10、query:agsec
-   evidence：模型输出的类别自适应安全对齐
-4. [SDLLMFuzz: Dynamic-static LLM-assisted greybox fuzzing for structured input programs](/202604/23/2604.17750v1-sdllmfuzz-dynamic-static-llm-assisted-greybox-fuzzing-for-structured-input-programs)  
-   标签：评分：8.0/10、query:libfuz
-   evidence：大模型辅助的结构化输入程序灰盒模糊测试框架
-5. [Owner-Harm: A Missing Threat Model for AI Agent Safety](/202604/23/2604.18658v1-owner-harm-a-missing-threat-model-for-ai-agent-safety)  
-   标签：评分：8.0/10、query:agsec
-   evidence：AI智能体安全威胁模型与防御差距量化
-6. [ARES: Adaptive Red-Teaming and End-to-End Repair of Policy-Reward System](/202604/23/2604.18789v1-ares-adaptive-red-teaming-and-end-to-end-repair-of-policy-reward-system)  
-   标签：评分：8.0/10、query:agsec
-   evidence：减轻策略奖励系统中的安全漏洞及对抗性提示组合
-7. [FIKA: Expanding Dependency Reachability with Executability Guarantees](/202604/23/2604.20015v1-fika-expanding-dependency-reachability-with-executability-guarantees)  
-   标签：评分：8.0/10、query:libfuz
-   evidence：生成可执行代码以验证库调用点的可达性
+   evidence：用于安全智能体执行和策略评估的能力密封秘密中介
+4. [Governed MCP: Kernel-Level Tool Governance for AI Agents via Logit-Based Safety Primitives](/202604/26/2604.16870v1-governed-mcp-kernel-level-tool-governance-for-ai-agents-via-logit-based-safety-primitives)  
+   标签：评分：9.0/10、query:agsec
+   evidence：通过基于Logit的安全原语实现AI智能体的内核级工具治理
+5. [Safe and Policy-Compliant Multi-Agent Orchestration for Enterprise AI](/202604/26/2604.17240v1-safe-and-policy-compliant-multi-agent-orchestration-for-enterprise-ai)  
+   标签：评分：9.0/10、query:agsec
+   evidence：强制执行策略可行操作和安全约束的运行时协调层
+6. [SafeAgent: A Runtime Protection Architecture for Agentic Systems](/202604/26/2604.17562v1-safeagent-a-runtime-protection-architecture-for-agentic-systems)  
+   标签：评分：9.0/10、query:agsec
+   evidence：智能体系统的运行时保护架构与执行治理
+7. [SDLLMFuzz: Dynamic-static LLM-assisted greybox fuzzing for structured input programs](/202604/26/2604.17750v1-sdllmfuzz-dynamic-static-llm-assisted-greybox-fuzzing-for-structured-input-programs)  
+   标签：评分：9.0/10、query:libfuz
+   evidence：LLM辅助的结构化输入程序灰盒模糊测试
 
 ### 速读区论文标签
-1. [Human-Guided Harm Recovery for Computer Use Agents](/202604/23/2604.18847v1-human-guided-harm-recovery-for-computer-use-agents)  
+1. [The Consensus Trap: Rescuing Multi-Agent LLMs from Adversarial Majorities via Token-Level Collaboration](/202604/26/2604.17139v1-the-consensus-trap-rescuing-multi-agent-llms-from-adversarial-majorities-via-token-level-collaboration)  
+   标签：评分：8.5/10、query:agsec
+   evidence：通过Token级协作保护多智能体LLM免受对抗性提示注入攻击
+2. [SafeRedirect: Defeating Internal Safety Collapse via Task-Completion Redirection in Frontier LLMs](/202604/26/2604.20930v1-saferedirect-defeating-internal-safety-collapse-via-task-completion-redirection-in-frontier-llms)  
+   标签：评分：8.5/10、query:agsec
+   evidence：针对模型输出安全约束的系统级覆盖机制
+3. [Surgical Repair of Insecure Code Generation in LLMs](/202604/26/2604.16697v1-surgical-repair-of-insecure-code-generation-in-llms)  
    标签：评分：8.0/10、query:agsec
-   evidence：智能体的安全控制与伤害恢复
-2. [Temporal UI State Inconsistency in Desktop GUI Agents: Formalizing and Defending Against TOCTOU Attacks on Computer-Use Agents](/202604/23/2604.18860v1-temporal-ui-state-inconsistency-in-desktop-gui-agents-formalizing-and-defending-against-toctou-attacks-on-computer-use-agents)  
+   evidence：通过解决格式-可靠性差距的转向向量来减少不安全代码生成
+4. [Visual Inception: Compromising Long-term Planning in Agentic Recommenders via Multimodal Memory Poisoning](/202604/26/2604.16966v1-visual-inception-compromising-long-term-planning-in-agentic-recommenders-via-multimodal-memory-poisoning)  
    标签：评分：8.0/10、query:agsec
-   evidence：通过状态验证防御GUI智能体中的TOCTOU攻击
-3. [HardNet++: Nonlinear Constraint Enforcement in Neural Networks](/202604/23/2604.19669v1-hardnet-nonlinear-constraint-enforcement-in-neural-networks)  
-   标签：评分：8.0/10、query:agsec
-   evidence：在神经网络输出中强制执行非线性约束以确保安全
-4. [AgentSOC: A Multi-Layer Agentic AI Framework for Security Operations Automation](/202604/23/2604.20134v1-agentsoc-a-multi-layer-agentic-ai-framework-for-security-operations-automation)  
-   标签：评分：8.0/10、query:agsec
-   evidence：AI智能体基于风险的行动规划和符合策略的响应
-5. [Boundary Sampling to Learn Predictive Safety Filters via Pontryagin's Maximum Principle](/202604/23/2604.13325v1-boundary-sampling-to-learn-predictive-safety-filters-via-pontryagins-maximum-principle)  
+   evidence：多模态记忆投毒损害长期规划与意图
+5. [Know When to Trust the Skill: Delayed Appraisal and Epistemic Vigilance for Single-Agent LLMs](/202604/26/2604.16753v1-know-when-to-trust-the-skill-delayed-appraisal-and-epistemic-vigilance-for-single-agent-llms)  
+   标签：评分：7.5/10、query:agsec
+   evidence：自主智能体安全的元认知治理与认知控制
+6. [TitanCA: Lessons from Orchestrating LLM Agents to Discover 100+ CVEs](/202604/26/2604.17860v1-titanca-lessons-from-orchestrating-llm-agents-to-discover-100-cves)  
+   标签：评分：7.5/10、query:libfuz
+   evidence：编排LLM智能体进行自动化漏洞发现和CVE识别
+7. [Architectural Design Decisions in AI Agent Harnesses](/202604/26/2604.18071v1-architectural-design-decisions-in-ai-agent-harnesses)  
+   标签：评分：7.5/10、query:agsec
+   evidence：对包含安全控制和工具调解的Agent Harness的研究
+8. [When Choices Become Risks: Safety Failures of Large Language Models under Multiple-Choice Constraints](/202604/26/2604.16916v1-when-choices-become-risks-safety-failures-of-large-language-models-under-multiple-choice-constraints)  
    标签：评分：7.0/10、query:agsec
-   evidence：用于在自主系统中执行约束的安全过滤器
-6. [Filament: Denning-Style Information Flow Control for Rust](/202604/23/2604.14357v1-filament-denning-style-information-flow-control-for-rust)  
-   标签：评分：7.0/10、query:agsec
-   evidence：用于跟踪显式和隐式流的静态信息流控制库
-7. [Vibe-Coding: Feedback-Based Automated Verification with no Human Code Inspection, a Feasibility Study](/202604/23/2604.14867v1-vibe-coding-feedback-based-automated-verification-with-no-human-code-inspection-a-feasibility-study)  
-   标签：评分：7.0/10、query:libfuz
-   evidence：通过反馈循环自动验证LLM生成的代码
-8. [Enhancing Large Language Models with Retrieval Augmented Generation for Software Testing and Inspection Automation](/202604/23/2604.15270v1-enhancing-large-language-models-with-retrieval-augmented-generation-for-software-testing-and-inspection-automation)  
-   标签：评分：7.0/10、query:libfuz
-   evidence：使用大模型和RAG进行软件测试的自动化测试用例生成
-9. [From Exploration to Specification: LLM-Based Property Generation for Mobile App Testing](/202604/23/2604.13463v1-from-exploration-to-specification-llm-based-property-generation-for-mobile-app-testing)  
-   标签：评分：6.0/10、query:libfuz
-   evidence：使用LLM为移动应用测试自动生成属性
-10. [SWE-TRACE: Optimizing Long-Horizon SWE Agents Through Rubric Process Reward Models and Heuristic Test-Time Scaling](/202604/23/2604.14820v1-swe-trace-optimizing-long-horizon-swe-agents-through-rubric-process-reward-models-and-heuristic-test-time-scaling)  
+   evidence：LLM在多选题等结构化决策约束下的安全失效
+9. [Compiling Deterministic Structure into SLM Harnesses](/202604/26/2604.17450v1-compiling-deterministic-structure-into-slm-harnesses)  
+   标签：评分：6.5/10、query:agsec
+   evidence：将Agent工作流编译为离散执行计划和Harness
+10. [CASCADE: Detecting Inconsistencies between Code and Documentation with Automatic Test Generation](/202604/26/2604.19400v1-cascade-detecting-inconsistencies-between-code-and-documentation-with-automatic-test-generation)  
+   标签：评分：6.5/10、query:libfuz
+   evidence：自动生成测试以检测代码与文档之间的API不一致性
+11. [When Agents Go Quiet: Output Generation Capacity and Format-Cost Separation for LLM Document Synthesis](/202604/26/2604.16736v1-when-agents-go-quiet-output-generation-capacity-and-format-cost-separation-for-llm-document-synthesis)  
    标签：评分：6.0/10、query:agsec
-   evidence：自主软件工程智能体的安全控制与轨迹缩减
-11. [Schema Key Wording as an Instruction Channel in Structured Generation under Constrained Decoding](/202604/23/2604.14862v1-schema-key-wording-as-an-instruction-channel-in-structured-generation-under-constrained-decoding)  
+   evidence：LLM输出生成能力和Token效率的理论框架
+12. [Beyond Static Benchmarks: Synthesizing Harmful Content via Persona-based Simulation for Robust Evaluation](/202604/26/2604.17020v1-beyond-static-benchmarks-synthesizing-harmful-content-via-persona-based-simulation-for-robust-evaluation)  
    标签：评分：6.0/10、query:agsec
-   evidence：LLM结构化生成的约束解码
-12. [Feedback-Driven Execution for LLM-Based Binary Analysis](/202604/23/2604.15136v1-feedback-driven-execution-for-llm-based-binary-analysis)  
-   标签：评分：6.0/10、query:libfuz
-   evidence：基于反馈驱动的LLM二进制分析与工具交互
+   evidence：通过基于人格的模拟合成有害内容以进行鲁棒性评估
 
 
 <div class="dpr-home-promo-card">

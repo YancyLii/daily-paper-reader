@@ -6,46 +6,67 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-14
-- 运行时间：2026-06-14 21:40:22 UTC
+- 最新运行日期：2026-06-15
+- 运行时间：2026-06-15 22:17:12 UTC
 - 运行状态：成功
-- 本次总论文数：8
-- 精读区：2
+- 本次总论文数：15
+- 精读区：9
 - 速读区：6
 
 ### 今日简报（AI）
-1) 今日聚焦 LLM 智能体系统安全，精读了通过认证防御对抗持久智能体运行时内存投毒的方法，以及多模态智能体中超越攻击成功率的触发器泄漏问题。
-2) SMSR 提供可证明的运行时内存完整性保护，而触发器泄漏研究揭示了攻击者可能借由视觉-语言交互隐蔽抽取出触发条件。
-3) 建议关注智能体安全的研究者从认证防御与攻击面（尤其是触发器隐蔽泄漏）两端同步加固 Agent 系统，优先复现 SMSR 的保护机制。
-- 详情：[/202606/14/README](/202606/14/README)
+1) 今日精读9篇前沿论文，重点聚焦流式安全护栏、智能体能力保护与多智能体工作流安全。
+2) 最值得关注：FreoStream 通过未来感知推理让实时内容审核更前瞻，RedAct 则探索如何对智能体技能痕迹进行脱敏以保护核心流程。
+3) 建议读者优先阅读这两篇精读文章，尤其关注流式安全与智能体隐私保护的交叉趋势。
+- 详情：[/202606/15/README](/202606/15/README)
 
 ### 精读区论文标签
-1. [SMSR: Certified Defence Against Runtime Memory Poisoning in Persistent LLM Agent Systems](/202606/14/2606.12703v1-smsr-certified-defence-against-runtime-memory-poisoning-in-persistent-llm-agent-systems)  
+1. [FreoStream:Enhancing Stream Guardrails via Future-Aware Reasoning and Safety-Aligned Optimization](/202606/15/2606.13737v1-freostreamenhancing-stream-guardrails-via-future-aware-reasoning-and-safety-aligned-optimization)  
    标签：评分：10.0/10、query:agsec
-   evidence：针对持久性LLM代理系统内存投毒的认证防御
-2. [Beyond Attack Success Rate: Examining Trigger Leakage in Vision-Language Agentic Systems](/202606/14/2606.12586v1-beyond-attack-success-rate-examining-trigger-leakage-in-vision-language-agentic-systems)  
-   标签：评分：8.0/10、query:agsec
-   evidence：形式化视觉-语言代理中的触发器泄漏，即后门触发器无意中激活多模态输入中的隐藏行为，破坏用户意图完整性。
+   evidence：FreoStream通过微调LoRA模块进行未来感知推理，减少过度拒绝并捕捉隐式有害内容，是一种直接的token流控制机制。
+2. [RedAct: Redacting Agent Capability Traces for Procedural Skill Protection](/202606/15/2606.10813v3-redact-redacting-agent-capability-traces-for-procedural-skill-protection)  
+   标签：评分：9.0/10、query:agsec
+   evidence：提出了一种轨迹脱敏框架，防止智能体执行轨迹泄露私有程序化技能。
+3. [SEVRA-BENCH: Social Engineering of Vulnerabilities in Review Agents](/202606/15/2606.13757v1-sevra-bench-social-engineering-of-vulnerabilities-in-review-agents)  
+   标签：评分：9.0/10、query:vuldet
+   evidence：评估LLM代码审查员在对抗性拉取请求中检测漏洞能力的基准测试。
+4. [Hidden in Plain Sight: Benchmarking Agent Safety Against Decomposition Attacks with DECOMPBENCH](/202606/15/2606.13994v1-hidden-in-plain-sight-benchmarking-agent-safety-against-decomposition-attacks-with-decompbench)  
+   标签：评分：9.0/10、query:agsec
+   evidence：基准评估智能体在有害任务被分解为良性子任务时的安全性。
+5. [SkillMutator: Benchmarking and Defending Language-and-Code Cross-modal Attacks on LLM Agent Skills](/202606/15/2606.14154v1-skillmutator-benchmarking-and-defending-language-and-code-cross-modal-attacks-on-llm-agent-skills)  
+   标签：评分：9.0/10、query:agsec
+   evidence：防御LLM智能体跨模态攻击，防止通过篡改技能泄露数据，保护用户意图。
+6. [Investigating Metamorphic Fuzz Oracle Enhancement via Large Language Models](/202606/15/2606.14164v1-investigating-metamorphic-fuzz-oracle-enhancement-via-large-language-models)  
+   标签：评分：9.0/10、query:libfuz
+   evidence：基于LLM的框架自动生成并集成蜕变关系oracle到fuzz driver，增强库模糊测试。
+7. [Security in a Workflow: Exploring Role-Based Agentic Architectures for Vulnerability Handling](/202606/15/2606.14261v1-security-in-a-workflow-exploring-role-based-agentic-architectures-for-vulnerability-handling)  
+   标签：评分：9.0/10、query:vuldet
+   evidence：具有规划、分析、修复、验证角色和CodeQL的代理LLM漏洞处理工作流
+8. [AgentCyberRange: Benchmarking Frontier AI Systems in Realistic Cyber Ranges](/202606/15/2606.14295v1-agentcyberrange-benchmarking-frontier-ai-systems-in-realistic-cyber-ranges)  
+   标签：评分：9.0/10、query:vuldet
+   evidence：用于AI漏洞检测和利用的现实网络靶场基准
+9. [From Shield to Target: Denial-of-Service Attacks on LLM-Based Agent Guardrails](/202606/15/2606.14517v1-from-shield-to-target-denial-of-service-attacks-on-llm-based-agent-guardrails)  
+   标签：评分：9.0/10、query:agsec
+   evidence：揭示通过延长推理循环造成 LLM 护栏的拒绝服务漏洞
 
 ### 速读区论文标签
-1. [CAPED: Context-Aware Privacy Exposure Defense for Mobile GUI Agents](/202606/14/2606.12666v1-caped-context-aware-privacy-exposure-defense-for-mobile-gui-agents)  
-   标签：评分：7.0/10、query:agsec
-   evidence：面向移动GUI代理的上下文感知隐私防护，在上传前对敏感视觉线索进行内容安全约束。
-2. [Trajectory-Level Redirection Attacks on Vision-Language-Action Models](/202606/14/2606.12978v1-trajectory-level-redirection-attacks-on-vision-language-action-models)  
-   标签：评分：7.0/10、query:agsec
-   evidence：形式化保持命令的轨迹重定向攻击，与多模态输入中的意图保存相关
-3. [Getting Better at Working With You: Compiling User Corrections into Runtime Enforcement for Coding Agents](/202606/14/2606.13174v1-getting-better-at-working-with-you-compiling-user-corrections-into-runtime-enforcement-for-coding-agents)  
-   标签：评分：7.0/10、query:agsec
-   evidence：将用户修正编译为运行时检查以实现编码代理行为合规
-4. [SKILL.nb: Selective Formalization and Gated Execution for Durable Agent Workflows](/202606/14/2606.08049v1-skillnb-selective-formalization-and-gated-execution-for-durable-agent-workflows)  
-   标签：评分：6.0/10、query:agsec
-   evidence：通过门控执行和选择性形式化实现安全持久的代理工作流
-5. [Securing Code Understanding: Detecting Natural Backdoor Vulnerability in Code Language Models](/202606/14/2606.10846v1-securing-code-understanding-detecting-natural-backdoor-vulnerability-in-code-language-models)  
+1. [Smarter Saboteurs, Better Fixers: Scaling & Security in Linear Multi-Agent Workflows](/202606/15/2606.12709v1-smarter-saboteurs-better-fixers-scaling--security-in-linear-multi-agent-workflows)  
+   标签：评分：8.0/10、query:agsec
+   evidence：研究模型扩展对多代理系统抵抗提示注入攻击影响
+2. [PI-Hunter: Automated Red-Teaming for Exposing and Localizing Prompt Injections](/202606/15/2606.12737v1-pi-hunter-automated-red-teaming-for-exposing-and-localizing-prompt-injections)  
+   标签：评分：8.0/10、query:agsec
+   evidence：自动化红队审计暴露提示注入漏洞，为智能体的令牌流安全分析做出贡献。
+3. [HierSVA: A Data Synthesis Pipeline, Dataset, and Benchmark for LLM-Driven Hierarchical Hardware Formal Verification](/202606/15/2606.13706v1-hiersva-a-data-synthesis-pipeline-dataset-and-benchmark-for-llm-driven-hierarchical-hardware-formal-verification)  
+   标签：评分：8.0/10、query:vuldet
+   evidence：LLM驱动的流水线为硬件RTL生成形式验证断言，辅助硬件设计中的漏洞检测。
+4. [Contract-Based Compositional Shielding for Safe Multi-Agent Reinforcement Learning](/202606/15/2606.14130v1-contract-based-compositional-shielding-for-safe-multi-agent-reinforcement-learning)  
+   标签：评分：8.0/10、query:agsec
+   evidence：去中心化屏蔽强制多代理强化学习中的 LTL 安全规范
+5. [Evaluating LLMs for Obfuscation Detection and Classification in Android Apps](/202606/15/2606.14233v1-evaluating-llms-for-obfuscation-detection-and-classification-in-android-apps)  
+   标签：评分：7.0/10、query:vuldet
+   evidence：评估大语言模型检测安卓应用混淆的能力，该任务通过减轻混淆对静态分析工具的影响来支持漏洞检测。
+6. [Categorical Robustness Assessment for Machine Learning based Network Intrusion Detection Systems](/202606/15/2606.12075v1-categorical-robustness-assessment-for-machine-learning-based-network-intrusion-detection-systems)  
    标签：评分：6.0/10、query:vuldet
-   evidence：研究CodeLM中的自然后门漏洞，与对代码分析模型的对抗攻击相关
-6. [MPC-Patch-Bench: Security-Aware LLM Code Patch for Multi-Party Computation](/202606/14/2606.11416v1-mpc-patch-bench-security-aware-llm-code-patch-for-multi-party-computation)  
-   标签：评分：6.0/10、query:vuldet
-   evidence：基于LLM的安全感知MPC代码补丁基准
+   evidence：对入侵检测中ML分类器的对抗鲁棒性进行系统评估，评估不同架构的健壮性。
 
 
 <div class="dpr-home-promo-card">

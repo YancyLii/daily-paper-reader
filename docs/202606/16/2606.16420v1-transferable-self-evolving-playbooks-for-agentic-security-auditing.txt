@@ -1,0 +1,1094 @@
+Title: Transferable Self-Evolving Playbooks for Agentic Security Auditing
+
+URL Source: https://arxiv.org/pdf/2606.16420v1
+
+Published Time: Tue, 16 Jun 2026 02:31:53 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+## Transferable Self-Evolving Playbooks for Agentic Security Auditing 
+
+Ziyue Wang ∗, Cheuk Wang Maurice Ng ∗, Chenchen Yu †, Strick Sheng ∗, Kaihua Qin ‡§ , Liyi Zhou ∗§ ∗The University of Sydney †Independent ‡University of Warwick §UC Berkeley RDI 
+
+Abstract —An LLM agent for vulnerability discovery and val-idation is more than a model. It combines three components: (i) an underlying LLM for code analysis, (ii) a general-purpose agent harness, such as Codex or OpenCode, for repository nav-igation, tool use, context, and long-horizon execution, and (iii) an audit “playbook”, domain-specific procedural knowledge that guides the LLM and harness toward effective vulnerability discovery. Prior work relies on human-supplied “playbooks” in several forms, including prompt engineering, role play, manu-ally designed audit workflows, curated vulnerability knowledge bases (e.g., via RAG), and heuristics. This raises two research questions: (RQ1) Acquisition – Is human curation necessary? Can playbook creation be fully automated? (RQ2) Transfer – Can an evolved playbook transfer the audit procedure to weaker agents, improving their capability? We present E VO HUNT , which instantiates a playbook evo-lution environment over open-source repositories for security auditing. Three agents drive the evolution loop: (i) an audit agent rolls out the current playbook and produces findings and evidence; (ii) an evaluator scores outcomes against ground truth; and (iii) a reviser commits updates to the playbook based on failure analysis. The playbook format is unconstrained: starting empty, E VO HUNT freely adds or removes workflows, heuristics, vulnerability knowledge, or any domain-specific content. The evolved playbook requires only minor adaptation to run under a different LLM or harness. We evaluate E VO HUNT on 813 open-source security ad-visories for evolution and 371 held-out advisories for testing. For acquisition, playbook evolution raises end-to-end exploits for Codex/GPT5.4-xhigh 6× (1.1% →6.2%), and the evolved OpenCode/GLM5.1 playbook surpasses OpenAI Codex Secu-rity on every metric (11.3% vs. 9.2%), showing open-source evolution can outperform a dedicated commercial product. For transfer, the GLM-evolved playbook gives the strongest student lift (27B: 2.4% →6.5%; A3B: 1.1% →4.6%) and yields 2.4×
+
+more A3B matches than GPT transfer. 
+
+1. Introduction 
+
+Large language model (LLM) agents are moving from assistants to operators that inspect code, run tools, modify 
+
+Author contributions: Liyi supervised the project; Ziyue led implementa-tion. Ziyue and Liyi jointly contributed to research design, analysis, and writing. Maurice and Chenchen helped run experiments and check results. Maurice, Strick, and Chenchen handled manual validation and responsible disclosure. Kaihua contributed framing, interpretation, and revision. 
+
+Funding: Supported by the Australian Research Council Discovery Early Career Researcher Award (ARC DECRA) under grant DE260101642. 
+
+Figure 1. E VO HUNT overview. A teacher agent iterates on source audit cases to revise an audit playbook P ⋆s ; the playbook transfers to a student agent via a lightweight adapter At, without changing model weights or harness. Sections 2–3 define background and scope; Sections 4–5 formalize and implement evolution and transfer; Sections 6–8 cover benchmark, conditions, and results; Sections 11–12 situate, discuss, and conclude. 
+
+files, drive browsers, and maintain multistep state over long horizons. Agentic operation is consequential for application security. Security auditing is not a single classification deci-sion: an agent must enumerate attack surfaces, infer trust boundaries, form exploit hypotheses, trace source-to-sink flows, build or run targets, and decide whether runtime evidence supports a root cause claim. This shift is visi-ble across recent security research: benchmarks test agents in exploit reproduction and cyber task environments [1]– [3]; specialized agents pair LLMs with scanners, browsers, fuzzers, or program analysis tools for penetration testing, mobile and web analysis, protocol testing, and firmware auditing [4]–[8]; and repository-level systems study vul-nerability detection as code auditing with program context, validation, memory, or multiple agent reasoning [9]–[12]. Industry deployments such as Project Glasswing, Daybreak, and Codex Security show that frontier agents are being used for vulnerability discovery, validation, and remedi-ation [13]–[15]. Yet progress is often framed as a race centered on model capability: use a stronger model, a larger context window, or a detailed workflow written by humans. Treating security auditing performance as primarily a property of the underlying model misses a procedural di-mension. Many audit failures are failures of method: the agent searches the wrong attack surface, accepts a nearby bug that is not exploitable, stops before building a verifier, 
+
+> arXiv:2606.16420v1 [cs.CR] 15 Jun 2026
+
+or drifts away from the root cause. An auditor with weaker model capability may still approach the performance of a stronger agent by following a disciplined procedure and us-ing the available tools reliably. We therefore ask how much of the security auditing task is intrinsic model capability, and how much can be externalized as a reusable procedure. The procedure question mirrors Sutton’s “bitter lesson”: durable progress often comes from systems that learn and search, rather than systems that freeze expert rules [16]. We do not claim that model weights or agent harnesses should be frozen in general; both are powerful, general-purpose components that will continue to improve. In our setting, however, fixing the model and harness isolates the effect of the external audit procedure: improvements cannot be attributed to a stronger model, a different orchestration policy, or hidden changes in tool use. This isolation tests whether security auditing has a procedural engineering core: can disciplined coverage, validation, and evidence construc-tion be learned as a reusable method, or are gains dominated by irreducible model capability? Given the same pretrained model and the same externally supplied harness, can re-peated attempts, grounded evaluation, and revision distill a reusable playbook? The learned artifact is not merely a prompt or memory log. It is a procedure specific to the task, outside the model and harness, that can be inspected, versioned, improved, and transferred across agents. We present E VO HUNT , a playbook evolution frame-work. The framework keeps the underlying model and har-ness fixed. The learned object is a versioned text reposi-tory containing workflow guidance, vulnerability class au-dit strategies, validation gates, false-positive controls, and reproduction requirements. During evolution, a discovery agent runs on audit cases whose source is available; an evaluator compares its output against ground truth and exe-cutable evidence; and a reviser edits the playbook through changes backed by evidence. Playbook evolution produces a sequence of commits that are measurable on held-out cases and inspectable for learned procedure. Our paper is organized around two research questions: 
+
+(RQ1) Acquisition. Can an agent acquire an audit procedure through repeated attempts, grounded evaluation, and revi-sion, without changing its model or harness? We instantiate EVO HUNT across two agent environments: a closed-source Codex/GPT5.4-xhigh agent and an open-source OpenCode/ GLM5.1 agent [17], [18]. For each environment, the con-trolled variable is not model capability but the playbook: empty versus evolved by the loop. We also include OpenAI Codex Security as a product-style baseline for open-source software vulnerability scanning, since the Codex Security workflow builds security context specific to each repository, validates candidate issues, and proposes fixes [15]. 
+
+(RQ2) Transfer. Can a playbook evolved by a stronger teacher improve weaker student models? We ask whether Qwen family student models [19], [20] improve when given playbooks evolved by stronger GPT and GLM teachers. The transfer study separates three quantities that are usu-ally entangled: model capability, playbook quality, and the compatibility between a model and a procedure. We evaluate these questions on a temporally sepa-rated benchmark of locally reproducible, high- and critical-severity open-source advisories, spanning three years of evolution (2023-01–2025-12) and four months of held-out testing (2026-01–2026-04). Our primary contributions are:  
+
+> •
+
+An autonomous playbook evolution framework. Prior work supplies agents with security knowledge through hu-man authored prompts, curated vulnerability databases, or manually designed audit workflows. We take the opposite approach: give the agent an empty playbook and an unconstrained search space , and only provide a minimal evolution loop (discovery, evaluation, revision) to ground updates in evidence. The agent decides what to learn, how to structure the procedure, and what security knowledge to accumulate. Starting from empty, both evolved playbooks reach 1,616 and 2,177 lines of agent-authored audit pro-cedure across 38 accepted revisions.  
+
+> •
+
+A temporally separated, reproducible open source software (OSS) advisory benchmark. We construct a fully reproducible benchmark from the GitHub Advisory Database: 813 training and 371 held-out advisories across 10 ecosystems and 112 CWE classes, each reproducible in a local Docker environment. CVSS v4.0 reachability and low attack complexity filters ensure each vulnerability is genuinely exploitable in a controlled setting, requiring no external assumptions or vendor confirmation to verify. Every case thus admits objective, executable verification.  
+
+> •
+
+Procedure acquisition and transfer. In RQ1, play-book evolution raises Codex/GPT5.4-xhigh end-to-end exploits 6× (4 →23, 1.1% →6.2%); the evolved Open-Code/GLM5.1 playbook surpasses OpenAI Codex Se-curity on every metric (31 vs. 13 exploits; 11.3% vs. 9.2% match rate), showing open-source evolution can outperform a dedicated commercial product . In RQ2, GLM-teacher transfer improves both Qwen students: 2.4% →6.5% ( 2.7×) for Qwen3.6-27B and 1.1% →4.6% (4×) for Qwen3.6-35B-A3B.  
+
+> •
+
+Vulnerability disclosures. EVO HUNT has produced 28 confirmed vulnerability disclosures across 18 open-source projects, acknowledged via GitHub Security Advisories, CVEs, and a $1,500 bug bounty award (cf. Appendix A).  
+
+> •
+
+Public artifacts. To support public verifiability and reproducibility, we release the paper artifacts, benchmark materials, and scoring records at 
+
+> https://github.com/evohunt-project/artifacts
+
+.
+
+2. Background 
+
+We introduce the background used throughout the paper. 
+
+Severity. CVSS is an open framework for representing vulnerability characteristics and severity [21]. A CVSS v4.0 record contains a numerical score and a vector of metrics. The qualitative scale maps the base score to None (0.0), Low (0.1–3.9), Medium (4.0–6.9), High (7.0–8.9), or Critical (9.0–10.0); our benchmark focuses on High and Critical. The vector fields matter more for our threat model than the final label. Exploitability metrics describe how an attacker reaches the vulnerability (AV, AC, AT, PR, UI); impact metrics describe confidentiality, integrity, and availability effects. Section 3 uses these fields to define which vulnera-bilities are reachable and locally auditable. 
+
+Weakness classes. CWE is a community-maintained taxon-omy of software and hardware weakness types [22]. A CWE class describes the underlying weakness pattern rather than a specific vulnerable product. For example, CWE-22 denotes path traversal, CWE-89 denotes SQL injection, and CWE-79 denotes cross-site scripting. We use CWE labels to analyze benchmark diversity and playbook coverage. 
+
+Advisories. Public vulnerability advisories are structured records about known vulnerabilities in released software. In the GitHub Advisory Database, an advisory may include identifiers, affected packages and version ranges, references, severity labels, CVSS vectors, CWE identifiers, and links to commits, releases, or upstream reports [23]. In our bench-mark, advisories provide the public disclosure record and metadata used for case qualification and temporal splitting. 
+
+Model. The model is the underlying LLM that performs code and security reasoning. Model capability affects se-mantic understanding, long-horizon reasoning, tool-use re-covery, and the ability to connect dispersed evidence across a repository. The model set referenced later includes GPT5.4-xhigh (cutoff 2025-08), whose parameter count is not publicly disclosed; GLM5.1 (cutoff 2026-01), a mixture-of-experts model with 744B total parameters and 40B ac-tive parameters [17]; Qwen3.6-35B-A3B (cutoff 2025-04), a mixture-of-experts model with 35B total parameters and 3B active parameters [19]; and Qwen3.6-27B (cutoff 2025-04), a dense model with 27B parameters [20]. 
+
+Harness. The harness is the runtime substrate that supplies repository state, tool access, shell and browser execution, sandboxing, context management, memory or compaction, and optional subagent invocation. The harness provides execution infrastructure, but it does not define the audit method. The harnesses referenced later are Codex and Open-Code [18]; Codex/GPT5.4-xhigh and OpenCode/GLM5.1 denote the corresponding model-harness environments. 
+
+Playbook. The playbook is the external audit procedure. Decisions such as which attack surfaces to inspect first, when to move from discovery to validation, how to assign subagents, which vulnerabilities to prioritize, how to reject non-exploitable adjacent bugs, and what evidence is required before reporting belong to the playbook. External security knowledge not supplied by model weights, including vulner-ability class guides, source-to-sink patterns, validation and reproduction strategies, is also playbook content. 
+
+OpenAI Codex Security. A commercial cloud workflow for repository vulnerability scanning and remediation [15]; used in this study as a reference point (see Table 3). 
+
+3. Models 
+
+This section defines the system model, threat model, audit scope, and auditor model used throughout the paper. 
+
+System model. The target system is an OSS repository or package available to an auditor with source code access. The auditor may use any local analysis method, including code inspection, dependency and configuration analysis, local tools, builds, tests, scripts, service execution, and HTTP or browser interaction. The audit is open world: a repository may contain multiple vulnerabilities, and the complete vul-nerability set is generally unknown. The auditor may report any in-scope vulnerability it can substantiate, regardless of whether that vulnerability is the known target used for benchmark scoring. We model an audit case as: 
+
+case = ( repo , env , setup )
+
+, where repo is the repository snapshot, env is the local execution environment, and setup is setup metadata. The local execution environment includes dependency manifests, scripts, containers, service configurations, test harnesses, and local mocks. It need not reproduce a full production deployment. It must, however, make the relevant attack surface reachable and allow runtime evidence collection. 
+
+Threat model. The attacker can obtain the target software, deploy it in an isolated local environment, and operate against it as an external party. Depending on the target type, the attacker controls inputs through network interfaces (HTTP requests, remote API calls, and custom protocols), local interfaces (command-line arguments, files, environ-ment variables, and inter-process communication), or pro-grammatic interfaces (function arguments, serialized data, and configuration passed to library APIs). The attacker is subject to the CVSS attack vector and privilege assumptions. It lacks high privileges (unless the vulnerability is reachable through a privileged interface), maintainer or commit access, deployment shell access, privileged cloud credentials, and trusted-infrastructure control. 
+
+Audit scope. The following three criteria select vulnerabili-ties that are both impactful and reproducible under the threat model. Severity filters for meaningful impact; reachability and local verifiability together ensure exploitation can be demonstrated in an isolated environment, a necessary con-dition for automated evaluation with concrete evidence. An in-scope case must satisfy all three:  
+
+> •
+
+Severity. The advisory must be rated High or Critical (CVSS base score ≥ 7.0). Low and Medium severity cases are more ambiguous, introduce significant noise, and are harder to validate with concrete evidence; we focus on cases where impact is clear and significant.  
+
+> •
+
+Reachability. The vulnerability must be exercisable within the attacker capability defined above. The CVSS v4.0 qualification profile is [21]: 
+
+AV ∈ { Network , Local }, AC = Low , AT = None ,
+
+PR ∈ { None , Low }, UI ∈ { None , Passive },
+
+∃I ∈ { VC , VI , VA , SC , SI , SA } : val( I)̸ = None .
+
+AV, AC, AT, PR, and UI are the CVSS v4.0 exploitability metrics: attack vector, complexity, requirements, privi-leges required, and user interaction. We restrict to Net-work or Local attack vectors (exercisable in the audit workspace; programmatic interfaces such as library APIs fall under AV:Local), Low complexity and no attack re-quirements (no special conditions or deployment prerequi-sites), and None or Low privileges with None or Passive source evolution target transfer                                    
+
+> Gs Gt
+> P0
+> P1
+> P2
+> P3
+> P′
+> 1
+> P′
+> 2
+> P⋆s
+> transfer
+> P⋆s
+> Pt, 1
+> Ps→t
+> Ps→t=P ⋆s·AtAt: target execution adapter
+> accepted fork/reject source batch selection target adapter refinement
+> b=1 P0run eval revise P1
+> P′
+> 1
+> C1
+> accept
+> reject
+> b=2 P1run eval revise P2
+> P′
+> 2
+> C2
+> accept
+> reject
+> b=3 P2run eval revise P3P ⋆s
+> freeze
+> C3
+> P ⋆sGt
+> transfer
+> adapt rounds
+> Ps→t
+> run P ⋆s·At
+> revise At
+> execution selected fork/reject
+
+Figure 2. Procedure learning in playbook space. Left : abstract trajectory through a shared space of audit playbooks. Gs (source); Gt (target); accepted revisions; forked/rejected; frozen P ⋆s . Nearby points are semantically similar procedures; darker contours indicate higher audit utility. Starting from 
+
+P0, the learner keeps P1, P 2, P 3, discards P ′ 
+
+> 1
+
+and P ′
+
+> 2
+
+, freezes P ⋆s , and transfers it to Gt, where adapter At yields Ps→t. Right : the same trajectory as concrete batch execution. Cb = Nb ∪ Rb is the case batch for round b, combining new cases Nb with replay cases Rb. C1, C 2, C 3 are successive audit workloads, not model checkpoints; after the final source round P ⋆s is frozen and the target adapter refined to yield Ps→t.
+
+user interaction, so that exploitation is reproducible by a low-privilege external attacker without active target behavior. The six impact metrics measure confidentiality, integrity, and availability across two scopes: the directly vulnerable system (V prefix, e.g., VC) and subsequently affected systems (S prefix, e.g., SC). The final condition requires at least one of these six to be non-None, exclud-ing vulnerabilities that cause no measurable consequence.  
+
+> •
+
+Local verifiability. The exploit predicate must be locally reproducible inside Docker; vulnerabilities requiring live third-party services, cloud infrastructure, physical access, or production-only conditions are out of scope. 
+
+Auditor model. EVO HUNT externalizes audit procedure into a text playbook P , keeping the agent environment G
+
+fixed across experimental conditions. A playbook version is 
+
+P = ( workflow , knowledge , validation ),
+
+where workflow specifies how to cover a repository and form exploit hypotheses, knowledge encodes security-domain guidance, and validation defines what evidence is sufficient for a reportable finding. This external playbook P is the variable object in our controlled comparisons. The agent en-vironment G comprises the underlying LLM, tool interface, and orchestration code; it is fixed within each experimental condition. A discovery run is 
+
+run (G, P, case ) → (trace , artifacts , evidence ),
+
+where trace is the execution trace, artifacts the finding set, and evidence collects runtime evidence (command outputs, verifier results, logs, and PoC outputs). A reportable finding f ∈ artifacts is a tuple 
+
+f = ( root , impact , predicate , support ),
+
+where root is a root-cause claim, impact is an impact claim, predicate is the exploit predicate connecting them, and support ⊆ evidence is supporting evidence. Crashes, error messages, or anomalous behavior alone are insuffi-cient unless the evidence establishes predicate . To prevent shortcut answer lookup, the auditor may not use external search or retrieval to obtain vulnerability information about the target, such as advisory text, patch diffs, public PoCs, 
+
+TABLE 1. T EXT -SPACE ANALOGUES FOR PROCEDURE ACQUISITION 
+
+(TOP ) AND PLAYBOOK TRANSFER (BOTTOM ). Notion EVO HUNT analogue 
+
+Continual procedure learning 
+
+Trainable state External playbook P
+
+Data stream Temporal audit batches N1, . . . , N B
+
+Replay memory Replay cases Rb
+
+Trajectory batch Rollout records XP,C b
+
+Selection signal S(P, C b) and F (P, C b)
+
+Gradient step Textual revision Revise (P, F )
+
+Checkpoint Playbook revision commit Model selection Same-batch playbook comparison Deployment Frozen P ⋆ on held-out cases 
+
+Transfer procedure learning 
+
+Pretrained backbone Evolved source playbook P ⋆s
+
+Adapter parameters Execution adapter At, initialized empty Fine-tuned model Combined procedure P ⋆s ⊕ At
+
+Loss signal Rollout failure report under Gt
+
+Gradient direction Abstracted failure pattern Budget constraint Maximum adapter size B
+
+Early stopping Score saturation or gap exhaustion No-transfer baseline Empty playbook P∅
+
+Transfer gain Paired lift ∆t←s
+
+Residual gap Remaining model or harness capability 
+
+issue discussions, or writeups; our experiments enforce this policy by checking execution traces. 
+
+4. Methodology 
+
+This section formulates E VO HUNT as a model-agnostic procedure learning framework; model and harness choices are deferred to the evaluation. Inspired by continual [24], [25] and transfer learning [26], we externalize the learning signal into a revisable text procedure rather than model weights: continual procedure learning for acquisition and 
+
+transfer procedure learning for generalization. 4.1. Continual Procedure Learning 
+
+Acquisition asks whether audited experience can im-prove a reusable audit procedure, i.e., update P so that 
+
+run (G, P, case ) produces better-validated findings (cf. Sec-tion 3). We model acquisition as a sequence of training batches N1, . . . , N B ; at round b the learner may augment 
+
+Nb with replay cases Rb from earlier rounds: 
+
+Cb = Nb ∪ Rb.
+
+Replay is theoretically optional in the abstract method, but it captures the continual learning intuition: a procedure should improve on new failures without forgetting earlier audit lessons. For a candidate playbook P , running the fixed agent on Cb produces execution records 
+
+XP,C b = {run (G, P, case ) : case ∈ Cb}.
+
+A grounded evaluator maps those records and the withheld case labels LCb (ground-truth vulnerability identities and evidence thresholds, not shown to the agent) to a scalar score for selection and a structured failure report for revision: 
+
+Eval (P, C b, XP,C b , LCb ) → (S(P, C b), F (P, C b)) .
+
+The score S selects between playbook versions; the failure report F is the learning signal for procedure revision. The reviser converts failures into edits of the playbook: 
+
+Revise (P, F ) → P ′,
+
+where P ′ is the proposed new playbook. This is the text-space analogue of a gradient step: the edit should explain what went wrong across runs, generalize the failure into reusable audit guidance, and avoid memorizing repository names, advisory details, or exploit strings. Table 1 (top) summarizes the continual learning analogues. 
+
+Selection and stopping. Procedure learning uses a selec-tion gate before deployment. Let P best  
+
+> b
+
+denote the current selected playbook and P cand  
+
+> b
+
+a proposed alternative. A round compares playbooks on the same fixed batch and selects 
+
+P ⋆b = arg max      
+
+> P∈{ Pbest
+> b,P cand
+> b}
+
+S(P, C b).
+
+The selected playbook becomes the base for the next re-vision. After the finite training window ends, the learner freezes the selected playbook P ⋆. Held-out testing runs 
+
+P ⋆ without further revision. This separation is essential: the method studies whether prior validated experience can produce a reusable audit procedure, not whether an agent can keep adapting on the test set. 
+
+Q: Why process each data point once, in chronologi-cal order (continual learning), rather than re-running it until E VO HUNT stops improving (typical training)? A: While there are many possible designs, our goal is to make E VO HUNT as production ready as possible. In reality, all published advisories seed the initial playbook, and new disclosures simply extend the same stream as they arrive. In other words, the system self-improves indefinitely without retraining using continual learn-ing . The temporal train/test split used in this paper is an artificial construct introduced solely to measure held-out performance; the underlying mechanism is identical. 
+
+4.2. Transfer Procedure Learning 
+
+Transfer asks whether a learned audit procedure can move across agent environments, and whether adaptation can close the residual gap. The source environment Gs
+
+produces a frozen playbook P ⋆s . For the target environment 
+
+Gt, we introduce an adapter At, initialized as empty, that records target-specific execution guidance rather than new source-task knowledge. The combined procedure is 
+
+Ps→t = P ⋆s ⊕ At,
+
+where ⊕ denotes prompt-level concatenation: both docu-ments are presented as distinct tagged sections in the agent’s context, with P ⋆s preceding At. The source playbook P ⋆s
+
+is never modified during adaptation; only At evolves. The adapter encodes execution gaps between Gs and Gt. Table 1 (bottom) summarizes the transfer learning analogues. The adapter is evolved through a revision loop on training cases run under Gt. Each round collects rollout traces, abstracts them into recurring target-execution failure patterns rather than case-specific fixes, and proposes an edit to At. The failure diagnosis asks not what is wrong with the source playbook, but where the target agent diverges from the source procedure. The reviser may only modify At; a valid adapter edit adds or rewrites target-environment exe-cution guidance without altering P ⋆s . This separation keeps the transfer experiment interpretable: gains from P ⋆s alone measure how much source procedure is directly executable by the target, while the additional gain from At measures how much of the remaining gap is closeable by adaptation. 
+
+Adapter selection and budget. Let Abest  
+
+> t
+
+denote the current selected adapter and Acand  
+
+> t
+
+a proposed revision. A candidate is accepted when it does not regress beyond tolerance ϵ on a small held-out validation set Cval :
+
+S(P ⋆s ⊕ Acand  
+
+> t
+
+, C val ) ≥ S(P ⋆s ⊕ Abest  
+
+> t
+
+, C val ) − ϵ. 
+
+A budget constraint B limits adapter length, preventing the reviser from duplicating source playbook content or memorizing individual training cases. The loop stops when failure abstraction yields no new recurring transfer gaps, the score saturates, or the round budget is exhausted. The frozen adapter A⋆t is then finalized as part of the combined proce-dure Ps→t for deployment. The transfer effect decomposes into direct and adapted components: 
+
+∆direct  
+
+> t←s
+
+= S(Gt, P ⋆s , C test ) − S(Gt, P ∅, C test ),
+
+∆adapted  
+
+> t←s
+
+= S(Gt, P s→t, C test ) − S(Gt, P ∅, C test ).
+
+A positive ∆direct  
+
+> t←s
+
+means the source playbook produces value in the target environment as-is, without any adapta-tion; ∆adapted  
+
+> t←s
+
+means that target adaptation recovers addi-tional value on top. The residual gap S(Gs, P ⋆s , C test ) −
+
+S(Gt, P s→t, C test ) isolates what procedure transfer cannot explain and must be attributed to model / harness capability. Discovery Evaluator Reviser         
+
+> findings & traces failure report
+> updated playbook Figure 3. The E VO HUNT evolution loop. A discovery agent audits the repository and produces findings and traces; an evaluator scores the out-come against ground truth; a reviser turns the failure report into a playbook commit, completing the round.
+
+5. Implementation 
+
+This section describes the concrete system design of EVO HUNT : how the playbook is stored and versioned, how agents are orchestrated, how revisions are gated, and how candidate playbooks are selected across rounds. 
+
+Playbook repository. EVO HUNT stores the playbook as a Git repository rather than a prompt string. The repository stores the playbook as versioned text files: workflow rules, vulnerability-class guides, validation gates, evidence check-lists, and optional subagent instructions. At session start, the playbook’s entry-point document and any target adapter file present on the checked-out branch are pre-injected into the orchestrator’s initial prompt as distinct tagged sections; the orchestrator reads additional files such as vulnerability-class guides and subagent prompts on demand during the audit run. Git history is part of the artifact: accepted, rejected, and superseded variants remain inspectable. 
+
+Agent framework. Figure 3 shows the evolution loop: three agents iterate in sequence using fixed, hand-authored prompts. These prompts are the only point at which human knowledge enters the system; everything the agents learn about vulnerability classes and audit procedure is accu-mulated in the playbook through iteration. The discovery, revision, and evaluation agents run under one of two coding agent harnesses (Codex or OpenCode), depending on the experimental condition. Both harnesses follow playbook in-structions, invoke local tools, and maintain a shared context window. Harness and model pairings for each condition are specified in the evaluation. 
+
+Replay memory. When constructing Cb, the implementa-tion combines newly introduced cases with replay cases drawn from earlier batches. Replay selection tokenizes ad-visory metadata and ranks historical cases with BM25, then selects a configured fraction of the new-case count to preserve vulnerability-class coverage across batches. 
+
+Discovery rollouts. For each playbook and case pair, the discovery agent inspects the repository in a sandbox, invokes local tools, runs commands, executes tests or reproduc-tion scripts, and may delegate scoped tasks to subagents. The orchestrator consolidates duplicate hypotheses, decides reportability, and emits the final artifact set. Each rollout produces the trace , artifacts , and evidence for the evaluator. 
+
+Evaluation feedback. The evaluator produces per-run feed-back for revision, including target-match rationales, repro-duction assessments, evidence references, and failure sum-maries. The concrete evaluator is separated from the dis-covery run: after a session finishes, an adjudicator reads the recorded artifacts, withheld advisory metadata, and exe-cution evidence, then assigns the run to the target-outcome ladder defined in the evaluation. A consistency check rejects internally incoherent judgments before they are used for branch selection or held-out scoring. 
+
+Git branch tournament. EVO HUNT maintains two branch roles: Pbest , the selected playbook so far, and Pcand , the proposed alternative. In bootstrap mode, the system eval-uates the current playbook and asks the reviser to create the first candidate. In standard mode, each round follows 
+
+Run → Evaluate → Select → Revise . The runner executes 
+
+Pbest and Pcand on the same batch Cb. The evaluator scores both, and the pipeline advances Pbest to the winning com-mit. The reviser checks out the winner and creates the next candidate. The new candidate enters the next tournament rather than on the batch that produced it, preventing an untested revision from overwriting the selected playbook. 
+
+Revision gate. The reviser edits the playbook repository and must commit the result on top of the selected base. The implementation checks that the commit descends from the base, at least one tracked file changed, no uncommitted changes remain, and the revision report satisfies the schema. If a revision fails these checks, the gate requests repair and eventually fails the round. These checks keep the procedure auditable and prevent silent changes outside the playbook. 
+
+Hyperparameters. Each rollout runs for at most 20 turns with a wall-clock timeout of 2 hours. At most 2 cases run concurrently per playbook branch. Each batch draws up to 10 new cases plus replay at a 0.25 ratio. The selection score weights discovery correctness at 0.7 and reproduction effectiveness at 0.3, each on a {0, 0.5, 1} ordinal scale. The revision gate allows up to 3 repair attempts per round. 
+
+Transfer mode. Transfer runs in two phases. In the direct phase, P ⋆s is checked out from Pbest without an adapter and run in Gt to measure ∆direct  
+
+> t←s
+
+. In the adaptation phase, 
+
+At is a Markdown file co-committed alongside P ⋆s ; the har-ness pre-injects both as tagged sections, realizing P ⋆s ⊕ At.Adapter evolution reuses the same revision gate and branch tournament, with the reviser editing only the adapter file. 
+
+6. Benchmark 
+
+Source and temporal split. We construct the benchmark from the GitHub Advisory Database [23], using GitHub-reviewed advisories. The training split contains high- and critical-severity advisories from 2023-01 through 2025-12; the held-out testing split covers 2026-01 through 2026-04. Every testing advisory is published after the training win-dow, matching the deployment question of whether a learned procedure improves discovery on later vulnerabilities. 
+
+Filtering. Cases follow the qualification criteria in Section 3. We exclude duplicates, withdrawn advisories, and cases re-quiring live services, cloud infrastructure, or physical access. 
+
+Distribution. Table 2 summarizes the two splits. The testing split is not single-project dominated: the top five repositories account for 63 advisories (17.0% of the split). TABLE 2. T EMPORAL BENCHMARK SPLIT SUMMARY 
+
+Property Training Testing Advisories 813 371 Month range 2023-01~2025-12 2026-01~2026-04 High severity 632 (77.7%) 287 (77.4%) Critical severity 181 (22.3%) 84 (22.6%) Unique packages / repos. 707 / 541 236 / 201 Overlap packages / repos. — 50 / 51 0 40 80    
+
+> CWE-22
+> Path Traversal
+> CWE-94
+> Code Injection
+> CWE-89
+> SQL Injection
+> CWE-502
+> Deserialization
+> CWE-400
+> Res. Exhaustion
+> CWE-770
+> Res. Allocation
+> CWE-20
+> Input Validation
+> CWE-1321
+> Proto. Pollution
+> CWE-200
+> Info Exposure
+> CWE-79
+> XSS
+> 9.2%
+> 8.4%
+> 5.5%
+> 5.9%
+> 5.0%
+> 4.2%
+> 3.9%
+> 3.6%
+> 3.7%
+> 2.8%
+> 10.0%
+> 5.4%
+> 9.2%
+> 2.7%
+> 3.8%
+> 4.3%
+> 3.2%
+> 3.5%
+> 3.2%
+> 4.6%
+> 0100 200
+> PyPI
+> npm
+> Go
+> Maven
+> Packagist
+> crates.io
+> RubyGems
+> NuGet
+> Hex
+> SwiftURL
+> 27.2%
+> 19.6%
+> 14.1%
+> 19.2%
+> 11.8%
+> 5.2%
+> 1.7%
+> 1.8%
+> 0.6%
+> 0.1%
+> 19.1%
+> 32.3%
+> 20.2%
+> 5.4%
+> 14.8%
+> 5.4%
+> 1.9%
+> 0.3%
+> 0.8%
+> 0.3% Training
+> Testing
+
+Figure 4. Vulnerability-type (CWE) and ecosystem distribution of the training and testing splits. Top 10 categories by combined count; bar-end labels show percentage of each split. 
+
+• Ecosystem distribution. As shown in Figure 4, the benchmark is application-security heavy: PyPI, npm, Maven, Go, and Packagist dominate both splits, making it a test of multi-language auditing rather than any single ecosystem. One notable distribution shift is Maven, which accounts for 19.2% of training but only 5.5% of testing, reflecting advisory publication timing and potentially lim-iting generalization to Java-heavy targets. 
+
+• Vulnerability types. The CWE distribution is broad but not uniform (Figure 4): the top five classes cover 34.1% of training and 33.4% of testing, with no single type domi-nating. There is moderate distribution shift between splits: SQL injection (CWE-89) rises from 5.5% in training to 9.2% in testing, while deserialization (CWE-502) falls from 5.9% to 2.7%. A playbook evolved primarily on the training mix may underweight SQL injection patterns relative to the test distribution. 
+
+• CVSS profile. The CVSS metric distribution confirms that the benchmark targets reachable, externally auditable vulnerabilities: 95.7% of testing cases have network attack vector, 69.8% require no privileges, and 89.8% require no user interaction. Critically, the impact profile spans confi-dentiality, integrity, and availability rather than availability alone, requiring an agent to reason about diverse exploit effects rather than optimizing for only crashes or hangs. 
+
+• Project overlap. 51 (25.4%) of testing repositories also appear in training, but the splits are disjoint at the advisory level: every testing vulnerability was published after the training window, and its root cause, patch, and reproduc-tion oracle are withheld from the agent. Repository recur-rence is realistic — practitioners routinely audit codebases 
+
+TABLE 3. E XPERIMENTAL CONDITIONS 
+
+Condition Agent environment Procedure Source 
+
+Experiment 1: procedure acquisition 
+
+Exp OCS GPT OpenAI Codex Security — —
+
+Exp Empty GPT Codex/GPT5.4-xhigh P∅ —
+
+Exp Evolve GPT Codex/GPT5.4-xhigh P ⋆ 
+
+> GPT
+
+—
+
+Exp Empty GLM OpenCode/GLM5.1 P∅ —
+
+Exp Evolve GLM OpenCode/GLM5.1 P ⋆ 
+
+> GLM
+
+—
+
+Experiment 2: teacher playbook transfer 
+
+Exp Empty 27B Qwen3.6-27B/OpenCode P∅ —
+
+Exp Tr /GPT 27B Qwen3.6-27B/OpenCode PGPT →27 B P ⋆
+
+> GPT
+
+Exp Tr /GLM 27B Qwen3.6-27B/OpenCode PGLM →27 B P ⋆
+
+> GLM
+
+Exp Empty A3B Qwen3.6-35B-A3B/OpenCode P∅ —
+
+Exp Tr /GPT A3B Qwen3.6-35B-A3B/OpenCode PGPT →A3B P ⋆
+
+> GPT
+
+Exp Tr /GLM A3B Qwen3.6-35B-A3B/OpenCode PGLM →A3B P ⋆
+
+> GLM
+
+Note: Exp OCS GPT is OpenAI Codex Security, an independently developed cloud work-flow that scans repositories, builds repository-specific security context, validates find-ings in an isolated environment, and surfaces ranked results with patch options [15]. It is not an E VO HUNT implementation; we include it as a product-style reference because relying solely on self-comparison would not be representative. Source is the frozen teacher procedure imported by each transfer condition. 
+
+they have previously examined — but the agent does not see the specific bug under test. We report both aggregate and recurrence-stratified performance to characterize any advantage from prior codebase exposure. 
+
+7. Experiments 
+
+Each condition is written as Exp rx: x names the agent en-vironment and r the role (Empty, Evolve, Tr/GPT, Tr/GLM, or OCS). Scoring is defined in Section 8. 
+
+Execution environment. All EVO HUNT jobs ran on 2 fixed Apple M4 machines (macOS 15.6, 10 CPU cores, 16 GiB memory). E VO HUNT conditions share the bench-mark checkout, harness code, output schema, and scoring; 
+
+Exp OCS GPT shares benchmark inputs and scoring but uses the OpenAI Codex Security product workflow. 
+
+Harness configuration. Both harnesses use default settings (Codex v0.136.0; OpenCode v1.15.7). Codex uses a 272k-token input limit and compacts at ≈245 ,000 tokens ( 90% ), preserving an encrypted summary plus up to 20k tokens of recent context; OpenCode uses a 192k-token limit with compaction at the same threshold and an 8,192-token out-put cap, via LLM-assisted compaction. The pre-compaction window is approximately 28% wider under Codex/GPT5.4-xhigh; this context asymmetry, alongside model capability differences, should be considered when interpreting per-formance gaps between Codex and OpenCode. The open-source models (GLM and Qwen) all run in FP8. 
+
+Experiment 1: procedure acquisition. Acquisition tests whether repeated evaluated attempts can produce a better audit procedure for the same environment. Codex/GPT5.4-xhigh evolves playbook P ⋆
+
+GPT and OpenCode/GLM5.1 evolves P ⋆
+
+GLM on the training split only; both are frozen at the end of training before held-out testing. Conditions are listed in Table 3. The controlled comparisons are Exp Evolve GPT versus Exp Empty GPT and Exp Evolve GLM versus Exp Empty GLM ; in each pair, model, harness, test cases, and task interface are fixed; only the procedure changes. 
+
+Experiment 2: teacher playbook transfer. Transfer tests whether a procedure evolved by a stronger teacher benefits weaker student models when combined with bounded target-environment adaptation. We test two source playbooks: the frozen P ⋆ 
+
+> GPT
+
+and the frozen P ⋆
+
+> GLM
+
+. For each teacher, adap-tation evolves one adapter per student while leaving the source playbook unchanged. Conditions are listed in Table 3. The causal transfer comparisons are each transferred con-dition against the same student’s empty-playbook baseline; 
+
+Exp OCS GPT and Exp Evolve GPT are reported in RQ1 for context and are not transfer comparisons. 
+
+8. Evaluation 
+
+This section defines the scoring protocol and reports re-sults for experiments in Section 7. Each run is scored at two levels: whether the agent identified the target vulnerability across 371 held-out advisories, and how its reported findings distributed across qualification, target match, and off-target categories (defined in Section 8.2). 
+
+8.1. Scoring Challenges 
+
+Our evaluation poses four challenges: 
+
+Challenge 1. Scale. The experiments produce 5,879 findings across 371 held-out cases, repositories, and vulnerability classes; fully manual scoring is not practical. 
+
+Challenge 2. Cross-domain consistency. Human reviewer expertise varies across ecosystems and vulnerability fami-lies, making consistent scoring difficult. 
+
+Challenge 3. Judge calibration. Evaluation strictness varies with judge capability: a stricter judge rejects borderline findings that a more lenient judge accepts, biasing cross-condition score comparisons. 
+
+Challenge 4. Finding quality heterogeneity. Not every finding is the same quality: an agent that produces a con-firmed end-to-end exploit and one that reports a static hy-pothesis about the same root cause represent fundamentally different capability levels. Aggregating these into a single count obscures where agent capability actually lies. We address these challenges with the following design: 
+
+Step 1. Single LLM judge. We designate GPT5.4-xhigh as the sole scoring judge for all experimental conditions, applying the rules defined in Section 8.2 ( Scoring Protocol ), mitigating cross-reviewer inconsistency and reporting bias. For each judge run, we also collect all available agent-produced evidence (session artifacts, execution logs, and reproduction scripts) to support the manual review and public release in Steps 2 and 3. 
+
+Step 2. Manual review. For every judge-qualified high/critical finding (1,574 findings across all conditions), we checked consistency between evidence tier, target-match verdict, and scoring rules without re-reading the full trace. Aggregate judge counts remain unchanged; Section 8.5 re-ports sampled false-positive estimates. 
+
+Step 3. Artifact release. All session artifacts, judge traces, and scoring records are released with the paper for indepen-dent reader verification. 
+
+Step 4. Tiered evidence scoring. We adopt a three-tier scheme (detailed in 3 , Section 8.2) that distinguishes end-to-end exploit success (T1), bug activation with a runnable PoC (T2), and speculative identification (T3). Reporting all three counts separately reveals the full capability profile of each condition rather than collapsing it to a single number. 
+
+8.2. Scoring Protocol 
+
+Scoring proceeds in four steps: 1 qualification, 2 target matching, 3 evidence tiering, and 4 outcome classification.  
+
+> 1
+
+Qualification. The judge reassesses CVSS v4.0 metrics from the available evidence under our system and threat model (cf. Section 3). For example, a finding is qualified only if this reassessment assigns High or Critical severity.  
+
+> 2
+
+Target matching. The judge compares each qualified finding from 1 with the held-out advisory. A finding re-ceives target credit only if it identifies the same vulnera-ble component and root-cause mechanism as the advisory. Matching the same repository, package, file, endpoint family, broad CWE, or vulnerability class is supporting context but is not sufficient. A real vulnerability that differs from the held-out advisory is recorded as an off-target finding and receives no target credit.  
+
+> 3
+
+Evidence tiering. The judge assigns the highest evidence tier supported by the matched finding, executing reproduc-tion artifacts in an isolated workspace to verify T1 and T2 claims. The key distinction is whether the security impact itself was observed (T1), or only the vulnerable execution path was triggered without reaching full impact (T2), or no runtime evidence was available at all (T3):  
+
+> •
+
+T1 — End-to-end exploit success. Runtime evidence demonstrates the full security consequence (e.g., unau-thorized read or write, command execution, authentication bypass, path traversal, or SSRF).  
+
+> •
+
+T2 — Bug activation with runnable PoC. Runnable ev-idence shows the vulnerable logic was reached but the security impact was not observed (e.g., attacker-controlled input reaching the vulnerable sink, or an unsafe deserial-ization call invoked without achieving code execution).  
+
+> •
+
+T3 — Speculative match. The finding matches the advi-sory root cause but T1/T2 evidence is unavailable (static-only report, missing reproduction bundle, or PoC that fails before activating vulnerable logic).  
+
+> 4
+
+Judged no-match. EVO HUNT produced at least one qualified finding under 2 , but none matched the advisory. 
+
+8.3. RQ1: Procedure Acquisition 
+
+Evolving the playbook for Codex/GPT5.4-xhigh raises the target-match rate from 1.6% (6/371) to 6.2% (23/371), with qualification rate rising from 10.7% (34/317) to 27.1% (120/442). For GLM5.1, the match count rises from 36 to 42 (9.7% → 11.3%). The two lifts are structurally different: the GPT gain is large in relative terms but from a low base TABLE 4. RQ1 P OST -J UDGE HIGH /C RITICAL FINDING AGGREGATE                                                        
+
+> Condition 12T1 T2 T3 4
+> Exp OCS GPT 194/1601 (12.1%) 34/371 (9.2%) 13 417 160
+> Exp Empty GPT 34/317 (10.7%) 6/371 (1.6%) 42028
+> Exp Evolve GPT 120/442 (27.1%) 23/371 (6.2%) 23 0097
+> Exp Empty GLM 247/447 (55.3%) 36/371 (9.7%) 18 018 211
+> Exp Evolve GLM 412/645 (63.9%) 42/371 (11.3%) 31 83370
+> Note: 1: retained high/critical qualified findings / judged findings after case-level collapse of duplicated matched findings where applicable (see 1, Section 8.2). 2:target-matched / 371 held-out cases. 3: evidence tier (T1 end-to-end exploit, T2 PoC activation, T3 speculative). 4: retained qualified no-match findings. E.g., Exp OCS GPT
+> contributes 1601 judged finding entries under this accounting, of which 194 are retained as high/critical qualified findings ( 1); 34/371 match a target advisory ( 2)with T1/T2/T3 split 13/4/17 ( 3); the remaining 160 findings are no-match ( 4).
+
+(1.6%, 6/371); the GLM gain is smaller in absolute terms be-cause the empty baseline already performs at a competitive level (detailed in Insight 2). The acquisition comparisons are based on the paired empty-versus-evolved conditions (Exp Evolve GPT vs. Exp Empty GPT and Exp Evolve GLM vs. Exp Empty GLM ), where model, harness, test cases, and task interface are fixed; 
+
+Exp OCS GPT is a product-style reference line (cf. Table 4). 
+
+Insight 1: Evolution teaches the agent how to judge its findings , not merely where to look. For Codex/GPT5.4-xhigh, qualification rate nearly triples (10.7% → 27.1%, 
+
++16 pp) while target-match rate increases by only 4.6 pp. Most of the acquisition gain is signal quality, not discovery of new vulnerability locations. 
+
+Insight 2: With minimal guidance, OpenCode/GLM5.1 reaches 9.7% target-match rate (36/371), comparable to OpenAI Codex Security (9.2%) while generating 4×
+
+fewer judged findings. The conditions are not controlled (model, harness, and workflow all differ), but reaching comparable performance with an empty playbook re-flects strong inherent model capability. 
+
+8.3.1. What the Playbooks Learn. Because the evolved playbooks are versioned text artifacts, what the agent learns is directly inspectable. Table 5 and Appendix C summa-rize the two playbooks and their revision histories. Both runs start from an empty-README seed over the same number of rounds, but diverge structurally from the first accepted revision: Codex/GPT5.4-xhigh immediately creates a workflow, an index, and 9 modular vulnerability guides; OpenCode/GLM5.1 creates a workflow and one centralized vulnerability-class document. Two observations emerge from these numbers. First, the learned playbook is not a growing checklist of vulnerability patterns: in both runs, nearly every accepted revision modi-fies workflow and knowledge files together, confirming that what is learned is procedural (how to conduct an audit), not merely factual (cf. Table 5). Second, surprisingly, the struc-tural divergence is an early choice, not a late convergence: each run commits to its form in the first accepted revision 
+
+TABLE 5. S ELECTED PLAYBOOK AND POINTER -H ISTORY SUMMARY                              
+
+> Property P⋆
+> GPT P⋆
+> GLM
+> Retained candidate revisions 82 82 Pointer rows in history 40 40 Rows with multiple candidates 29 18 Max candidates per incumbent 57Accepted best-pointer moves 38 38 First accepted update (ins.) 564 231 First accepted update (files) 13 2Final selected playbook size 1,616 lines 2,177 lines Workflow text 234 lines 284 lines Knowledge text 1,340 lines 1,892 lines Knowledge organization 19 guides 74 sections Moves touching workflow & knowledge 38/38 36/38
+> Note: Candidate histories are shown as best-pointer rows in Appendix C; the final selected playbook is the blue P40 incumbent in each history.
+
+and preserves it. GPT5.4 adopts a modular representation; GLM5.1 adopts a monolithic class catalogue. 
+
+Insight 3: The playbooks converge on opposite qual-ity versus coverage tradeoffs . Every target-matched finding from Exp Evolve GPT is T1 (23/0/0): a high-quality working end-to-end exploit with full runtime proof. This is an extremely high bar: the playbook has learned to reject anything it cannot fully materialize. Exp Evolve GLM 
+
+matches more targets in absolute terms (42 vs. 23) by accepting a broader evidence range (31/8/3): more coverage, lower per-finding confidence. 
+
+Insight 4: The playbooks diverge in search breadth. 
+
+P ⋆ 
+
+> GLM
+
+is explicitly designed to resist stopping : its workflow contains eight “CRITICAL: continue audit-ing ALL other vulnerability classes” directives, three mandatory re-sweep gates (DoS, misconfiguration, build pipeline), and a required anchoring-break checklist after every finding. P ⋆ 
+
+> GPT
+
+instead caps active families at 3– 6 and treats audit-budget control as a first-class design goal. Finding volume reflects this: Exp Evolve GLM generates 645 judged findings versus Exp Evolve GPT ’s 442, with target-match rates of 11.3% and 6.2% respectively. 
+
+Q: Does GLM5.1 outperform GPT5.4-xhigh? A: Not straightforwardly. The comparison is compli-cated by a harness confound: GPT5.4-xhigh runs under Codex and GLM5.1 under OpenCode, so model and environment cannot be fully separated. That said, 36 vs. 6 target matches on the empty-playbook baseline suggests the difference is partly intrinsic to the model. As Insights 3 and 4 show, the two optimize for differ-ent objectives: GLM5.1 sweeps broadly, accepts varied evidence tiers, and is explicitly designed to resist early stopping; GPT5.4-xhigh demands a working end-to-end exploit on every match and caps search breadth. Neither profile dominates: broad recall favors GLM5.1; high-confidence T1 evidence favors GPT5.4-xhigh. The prac-tical choice depends on triage capacity: if reviewers have limited time and want low-noise, immediately actionable Codex                 
+
+> Security GPT
+> Empty GPT
+> Playbook GLM
+> Empty GLM
+> Playbook
+> 10 4
+> 10 5
+> 10 6
+> 10 7
+> Uncached Input Tokens (log)
+> 2.0M
+> 176.2K
+> 1.5M
+> 16.5K
+> 1.3M
+> 32.9K
+> 4.3M
+> 38.1K
+> 3.6M
+> 178.0K
+> Codex
+> Security GPT
+> Empty GPT
+> Playbook GLM
+> Empty GLM
+> Playbook
+> 10 4
+> 10 5
+> 10 6
+> 10 7
+> 10 8
+> Cached Input Tokens (log)  21.5M
+> 5.3M
+> 41.3M
+> 47.6K
+> 56.2M
+> 96.8K
+> 10.9M
+> 125.5K
+> 17.9M
+> 223.6K
+> Codex
+> Security GPT
+> Empty GPT
+> Playbook GLM
+> Empty GLM
+> Playbook
+> 10 3
+> 10 4
+> 10 5
+> 10 6
+> Output Tokens (log)  195.3K
+> 56.2K
+> 87.3K
+> 3.4K
+> 171.8K
+> 6.2K
+> 65.5K
+> 2.8K
+> 79.0K
+> 2.6K
+> Codex
+> Security GPT
+> Empty GPT
+> Playbook GLM
+> Empty GLM
+> Playbook
+> 10 −2
+> 10 −1
+> 10 0
+> 10 1
+> 10 2
+> Estimated Cost (USD, log)
+> 11.0
+> 2.93
+> 13.5
+> 0.074
+> 19.6
+> 0.200
+> 7.64
+> 0.185
+> 5.58
+> 0.447
+
+Figure 5. Token usage and estimated API cost distributions for OpenAI Codex Security, Codex/GPT5.4-xhigh Empty and Playbook conditions, and OpenCode/GLM5.1 Empty and Playbook conditions. Cost estimates apply provider-list pricing at the time of the experiment: Codex/GPT5.4-xhigh at $2.50 / $15 / $0.25 per million input / output / cache-read tokens (OpenAI); OpenCode/GLM5.1 at $1.40 / $4.40 / $0.26 (Z.ai). OpenAI Codex Security costs reflect product-level usage and are not derived from per-token rates. 
+
+findings, GPT5.4-xhigh’s all-T1 profile is preferable; if broad vulnerability coverage matters more and the team can triage mixed-confidence findings, GLM5.1 is the stronger choice. These characterizations are grounded in manual inspection of E VO HUNT traces. 
+
+Workflow. The Codex/GPT5.4-xhigh workflow is a deci-sion system for ranking competing root causes. It frames the repository through entrypoints and trust boundaries, builds a release-surface map, records 3–6 live component families, uses repository-local security signals to keep ex-act primitives live, and performs sibling and boundary-fit checks before finalizing. The important action is not simply “look at more code”; it is to explain why a central default path, named guard, or same-family sibling no longer dominates the accepted finding. The OpenCode/GLM5.1 workflow is a phased coverage process: reconnaissance, sys-tematic vulnerability-class audit, PoC construction, evidence collection, and prioritization. Its strongest rules are stop-prevention rules: after SSRF, RCE, SQL injection, hard-coded credentials, or any DoS, continue scanning other classes and components. 
+
+Knowledge. The knowledge layer mirrors the workflow layer. The Codex/GPT5.4-xhigh playbook turns each vulner-ability family into a small validation program with a com-mon schema: definition, discovery focus, validation focus, false-positive traps, CVSS notes, and evidence checklist. This organization supports selective invocation: the audi-tor can pull the relevant guide when a component family becomes live. The OpenCode/GLM5.1 playbook instead accumulates a broad catalogue of long-tail failure modes, in-cluding MyBatis mapper SQL injection, PHP deserialization variants, Python class pollution, HTTP transport DoS, and storage override path traversal, among others. The design intent is broader recall across rare patterns. The deeper distinction is not workflow versus knowl-edge: in both histories, the two co-evolve. What is learned is procedural security knowledge: rules for allocating audit attention, keeping competing hypotheses live, rejecting real but off-target findings, and demanding runtime evidence be-fore finalization. RQ2 asks whether that learned procedure, developed by a stronger agent, transfers to weaker models. 
+
+Non-monotone improvement and breadth cost. Play-
+
+TABLE 6. RQ2 P OST -J UDGE HIGH /C RITICAL FINDING AGGREGATE 
+
+Condition 1 2 T1 T2 T3 4
+
+Exp Empty A3B 36/538 (6.7%) 4/371 (1.1%) 4 0 0 32 
+
+Exp Tr /GPT A3B 42/415 (10.1%) 7/371 (1.9%) 3 0 4 35 
+
+Exp Tr /GLM A3B 179/577 (31.0%) 17/371 (4.6%) 7 4 6 162 
+
+Exp Empty 27B 25/256 (9.8%) 9/371 (2.4%) 8 0 1 16 
+
+Exp Tr /GPT 27B 67/235 (28.5%) 19/371 (5.1%) 17 2 0 48 
+
+Exp Tr /GLM 27B 218/406 (53.7%) 24/371 (6.5%) 15 2 7 194        
+
+> Note: Paired comparison: each transfer condition vs. the same student’s empty-playbook baseline. 1: retained high/critical qualified findings / judged findings. 2:target-matched / 371 held-out cases. T1/T2/T3: end-to-end exploit, PoC activation, speculative. 4: retained qualified no-match findings.
+
+book evolution improves aggregate performance. However, in approximately 2–7% of cases, the empty-playbook run recovers the target vulnerability while the evolved playbook run does not. The likely mechanism is search focus: a learned procedure directs audit budget toward prioritized component families and validation gates, which can cause the agent to miss lower-complexity bugs that a less directed run would encounter opportunistically. These case-level re-gressions should be read alongside aggregate gains. We also note that each playbook is evolved in a single training run due to cost constraints; randomness in the evolution loop means results could plausibly differ under reruns. 
+
+8.4. RQ2: Procedure Transfer 
+
+Transfer works for both student models, and teacher-student compatibility matters. For the Qwen3.6-27B stu-dent, the GPT teacher raises target matches from 9/371 to 19/371 (2.4% → 5.1%), while the GLM teacher raises them further to 24/371 (6.5%); qualification rate rises from 9.8% to 28.5% under GPT transfer and to 53.7% under GLM transfer. For the Qwen3.6-35B-A3B student, the GPT teacher raises target matches from 4 to 7; the GLM teacher raises them to 17 (4.6%), outperforming the GPT teacher by 
+
+2.4× on this student. Transfer comparisons are paired: each condition is compared to the same student’s empty-playbook baseline. Table 6 reports the post-judge aggregate. Insight 5: The teacher’s search strategy propagates to the student. The GPT teacher condenses student out-put: both students generate fewer judged findings under GPT transfer (Qwen3.6-35B-A3B: 538 →415; Qwen3.6-27B: 256 →235) while qualification rate climbs. The GLM teacher expands output for both students: Qwen3.6-35B-A3B rises to 577 judged findings and Qwen3.6-27B to 406, with larger qualification gains in both cases. Evidence tier signatures mirror the teacher: Qwen3.6-27B under GPT transfer produces T1/T2/T3 of 17/2/0, matching the GPT teacher’s precision style; Qwen3.6-27B under GLM transfer produces 15/2/7, and Qwen3.6-35B-A3B under GLM transfer produces 7/4/6, mirroring the GLM teacher’s mixed-tier acceptance. 
+
+Insight 6: Teacher choice matters more than teacher quality for the A3B student. The GLM teacher gives 17 target matches (4.6%); the GPT teacher gives the same student only 7 (1.9%), a 2.4× gap. The exhaustive coverage strategy of P ⋆ 
+
+> GLM
+
+is a better fit for a model that benefits from being told what to check rather than what to skip. The qualification rate lift tells the same story: the GLM teacher raises Qwen3.6-35B-A3B qualification by +24 .3 pp versus the GPT teacher’s +3 .4 pp. 
+
+Insight 7: Signal quality transfers more efficiently than raw discovery. For the 27B student, the GPT teacher lifts qualification rate by +18 .7 pp (9.8% → 28.5%), slightly exceeding the teacher’s own self-evolution lift (+16 .4 pp); the GLM teacher lifts the same student by 
+
++43 .9 pp (9.8% → 53.7%). A student model following the right procedure can absorb the teacher’s filtering discipline even when it does not replicate the teacher’s full target-match profile. This suggests that explicit rules for comparison, pruning, and evidence thresholds are highly portable; the residual gap to the teacher reflects model-intrinsic capabilities (context management, rea-soning depth, and tool use) that procedure cannot close. 
+
+Q: Why does the GLM5.1 playbook transfer more coverage to weaker students, while the GPT5.4-xhigh playbook transfers better precision? A: The two playbooks encode fundamentally different search policies. The GPT-evolved playbook is pruning-oriented: it asks the agent to maintain a bounded check-list of 3–6 first-class component families, to make active decisions about which families to clear or prune, and to prioritize central attack surfaces over adjacent ones. This strategy works well for a strong model that can execute those implicit judgments reliably (which families are worth keeping, when to stop, how to upgrade a finding into a qualifying report). The GLM-evolved playbook instead externalizes those judgments as explicit proce-dural steps: it repeats “enumerate ALL” and “continue auditing” over thirty times in total, requires per-endpoint and per-parameter audit passes, mandates anti-anchoring after any discovered bug, and specifies root-cause align-ment as a required final step before submission. For a weaker student model, this explicitness matters: the agent does not need to infer the audit schedule or stop-ping rule on its own. The cost is lower per-finding preci-sion and larger no-match counts, which reflects the same breadth-versus-precision tradeoff visible in the teachers themselves (cf. Insight 3). In short: the GPT playbook is a frontier-model policy that requires the student to fill in the gaps; the GLM playbook is an enumeration protocol that works even when the student cannot. These characterizations are grounded in manual inspection of EVO HUNT traces across both student models. 
+
+8.5. False Positive Rate 
+
+To estimate precision, we sampled 4 judged no-match qualified findings from the ten E VO HUNT -run conditions, excluding the Exp OCS GPT product baseline, using a 90% con-fidence level and 15% margin of error. This resulted in 222 sampled findings: Exp Empty GPT (n=17 ), Exp Evolve GPT (n=25 ), 
+
+Exp Empty GLM (n=27 ), Exp Evolve GLM (n=29 ), Exp Empty A3B (n=17 ), 
+
+Exp Tr /GPT A3B (n=18 ), Exp Tr /GLM A3B (n=26 ), Exp Empty 27B 
+
+(n=15 ), Exp Tr /GPT 27B (n=21 ), and Exp Tr /GLM 27B (n=27 ). Three authors participated; each sampled finding was inde-pendently cross-validated by two reviewers, with disagree-ments reconciled before labeling true or false positive. The false positive rates are: Exp Empty GPT , 29.4%; Exp Evolve GPT , 0.0%; 
+
+Exp Empty GLM , 44.4%; Exp Evolve GLM , 44.8%; Exp Empty A3B , 70.6%; 
+
+Exp Tr /GPT A3B , 44.4%; Exp Tr /GLM A3B , 65.4%; Exp Empty 27B , 20.0%; 
+
+Exp Tr /GPT 27B , 28.6%; and Exp Tr /GLM 27B , 25.9%. 
+
+The most striking result is Exp Evolve GPT at 0.0%, down from 29.4% for Exp Empty GPT : with the evolved playbook in place, zero of 25 sampled findings were false positives. This suggests that the T1-only evidence standard and qualifica-tion gates encoded by the GPT-evolved playbook filter out speculative findings before they reach the reporting stage, rather than shifting them to a later review step. 
+
+9. Discussion 
+
+EVO HUNT does not claim procedure replaces model ca-pability; it measures how much security auditing moves into an inspectable artifact. Separating procedure from model and harness matters because the two are often changed together, making it unclear why performance improves. 
+
+What playbook transfer means. If an evolved playbook improves the same fixed agent over an empty playbook, the result supports procedure acquisition: repeated attempts and grounded evaluation can distill audit behavior into an external artifact. If the same playbook improves weaker students, the result supports procedure transfer: at least part of the teacher’s advantage can be expressed as guidance that another model can follow. Procedure as an alternative to fine-tuning. Fine-tuning specializes a model by updating weights on domain-specific data, producing a checkpoint coupled to a specific architec-ture and training framework. Playbook evolution differs in three structural respects. Model agnosticism : the playbook is a text artifact that loads into any compatible agent; switching base models requires no retraining. Continuous deployment :because the playbook is versioned, any intermediate revision is immediately deployable (no training-convergence barrier), and regressions can be rolled back by reverting a commit. 
+
+Training-inference cost decoupling : evolution uses a frontier model only to generate the procedure; inference can then be served by cheaper open-source models that execute the produced playbook, separating the cost of procedure quality from the cost of deployment at scale. 
+
+Capability transfer at low marginal cost. The transfer results suggest a practical cost model: a frontier model runs the evolution loop once to produce a procedure; smaller open-source models then execute that procedure repeatedly at low marginal cost. A meaningful fraction of the frontier model´ s audit advantage is procedure-encodable, expressible as explicit text rules rather than tacit, weight-encoded ca-pability. This differs from classical knowledge distillation, which requires training compute and labeled data to com-press capability into smaller weights. The distilled artifact here is a text playbook: inspectable, versioned, and trans-ferable across model generations without gradient updates. Organizations with limited inference budgets can invest in a one-time evolution campaign and amortize that cost across many open-source deployments. 
+
+Evolution campaign cost. The playbook evolution cam-paigns ran four GPT-side accounts (GPT Pro 20x) and four GLM-side accounts (GLM Coding Plan Max) concurrently for one calendar month. Accounting for mid-month token-quota resets, the total training expenditure was approxi-mately $200 per GPT account and $144 per GLM account, for a combined evolution budget of roughly $1,400. Three properties of this budget merit emphasis. First, the cost is a ceiling rather than a per-token bill: subscription-based access caps spending regardless of how many advisory rollouts the evolution loop completes. Second, the loop is restartable: each accepted playbook revision is a git commit, so an interrupted campaign resumes from the last accepted state rather than from scratch. Third, the training implementation is decoupled from the produced artifact: a future campaign could substitute a different harness, teacher model, or train-ing corpus without discarding the evolved playbook. 
+
+Per-case inference cost. Figure 5 shows per-case cost distri-butions across conditions. Median per-case cost is approxi-mately $2 for Codex/GPT5.4-xhigh ( Exp Evolve GPT ) and $1.6 for OpenCode/GLM5.1 ( Exp Evolve GLM ); Qwen student conditions are estimated at $0.8 (Qwen3.6-27B) and $0.5 (Qwen3.6-35B-A3B) from provider pricing. Transfer adds playbook to-kens without extra API calls, so per-case cost is nearly iden-tical to the baseline. Deploying the GPT-evolved playbook on Qwen3.6-27B ( Exp Tr /GPT 27B ) recovers 5.1% target-match rate at roughly 3× lower cost than the teacher. Switch-ing to Qwen inference reduces per-token cost by 2× for Qwen3.6-27B ($0.45/$2.70 vs. $1.40/$4.40 per million in-put/output) and 3.5× for Qwen3.6-35B-A3B ($0.20/$1.60), at a performance trade-off from 11.3% ( Exp Evolve GLM ) to 6.5% (Exp Tr /GLM 27B ) or 4.6% ( Exp Tr /GLM A3B ). 
+
+Safety and responsible use. EVO HUNT studies vulnerabil-ity discovery and validation, so the system can generate ex-ploit hypotheses and reproduction artifacts. The experiments are scoped to local, source-available targets and known advisories, and the benchmark excludes settings that require live third-party systems or production infrastructure. Local reproduction constraints are important for measurement and safety: they let the evaluator demand concrete evidence without encouraging uncontrolled exploitation. The same constraints should apply when releasing artifacts, where playbooks, traces, and reproduction scripts should be re-viewed to avoid publishing operational exploit details be-yond what is already disclosed for known advisories. 
+
+10. Scope and Limitations 
+
+Benchmark scope. The benchmark is deliberately narrower than security auditing in practice. We focus on source-available repositories, high and critical advisories, CVSS-qualified reachability, and cases investigable locally, exclud-ing vulnerability classes that require live cloud state, privi-leged infrastructure, or conditions not locally reproducible. 
+
+Off-target findings. A run is scored as a failure when it finds a valid, security-relevant vulnerability different from the designated benchmark target. Such off-target findings are counted as misses, so the benchmark can underestimate broader auditing value when the agent discovers a different vulnerability family. A concrete example: in GHSA-g7j6-fmwx-7vp8, a run failed to recover the benchmark target but discovered a GraphQL asset-upload SSRF that matches the later-confirmed advisory GHSA-3m9m-24vh-39wx, a case outside the benchmark due to the dataset cutoff date. Benchmark failure does not equal no useful finding. 
+
+Threat models and disclosure outcomes. Disclosure out-comes do not collapse cleanly into accepted versus incor-rect. Some reports expose risk whose fix belongs to an upstream dependency rather than the audited application. Others reflect threat-model variance: an agent may identify a capability that a maintainer considers intentional for a trusted-user deployment, development tool, or administrative platform. A third category remains pending. Appendix A therefore reports only the externally trackable subset. 
+
+Evaluator constraints. Any evaluator can misjudge bor-derline cases, especially when a finding is adjacent to the ground truth; this risk is sharper because our adjudicator in-cludes an LLM. We reduce it by decomposing judgment into target-match and runtime-evidence axes, requiring evidence for top tiers, and separating off-target findings from target credit. These controls do not eliminate evaluator error. 
+
+Distribution shift. Playbook learning can overfit to the ad-visory distribution. A temporal split reduces direct leakage, and project overlap is measured rather than hidden, but the evolved procedure may still specialize to common ecosys-tems, common CWE classes, or the reporting style of the GitHub Advisory Database. Transfer experiments partially address this risk because a teacher playbook must remain useful under different student models, but broader future work should evaluate across additional advisory sources, pri-vate audits, and prospective undisclosed vulnerability tasks. 
+
+Single training run. Each playbook is evolved once; cost constraints make repeated runs prohibitively expensive, so we cannot assess how much the outcome depends on ran-domness in the loop. We treat the reported playbooks as existence proofs that the loop can produce useful procedures, not characterizations of the typical outcome. 
+
+Hyperparameter choices. Hyperparameters (replay ratio, batch size, scoring weights, revision gate limits) are set by judgment rather than systematic search. Full LLM audit rollouts make grid search infeasible, and optimizing against the advisory benchmark risks overfitting its distribution. We treat systematic hyperparameter selection as future work. 
+
+Threats to validity. Model and execution environment are not fully disentangled: Codex/GPT5.4-xhigh runs under Codex while OpenCode/GLM5.1 and both Qwen students run under OpenCode, so observed differences between these groups may reflect harness effects rather than model or playbook effects alone. Additionally, evolved playbooks are calibrated to specific model checkpoints; silent provider-side updates may alter model behavior and reduce playbook effectiveness without a version identifier change. Finally, advisory details in our benchmark may appear in the pre-training corpora of evaluated models, making it difficult to fully rule out partial memorization on specific cases. Our scoring also relies on an LLM judge, and manual validation is limited to a consistency scan of judge-qualified findings plus a sampled deep review, so borderline target-match, severity, and evidence-tier decisions may still contain errors. 
+
+11. Related Work 
+
+Our work sits at the intersection of agentic LLM systems for security auditing and the hypothesis that audit procedures can be externalized and evolved independently of the un-derlying model and harness. We survey five related threads: agentic security testing in specialized domains, repository-level vulnerability detection and code auditing, analysis and validation scaffolds, benchmarks, and approaches leveraging external knowledge or learned procedures. 
+
+Agentic security testing and specialized domains. Secu-rity is a natural target for agentic LLMs because effective analysis requires long-horizon tool interaction, source code inspection, and evidence construction. PentestGPT and web-focused multi-agent work organize LLMs for penetration testing [4], [27]; other systems target vulnerability man-agement, Android discovery, web reconstruction, blockchain postmortems, multi-agent exploitation, protocol fuzzing, and IoT firmware [5]–[8], [28]–[31]. Complementary work finds that architecture choice meaningfully affects coverage and efficiency [32]. These systems typically bake in a domain-specific workflow; E VO HUNT instead studies whether a reusable audit procedure can be learned from validated attempts while model / harness remain fixed. 
+
+Repository-level vulnerability detection and code au-diting. The closest direct line treats vulnerability discov-ery as a repository auditing problem rather than a single-function classification task. PrimeVul, ReposVul, VulEval, and JITVul construct datasets with repository-level context and agent settings [9], [10], [33], [34]. IRIS, LLMxCPG, RepoAudit, and ReasonVul add static analysis, graph con-text, memory, or multi-agent reasoning for repository-level auditing [11], [12], [35], [36]. E VO HUNT differs by treating the audit procedure as the learned object, guided by a versioned playbook rather than a fixed system design. 
+
+LLM assisted analysis and validation. Another line de-composes security reasoning into program analysis and val-idation subtasks. LLMDFA and LLMSAN use LLMs for data-flow analysis and hallucination reduction [37], [38]; GPTAid and Midas extend decomposition to API security rules and resource management misuse [39], [40]. E VO -HUNT applies the same externalization principle but targets the full audit procedure rather than a single analysis pass. 
+
+Benchmark design and off-target findings. Recent cy-bersecurity benchmarks bind success to the specific tar-get vulnerability rather than any observable security effect. CyberGym and ExploitGym verify PoCs against pre/post-patch behavior and distinguish flag capture from intended exploit [2], [3]. ExploitBench and RealVuln grade progress through capability-ladder oracles or bind scanner output to ground truth [41], [42]. E VO HUNT follows the same prin-ciple: the primary score counts only root-cause-equivalent matches, and off-target findings are recorded separately. 
+
+External knowledge and learned procedure. Other work externalizes knowledge or experience for later agent be-havior. Vul-RAG retrieves historical CVE knowledge for vulnerability detection [43]. BugScope derives detection prompts from historical bug reports; its learned artifact is a checker-style procedure for selected anti-patterns rather than a versioned playbook tested for transfer [44]. Agent learning work (ExpeL, Memento, Agent Lightning) improves agents from experience without replacing the base model [45]– [47]. E VO HUNT differs in that the learned artifact is a ver-sioned playbook repository selected through branch tourna-ments and tested for cross-model transfer, where a stronger teacher’s procedure is transferred to weaker student models. 
+
+12. Conclusion 
+
+EVO HUNT keeps the model / harness fixed and evolves a versioned audit playbook. Our results show that procedure alone can lift auditing performance, and that a procedure “distilled” by a stronger teacher transfers to benefit weaker student models. Security auditing is not only a race to-ward stronger models; disciplined coverage, validation, and evidence construction are teachable procedures that can be learned from validated attempts, versioned as external artifacts, and transferred across agents. The results offer an analogue to the bitter lesson: durable gains come from learning and search, not from freezing expert knowledge. References 
+
+[1] A. K. Zhang, N. Perry, R. Dulepet, J. Ji, C. Menders, J. Lin, E. Jones, G. Hussein, S. Liu, D. Jasper, P. Peetathawatchai, A. Glenn, V. Sivashankar, D. Zamoshchin, L. Glikbarg, D. Askaryar, H. Yang, A. Zhang, R. Alluri, N. Tran, R. Sangpisit, K. Oseleononmen, D. Boneh, D. Ho, and P. Liang, “Cybench: A framework for evaluating cybersecurity capabilities and risks of language models,” in The Thirteenth International Conference on Learning Representations (ICLR 2025) , 2025. [Online]. Available: https: //proceedings.iclr.cc/paper_files/paper/2025/hash/3e9412a9c1d9381 0ef3ef7825115016b-Abstract-Conference.html [2] Z. Wang, T. Shi, J. He, M. Cai, J. Zhang, and D. Song, “Cybergym: Evaluating AI agents’ real-world cybersecurity capabilities at scale,” in The Fourteenth International Conference on Learning Representations (ICLR 2026) , 2026. [Online]. Available: https: //openreview.net/forum?id=2YvbLQEdYt [3] Z. Wang, N. Schiller, H. Li, S. S. Narayana, M. Nasr, N. Carlini, X. Qi, E. Wallace, E. Bursztein, L. Invernizzi, K. Thomas, Y. Shoshitaishvili, W. Guo, J. He, T. Holz, and D. Song, “Exploitgym: Can AI agents turn security vulnerabilities into real attacks?” 2026. [Online]. Available: https://arxiv.org/abs/2605.11086 [4] G. Deng, Y. Liu, V. Mayoral-Vilches, P. Liu, Y. Li, Y. Xu, T. Zhang, Y. Liu, M. Pinzger, and S. Rass, “PentestGPT: Evaluating and harnessing large language models for automated penetration testing,” in 33rd USENIX Security Symposium (USENIX Security 24) .USENIX Association, 2024, pp. 847–864. [Online]. Available: https: //www.usenix.org/conference/usenixsecurity24/presentation/deng [5] Z. Wang and L. Zhou, “Agentic discovery and validation of android app vulnerabilities,” 2025. [Online]. Available: https: //arxiv.org/abs/2508.21579 [6] J. Allen, Z. Yang, F. Xiao, M. Landen, R. Perdisci, and W. Lee, “WEBRR: A forensic system for replaying and investigating Web-Based attacks in the modern web,” in 33rd USENIX Security Symposium (USENIX Security 24) . USENIX Association, 2024, pp. 1669–1686. [Online]. Available: https://www.usenix.org/conference/ usenixsecurity24/presentation/allen [7] X. Song, L. Pei, J. Wu, Y. Zeng, G. He, C. Zuo, X. Liu, Q. Zhao, and S. Guo, “Protocolguard: Detecting protocol non-compliance bugs via LLM-guided static analysis and dynamic verification,” in Proceedings of the 33rd Annual Network and Distributed System Security Symposium (NDSS 2026) , 2026. [Online]. Available: https://www.ndss-symposium.org/ndss-paper/protocolguard-detecti ng-protocol-non-compliance-bugs-via-llm-guided-static-analysis-a nd-dynamic-verification/ [8] J. Ji, C. Zhang, S. Gan, L. Jian, H. Liu, T. Liu, L. Zheng, and Z. Jia, “Firmagent: Leveraging fuzzing to assist LLM agents with IoT firmware vulnerability discovery,” in Proceedings of the 33rd Annual Network and Distributed System Security Symposium (NDSS 2026) , 2026. [Online]. Available: https://www.ndss-symposium.org /wp-content/uploads/2026-s1943-paper.pdf [9] Y. Ding, Y. Fu, O. Ibrahim, C. Sitawarin, X. Chen, B. Alomair, D. Wagner, B. Ray, and Y. Chen, “Vulnerability detection with code language models: How far are we?” in 2025 IEEE/ACM 47th International Conference on Software Engineering (ICSE) , 2025, pp. 1729–1741. [Online]. Available: https://arxiv.org/abs/2403.18624 [10] X. Wang, R. Hu, C. Gao, X.-C. Wen, Y. Chen, and Q. Liao, “ReposVul: A repository-level high-quality vulnerability dataset,” in 
+
+Proceedings of the 2024 IEEE/ACM 46th International Conference on Software Engineering: Companion Proceedings , 2024, pp. 472– 483. [Online]. Available: https://conf.researchr.org/details/icse-2024/ icse-2024-industry-challenge-track/2/ReposVul-A-Repository-Level -High-Quality-Vulnerability-Dataset [11] J. Guo, C. Wang, X. Xu, Z. Su, and X. Zhang, “RepoAudit: An autonomous LLM-Agent for repository-level code auditing,” in Proceedings of the 42nd International Conference on Machine Learning , ser. Proceedings of Machine Learning Research, vol. 267. PMLR, 2025, pp. 21 083–21 100. [Online]. Available: https://proceedings.mlr.press/v267/guo25n.html [12] X. Peng, B. Lin, J. Wang, X. Li, J. Ma, J. Yu, X. Mao, and S. Wang, “Three heads are better than one: A multi-perspective reasoning framework for enhanced vulnerability detection,” in 
+
+Proceedings of the ACM on Software Engineering, FSE , 2026, accepted paper; final proceedings entry to be verified. [Online]. Available: https://conf.researchr.org/details/fse-2026/fse-2026-resea rch-papers/175/Three-Heads-Are-Better-Than-One-A-Multi-Perspec tive-Reasoning-Framework-for-Enhanced [13] Anthropic, “Project glasswing: Securing critical software for the AI era,” https://www.anthropic.com/glasswing, 2026, accessed: 2026-06-02. [14] OpenAI, “Daybreak: OpenAI for cybersecurity,” https://openai.com /daybreak, 2026, accessed: 2026-06-02. [15] ——, “Codex Security,” https://developers.openai.com/codex/securi ty, 2026, accessed: 2026-05-30. [16] R. S. Sutton, “The bitter lesson,” http://www.incompleteideas.net/In cIdeas/BitterLesson.html, 2019, accessed: 2026-05-28. [17] Z.AI, “GLM5.1,” https://docs.z.ai/guides/llm/glm- 5.1, 2026, accessed: 2026-05-29. [18] Anomaly, “OpenCode: The open source AI coding agent,” https: //opencode.ai/, 2026, accessed: 2026-05-29. [19] Qwen Team, “Qwen3.6-35B-A3B,” https://qwen.ai/blog?id=qwen3. 6-35b-a3b, 2026, accessed: 2026-06-02. [20] ——, “Qwen3.6-27B,” https://huggingface.co/Qwen/Qwen3.6-27B, 2026, accessed: 2026-06-02. [21] Forum of Incident Response and Security Teams, “Common vulner-ability scoring system version 4.0: Specification document,” https: //www.first.org/cvss/v4.0/specification-document, 2023, accessed: 2026-05-28. [22] MITRE, “Common weakness enumeration,” https://cwe.mitre.org/, 2026, accessed: 2026-05-30. [23] GitHub, “Github advisory database,” https://github.com/advisories, 2026, accessed: 2026-05-28. [24] M. McCloskey and N. J. Cohen, “Catastrophic interference in con-nectionist networks: The sequential learning problem,” in Psychology of Learning and Motivation . Academic Press, 1989, vol. 24, pp. 109–165. [25] G. I. Parisi, R. Kemker, J. L. Part, C. Kanan, and S. Wermter, “Continual lifelong learning with neural networks: A review,” Neural Networks , vol. 113, pp. 54–71, 2019. [26] S. J. Pan and Q. Yang, “A survey on transfer learning,” IEEE Transactions on Knowledge and Data Engineering , vol. 22, no. 10, pp. 1345–1359, 2010. [27] I. David and A. Gervais, “Multi-agent penetration testing ai for the web,” arXiv preprint arXiv:2508.20816 , 2025. [28] P. Liu, J. Liu, L. Fu, K. Lu, Y. Xia, X. Zhang, W. Chen, H. Weng, S. Ji, and W. Wang, “Exploring ChatGPT’s capabilities on vulnerability management,” in 33rd USENIX Security Symposium (USENIX Security 24) . USENIX Association, 2024, pp. 811–828. [Online]. Available: https://www.usenix.org/conference/usenixsecuri ty24/presentation/liu-peiyu [29] Z. Wang, J. Yu, K. Qin, D. Song, A. Gervais, and L. Zhou, “Txray: Agentic postmortem of live blockchain attacks,” 2026. [Online]. Available: https://arxiv.org/abs/2602.01317 [30] Y. Zhu, A. Kellermann, A. Gupta, P. Li, R. Fang, R. Bindu, and D. Kang, “Teams of LLM agents can exploit zero-day vulnerabilities,” in Proceedings of the 19th Conference of the European Chapter of the Association for Computational Linguistics (Volume 1: Long Papers) . Association for Computational Linguistics, 2026, pp. 23–35. [Online]. Available: https://aclanthology.org/2026.eacl-long.2/ [31] R. Meng, M. Mirchev, M. Böhme, and A. Roychoudhury, “Large language model guided protocol fuzzing,” in Proceedings of the 31st Annual Network and Distributed System Security Symposium (NDSS 2024) , 2024. [Online]. Available: https://www.ndss-symposium.org /ndss-paper/large-language-model-guided-protocol-fuzzing/ [32] I. David and A. Gervais, “Towards optimal agentic architectures for offensive security tasks,” arXiv preprint arXiv:2604.18718 , 2026. [33] X.-C. Wen, X. Wang, Y. Chen, R. Hu, D. Lo, and C. Gao, “VulEval: Towards repository-level evaluation of software vulnerability detection,” 2024. [Online]. Available: https://arxiv.org/abs/2404.15596 [34] A. Yildiz, S. G. Teo, Y. Lou, Y. Feng, C. Wang, and D. M. Divakaran, “Benchmarking LLMs and LLM-Based agents in practical vulnerability detection for code repositories,” in 
+
+Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) . Association for Computational Linguistics, 2025, pp. 30 848–30 865. [Online]. Available: https://aclanthology.org/2025.acl-long.1490/ [35] Z. Li, S. Dutta, and M. Naik, “IRIS: LLM-Assisted static analysis for detecting security vulnerabilities,” in The Thirteenth International Conference on Learning Representations (ICLR 2025) , 2025. [Online]. Available: https://openreview.net/forum?id=9LdJDU7E91 [36] A. Lekssays, H. Mouhcine, K. Tran, T. Yu, and I. Khalil, “LLMxCPG: Context-Aware vulnerability detection through code property Graph-Guided large language models,” in 34th USENIX Security Symposium (USENIX Security 25) . USENIX Association, 2025, pp. 489–507. [Online]. Available: https://www.usenix.org/con ference/usenixsecurity25/presentation/lekssays [37] C. Wang, W. Zhang, Z. Su, X. Xu, X. Xie, and X. Zhang, “LLMDFA: Analyzing dataflow in code with large language models,” in Advances in Neural Information Processing Systems 37 (NeurIPS 2024) , 2024. [Online]. Available: https://proceedings.neur ips.cc/paper_files/paper/2024/file/ed9dcde1eb9c597f68c1d375bbecf3 fc-Paper-Conference.pdf [38] C. Wang, W. Zhang, Z. Su, X. Xu, and X. Zhang, “Sanitizing large language models in bug detection with data-flow,” in Findings of the Association for Computational Linguistics: EMNLP 2024 .Association for Computational Linguistics, 2024, pp. 3790–3805. [Online]. Available: https://aclanthology.org/2024.findings-emnlp.2 17/ [39] J. Liu, Y. Yang, K. Chen, and M. Lin, “Generating API parameter security rules with LLM for API misuse detection,” in Proceedings of the 32nd Annual Network and Distributed System Security Symposium (NDSS 2025) , 2025. [Online]. Available: https://www.ndss-symposium.org/ndss-paper/generating-api-paramet er-security-rules-with-llm-for-api-misuse-detection/ [40] Y. Yang, J. Liu, K. Chen, and M. Lin, “The midas touch: Triggering the capability of LLMs for RM-API misuse detection,” in Proceedings of the 32nd Annual Network and Distributed System Security Symposium (NDSS 2025) , 2025. [Online]. Available: https://dev.ndss-symposium.org/ndss-paper/the-midas-touch-trigger ing-the-capability-of-llms-for-rm-api-misuse-detection/ [41] S. Lee and D. Brumley, “Exploitbench: A capability ladder benchmark for LLM cybersecurity agents,” 2026. [Online]. Available: https://arxiv.org/abs/2605.14153 [42] J. Pellew and F. Raza, “Realvuln: Benchmarking rule-based, general-purpose LLM, and security-specialized scanners on real-world code,” 2026. [Online]. Available: https://arxiv.org/abs/2604.13764 [43] X. Du, G. Zheng, K. Wang, J. Feng, W. Deng, M. Liu, B. Chen, X. Peng, T. Ma, and Y. Lou, “Vul-RAG: Enhancing LLM-based vulnerability detection via knowledge-level RAG,” 2024. [Online]. Available: https://arxiv.org/abs/2406.11147 [44] J. Guo, C. Wang, D. Deluca, J. Liu, Z. Zhang, and X. Zhang, “BugScope: Learn to find bugs like human,” 2025. [Online]. Available: https://arxiv.org/abs/2507.15671 [45] A. Zhao, D. Huang, Q. Xu, M. Lin, Y.-J. Liu, and G. Huang, “Expel: Llm agents are experiential learners,” 2023. [Online]. Available: https://arxiv.org/abs/2308.10144 [46] H. Zhou, Y. Chen, S. Guo, X. Yan, K. H. Lee, Z. Wang, K. Y. Lee, G. Zhang, K. Shao, L. Yang, and J. Wang, “Memento: Fine-tuning llm agents without fine-tuning llms,” 2025. [Online]. Available: https://arxiv.org/abs/2508.16153 [47] X. Luo, Y. Zhang, Z. He, Z. Wang, S. Zhao, D. Li, L. K. Qiu, and Y. Yang, “Agent lightning: Train any ai agents with reinforcement learning,” 2025. [Online]. Available: https://arxiv.org/abs/2508.03680 
+
+Appendix A. Project-Reported Vulnerabilities 
+
+Table 7 lists the 28 confirmed vulnerabilities. 
+
+TABLE 7. 28 C ONFIRMED VULNERABILITIES                                                                                         
+
+> CVSS Advisory / CVE Status Class 8.7 GHSA-j8vf-vqr9-Fixed DoS 5.4 GHSA-jfc7-64v2-/ CVE-2026-4 Published Integrity Bypass 7.5 GHSA-52v5-jr5w-/ CVE-2026-4 Published Verification Bypass 6.5 GHSA-xgjw-pm74-/ CVE-2026-4 Published Auth Bypass 8.2 GHSA-p2f4-r6v6-Accepted Credential Leakage 6.9 GHSA-64mm-vxmg-Accepted Routing Bypass 5.3 GHSA-hgw6-g7cp-Accepted DoS 7.0 GHSA-c4c3-pg64-Accepted Prototype Pollution 7.5 GHSA-cgwc-pv48-/ CVE-2026-4 Published DoS 7.5 GHSA-m9gh-vj53-/ CVE-2026-4 Published DoS 7.5 GHSA-5w7q-77mv-/ CVE-2026-4 Published DoS 5.0 GHSA-p43p-whwx-Fixing DoS 7.5 GHSA-38rv-x7px-/ CVE-2026-Fixing DoS 7.5 GHSA-836r-79rf-/ CVE-2026-4 Published ReDoS 7.5 GHSA-2wc2-fm75-/ CVE-2026-4 Published DoS 7.5 GHSA-j5g9-f88f-Fixing DoS 5.1 CAN-2026-203 Fixed DoS 6.5 GHSA-4xfr-4p46-Fixed IDOR 7.1 GHSA-8jj7-4v57-Fixed DoS 6.5 GHSA-vgxm-h9gx-Fixed Auth Bypass 4.8 GHSA-fwjf-m4qw-Fixed Cache Poisoning 5.2 GHSA-cpgj-f7g3-/ CVE-2026-4 Fixed Sandbox Bypass 7.1 Pending CVE Fixed SQL Injection 5.1 GHSA-7gcf-g7xr-Fixed DoS 5.1 GHSA-vx77-6w57-Accepted Path Traversal 6.8 GHSA-vx77-6w57-Accepted DoS 8.7 RUSTSEC-2026-01 Fixed DoS 7.5 Binance Bug Bounty (P2) Awarded DoS
+
+Appendix B. Covered Advisory Cases by Vulnerability Type 
+
+Table 8 lists advisory cases covered under our system and threat models. Model columns use the experimental condition symbols from Table 3; the Orig. column gives the advisory CVSS 4.0 score, and covered cells show validated target tiers with rerated CVSS scores in parentheses. 
+
+Appendix C. Playbook Pointer Histories 
+
+Figure 6 compares the paper-normalized pointer histories for both evolved playbooks. Each trace is rendered as a single chronological column from P01 to P40; the left panel shows Codex/GPT5.4-xhigh, the middle panel shows Open-Code/GLM5.1, and the caption summarizes the evolution on the right and below the plots. TABLE 8. A DVISORY CASES COVERED BY MODEL –S CAFFOLD COMBINATIONS 
+
+Type GHSA Orig. Exp OCS GPT Exp Empty GPT Exp Evolve GPT Exp Empty GLM Exp Evolve GLM Exp Empty 27B Exp Tr /GPT 27B Exp Tr /GLM 27B Exp Empty A3B Exp Tr /GPT A3B Exp Tr /GLM A3B CWE AuthN Bypass GHSA-6h7w-v2xr-mqvw 8.8 T3(9.3) – T1(9.3) – – – – – – – – 306 GHSA-7g56-fwxj-cm23 8.1 T3(8.8) – T1(8.8) – T1(9.3) – – – T1(8.8) – T1(9.3) 306,434 GHSA-pchf-49fh-w34r 8.1 T1(9.3) – – – – – – – – – – 289 GHSA-m2cq-xjgm-f668 9.2 – – – – – – – T1(8.2) – – – 306 GHSA-r5m2-fqcf-qrf7 8.0 – – – T3(9.3) T1(9.3) – T1(9.3) T1(9.3) – – – 1188,306 GHSA-qwc3-h9mg-4582 9.9 – – – – T2(8.2) – – T2(9.4) – – – 306 GHSA-rwp9-5g7q-73q3 9.3 – – – – – – – – – T1(9.3) – 306,425 GHSA-xv8g-fj9h-6gmv 9.3 – – – – T1(8.8) – – – – – – 306 AuthZ/Access GHSA-228v-wc5r-j8m7 7.1 T3(7.1) – – – – – – – – – – 284,863 GHSA-5448-v74m-7mv7 8.7 T3(8.7) – – – – – – – – – – 915 GHSA-ggxw-g3cp-mgf8 9.3 T3(9.3) – – – – – – – – – – 862 GHSA-hmqr-wjmj-376c 8.6 T3(8.6) – – – – – – – – – – 863 GHSA-hwr4-mq23-wcv5 7.1 T2(7.1) – – – – – – – – T3(8.6) – 1289 GHSA-m5wg-cjgh-223j 10.0 – – – – T1(10.0) – T2(9.3) T3(9.3) – – T1(10.0) 284 GHSA-p52w-7rhw-9m67 7.1 T3(7.2) – – – – – – – – – – 862 GHSA-x5r2-r74c-3w28 8.7 – – – T1(8.8) – – – – – – – 285,636 GHSA-xgxp-f695-6vrp 7.1 – – T1(7.1) – – – T1(7.1) – – – – 200,862 GHSA-87fh-rc96-6fr6 7.7 – – – – – – – – – – T3(8.7) 284,639 GHSA-8c4j-f57c-35cf 8.7 – – – – – – – – – T3(8.7) – 639,862 Cmd Injection GHSA-25fp-8w8p-mx36 9.4 – – – T1(9.4) T1(8.7) – T1(8.7) – – – – 78 GHSA-4wwf-f7w3-94f5 8.7 T1(8.7) – – – – – – – – – – 78 GHSA-5r63-q8hg-p8qx 8.1 – – – T3(9.3) – – – T1(9.3) – – – 78,94 GHSA-7fv4-fmmc-86g2 8.7 – – – – – – T1(8.7) – – – – 94 GHSA-gjw9-34gf-rp6m 8.7 – – – – – T1(8.7) – – – – – 78 GHSA-gv8f-wpm2-m5wr 8.7 – – T1(9.3) T3(9.3) T1(9.3) – T1(9.3) – – – T3(9.3) 1188,287,78 GHSA-mwr6-3gp8-9jmj 9.3 T3(8.7) – – T1(7.1) – – – – – – – 77 GHSA-8q4h-8crm-5cvc 9.8 – – – – T1(9.2) – – – – – – 78 Code Execution GHSA-2679-6mx9-h9xc 9.3 T3(9.3) – T1(9.3) – – – – T1(9.3) – – – 306 GHSA-5882-5rx9-xgxp 10.0 – – – T1(10.0) – – – – T1(9.3) – – 94 GHSA-6fmw-82m7-jq6p 8.8 – – – – – T1(7.1) – – – – – 94 GHSA-77rh-m34w-rv36 9.3 – – – T1(9.3) T1(9.3) – T1(9.3) T1(9.2) – – – 95 GHSA-8645-p2v4-73r2 8.7 – T2(8.7) T1(8.7) – – – – – – – – 770 GHSA-9c4h-pwmf-m6fj 9.4 – – – T3(9.2) T3(8.4) – – T3(7.5) – – – 15,20,269,695,754,94 GHSA-c87c-78rc-vmv2 8.1 – T1(9.3) – – T2(9.2) – – – – – T3(9.3) 74 GHSA-g22f-v6f7-2hrh 8.9 – – – T3(9.3) T2(9.3) – – – – – – 829 GHSA-v52c-386h-88mc 8.7 – – T1(8.7) – – – – – – – – 772 GHSA-wccx-j62j-r448 8.9 T1(9.3) – – – T1(9.3) – – – – – – 693 GHSA-wxx7-mcgf-j869 9.4 – – – – – – – – – T1(8.7) T2(9.4) 89,94 GHSA-x34r-63hx-w57f 9.4 – – T1(8.6) – – T1(8.7) – – – – – 94 GHSA-xg9w-vg3g-6m68 8.7 T1(7.1) – – T3(7.1) – – T1(7.1) – – – – 22 GHSA-xv3r-vr59-95rg 9.4 – – – T3(8.7) – – – – – – – 22 GHSA-69v7-xpr6-6gjm 10.0 – – – – T1(7.9) – – – – – – 284,693 GHSA-prf8-cf2x-rhx7 9.3 – – – – T2(9.2) – – T3(7.5) – – – 502 GHSA-q5qq-mvfm-j35x 8.9 – – – – T1(9.1) – – – – – – 184,502 GHSA-vg9h-jx4v-cwx2 9.3 – – – – T1(9.3) – – – – – – 489 GHSA-xw7x-h9fj-p2c7 9.3 – – – – T2(9.2) – – – – – – 502 Crypto/Signature GHSA-2w8x-224x-785m 7.7 – – – – – – T2(8.7) – – – – 325,347 GHSA-796p-j2gh-9m2q 9.3 T3(8.7) – – – – – – – – – – 295,347 GHSA-88q6-jcjg-hvmw 8.8 – T1(8.7) T1(9.3) T3(9.3) – – T1(9.3) T1(9.3) T1(9.3) – T2(9.3) 327 GHSA-8x4m-qw58-3pcx 9.3 T3(8.8) – – – – – – – – – – 288,294,345 GHSA-qpv2-rwc8-c993 9.2 – T1(8.8) T1(8.8) – – T1(8.7) T1(8.7) – – – – 347 DoS GHSA-2gjw-fg97-vg3r 8.7 T2(8.7) – – – – – – – – – – 20 GHSA-2v35-w6hq-6mfw 8.7 T1(8.7) – T1(8.7) T1(8.7) – – T1(8.7) – – – – 674 GHSA-353c-v8x9-v7c3 8.7 – T2(8.7) T1(8.7) T1(8.7) T1(8.7) T1(8.7) – T3(8.7) – – – 770 GHSA-3ppc-4f35-3m26 8.7 T1(8.7) – – – – – – – – – – 1333 GHSA-5528-5vmv-3xc2 8.7 – – T1(8.7) T3(8.7) – – T1(8.7) – – – – 674 GHSA-5j86-7r7m-p8h6 8.8 – – – – – T1(8.7) – – – – – 1321 GHSA-5jg4-p4qw-cgfr 8.7 – – T1(8.7) – T1(8.7) – T1(8.7) T1(8.7) – – – 674 GHSA-677m-j7p3-52f9 8.7 T1(8.7) – – – – – – – – – – 754 GHSA-6g43-577r-wf4x 7.1 – – – T3(7.1) – – – – – – – 129 GHSA-67pg-wm7f-q7fj 8.7 – – – – – – – T1(8.2) – – – 770 GHSA-95fx-jjr5-f39c 8.7 T3(8.7) – – – – – – – – – – 20,400,770 GHSA-fmwg-qcqh-m992 8.7 T1(8.7) – – – – – – – – – – 1333 GHSA-h5qv-qjv4-pc5m 8.7 – – T1(8.7) – T3(8.7) – – – – – T1(8.7) 400,409 GHSA-jg4p-7fhp-p32p 8.7 – – – T1(8.7) – – – – T1(8.7) – – 1333 GHSA-mq3p-rrmp-79jg 7.1 T2(8.7) – – – – – – – – – – 20,400 GHSA-rhr9-hgcm-x289 8.7 – – – T3(8.7) T1(8.7) T1(8.7) T1(8.7) T3(8.7) – – – 404 GHSA-xf7r-hgr6-v32p 8.7 – – – T1(8.7) – – – – – – – 459 GHSA-2phg-qgmm-r638 7.7 – – – – – – – – – – T2(8.7) 409 GHSA-6v53-7c9g-w56r 8.7 – – – – T2(8.7) – – T2(8.2) – – T2(8.7) 770 GHSA-7g27-v5wj-jr75 8.7 – – – – T2(8.7) – – – – – – 476,478 GHSA-7h2j-956f-4vf2 8.7 – – – – T1(8.7) – – – – – – 1333 Info Leak GHSA-gh4x-f7cq-wwx6 8.7 – – T1(8.7) – T1(8.7) – – T1(8.7) – – T1(8.7) 200 GHSA-wvxv-4j8q-4wjq 8.7 – – – – – – – T1(8.7) – – – 200 Injection GHSA-2453-mppf-46cj 8.7 – – – – – T3(7.1) – – – – – 89 GHSA-2r2p-4cgf-hv7h 8.6 T3(7.1) – – T1(8.6) T1(8.6) – – – – – – 1188,306,352,942 GHSA-g7j6-fmwx-7vp8 8.7 – T1(7.1) – – – – – T3(7.1) – – – 89 GHSA-hm9j-cgmm-2w36 8.8 – – – T3(8.8) – – – – – – – 89 GHSA-j759-j44w-7fr8 8.7 – – – T1(8.7) – – – – – – – 91 GHSA-q6g3-fv43-m2w6 8.7 T3(7.1) – – T3(8.6) – – – – – – – 89 GHSA-rg7c-g689-fr3x 9.3 – – T1(9.3) – T3(9.3) – – – – – – 306 GHSA-x6wf-f3px-wcqx 8.7 – – T1(8.7) T1(8.7) – – – – – – – 91 GHSA-p864-fqgv-92q4 8.7 – – – – – – – – – T3(8.6) T3(7.1) 89 GHSA-qp2j-v5jg-hg68 7.1 – – – – T2(7.1) – – – – – – 89 Memory Safety GHSA-4w32-2493-32g7 8.7 T1(8.7) – T1(8.7) T3(8.7) T1(8.7) – – T1(8.7) – – T1(8.7) 190 Object Pollution GHSA-hf2r-9gf9-rwch 9.4 – – – T1(7.0) – – – – – – – 1321 GHSA-rf6f-7fwh-wjgh 8.9 – – – T1(8.8) – – – T1(8.2) – – – 1321 GHSA-wf6x-7x77-mvgw 8.7 – – – – – – – T3(8.2) – – – 1321 GHSA-wfq2-52f7-7qvj 8.9 – – – T1(9.3) T1(9.3) – – – – – – 184,502 GHSA-m272-9rp6-32mc 9.3 – – – – T1(8.8) – – – – – – 1321 Path/File GHSA-2657-3c98-63jq 7.7 T1(8.8) – – – T1(8.8) – T1(8.7) T1(8.7) – – – 22 GHSA-5h6h-7rc9-3824 8.7 – – T1(8.7) – – – – – – – – 22 GHSA-6v48-fcq6-ff23 7.1 – – – T3(8.7) – – – – – – – 22 GHSA-9ppj-qmqm-q256 8.2 T3(8.2) – – – – – – – – – – 22 GHSA-f8cm-6447-x5h2 9.2 – – – T3(7.7) T1(9.3) – – – – – – 22,35,73 GHSA-hjh7-r5w8-5872 7.1 T3(7.1) – – – – – – – – – – 22 GHSA-hqjg-pww4-pcgq 8.7 – – – – – – – T1(7.1) – – – 22 GHSA-p3h2-2j4p-p83g 7.2 T1(7.1) – – T1(7.2) T1(7.2) – – – – – – 22 GHSA-v2xr-wvrv-p969 7.7 T1(8.7) – – T1(8.7) T1(8.7) – T1(8.7) – – T1(8.7) – 22,770,918 GHSA-v92g-xgxw-vvmm 7.7 – – T1(7.0) – – – – – – – – 22 GHSA-vmwq-8g8c-jm79 8.7 T2(8.8) – – – – – – – – – – 22 GHSA-vv7q-7jx5-f767 10.0 – – T1(7.1) – T1(7.9) – – – – – – 918 GHSA-w789-49fc-v8hr 8.7 T1(8.7) – – – – – – – – – T1(8.7) 20,918 GHSA-wmfp-5q7x-987x 8.7 – – – T1(8.7) T1(8.7) – – – – – – 22 GHSA-5458-7hh9-v7p4 8.7 – – – – T1(8.7) – – – – – – 22,23 GHSA-8x9r-hvwg-c55h 8.7 – – – – T1(7.1) – – – – – – 22 GHSA-94c7-g2fj-7682 8.3 – – – – – – – – – T3(8.6) – 22 GHSA-h7cj-j2vv-qw8r 8.7 – – – – – – – – – – T3(8.7) 22 GHSA-m6w7-qv66-g3mf 8.6 – – – – – – – – – – T1(8.6) 22,59 GHSA-mw96-cpmx-2vgc 8.8 – – – – T1(8.7) – – – – – – 22 GHSA-pq29-69jg-9mxc 8.8 – – – – – – – – – – T3(8.6) 22 XSS GHSA-qpq4-pw7f-pp8w 8.5 T3(8.5) – – – – – – – – – – 79 GHSA-w8x4-x68c-m6fc 8.7 – – T1(8.7) T3(8.7) T1(8.7) – T1(8.7) T1(8.7) – – – 79 Other GHSA-4hjq-9h5c-252j 7.7 – – – – – T1(8.7) – – – – – 476 GHSA-9fjp-q3c4-6w3j 8.7 – – – – – – T1(8.7) – – – – 674 GHSA-jpcj-7wfg-mqxv 8.7 – – – T3(10.0) – – – – – – – 20 
+
+Total 116 – 34 6 23 36 42 9 19 24 4 7 17 –Codex/GPT5.4-xhigh playbook 
+
+P01 cf450ad 
+
+P02 cf450ad 92bfe76 
+
+P03 92bfe76 684eb3a 791aa27 
+
+P04 791aa27 183ad84 458634e 68366f0 9e7eb25 0babf84 
+
+P05 0babf84 bac5a9c 
+
+P06 bac5a9c 8f2f80e 293eeda 
+
+P07 293eeda c4c959e b4d8871 
+
+P08 b4d8871 4fd004e 1d0c4f4 a8652e0 
+
+P09 a8652e0 61000f1 3d045c8 
+
+P10 3d045c8 5d0e2a9 9ee9092 
+
+P11 9ee9092 b3561e5 3300f23 decfef8 
+
+P12 decfef8 e321133 ec86458 7a0833d 
+
+P13 7a0833d b08b004 f9daed9 b7b0b57 
+
+P14 b7b0b57 0aa0565 793d13b 
+
+P15 793d13b 9bf76d7 05bd393 84c05b5 
+
+P16 84c05b5 8173250 0554346 
+
+P17 0554346 c9dc425 fcb294b 
+
+P18 fcb294b c659e51 
+
+P19 c659e51 6387772 
+
+P20 6387772 6c6c5df e435eff 
+
+P21 e435eff 889275c 550960f 278160d 46af80c 
+
+P22 46af80c 0aacfab 0519be3 
+
+P23 0519be3 83d2573 a9c2875 
+
+P24 a9c2875 8cb2be7 e12c613 
+
+P25 e12c613 58f858e 
+
+P26 58f858e ff2b30b 2af5854 5f7db5f 
+
+P27 5f7db5f 65cfbfc 6a170da 
+
+P28 6a170da f13a9fc 
+
+P29 f13a9fc fc6a0fa df30b0f 
+
+P30 df30b0f dc300f0 
+
+P31 dc300f0 7184dce a3d306a 
+
+P32 a3d306a 5f36f8f 4d97c59 e48fec5 
+
+P33 e48fec5 e041af6 44e032e 
+
+P34 44e032e 5a852c5 e871562 296c3ef 
+
+P35 296c3ef 51b9eb4 9ce5603 4d4f04f 
+
+P36 4d4f04f db3d19b a34e6e9 
+
+P37 a34e6e9 ff90d2a 
+
+P38 ff90d2a c9f5922 3ea2143 
+
+P39 3ea2143 fb7a727 
+
+P40 fb7a727 494bb04 
+
+OpenCode/GLM5.1 playbook 
+
+P01 a324657 
+
+P02 a324657 dd378c4 126b8fb fba6b99 
+
+P03 fba6b99 074acfb 
+
+P04 074acfb ba8c970 65ca0c0 f8b75a2 43ff77f 
+
+P05 43ff77f 5a609d0 51e2cbe 571c990 66ef62b 91321dc 
+
+P06 91321dc 3fe2d81 
+
+P07 3fe2d81 acb2626 6a5641f b4576f6 910f58c 
+
+P08 910f58c 18ed55d 
+
+P09 18ed55d 64da137 7bb6807 e74a5e4 
+
+P10 e74a5e4 e6c0108 
+
+P11 e6c0108 70b1184 61b7e04 
+
+P12 61b7e04 6f38653 
+
+P13 6f38653 3738759 
+
+P14 3738759 d38ea7c 
+
+P15 d38ea7c 38fe223 
+
+P16 38fe223 93a963d 
+
+P17 93a963d 59b54ca 
+
+P18 59b54ca c3685ed ac41539 
+
+P19 ac41539 2be3a55 
+
+P20 2be3a55 634fed2 
+
+P21 634fed2 29f289c 
+
+P22 29f289c 27ad2cc 1500d8e cad7659 
+
+P23 cad7659 9809e14 
+
+P24 9809e14 ccd87ed 
+
+P25 ccd87ed 6d735b9 
+
+P26 6d735b9 1d6ac18 e7ae710 5218d06 
+
+P27 5218d06 8c96723 1d25368 
+
+P28 1d25368 254d03b 
+
+P29 254d03b 3c113cb 6919dd8 1527c97 360f619 f30a5ce bc69e17 f6c13d3 
+
+P30 f6c13d3 8d13533 5cb81a2 60b2e3c e36b47b 3fe7179 
+
+P31 3fe7179 19d251e 
+
+P32 19d251e 78d7115 
+
+P33 78d7115 fce08c6 
+
+P34 fce08c6 e5abc23 9195526 7d45ce6 877a333 
+
+P35 877a333 e11a52d 44bd13b 
+
+P36 44bd13b 72ec2a1 84ecce3 
+
+P37 84ecce3 9acf29a a5cdbad 7134256 e2ffe8b 
+
+P38 e2ffe8b 4c352ae ad83fed 7b711f0 
+
+P39 7b711f0 bed3118 934951f e33522e 
+
+P40 e33522e 2ba7552 
+
+OpenCode/GLM5.1 evolution. P02–P05 bootstrap workflow/knowledge-base candidates, broaden vulnerability classes, and prioritize core components. P06–P13 add subsystem enumeration plus SQL/YAML/header DoS, native overflow, crypto/BOLA/deserialize, builder traversal, GraphQL/XML/CLI tracing, parameter precision, and ReDoS/XPath matching. P14–P20 add internal-function audits, no-vulnerability safeguards, blind-spot coverage, endpoint sweeps, RCE/CORS/SSRF checks, binary overflow, ORM SQL injection, auth-flow checks, and per-endpoint authorization. P21–P30 add PoC path validation, polyglot/eval coverage, denylist and LLM-parameter SSRF checks, middleware/path/race checks, CRUD, access-control matrices, weak crypto, DB permission bypasses, DoS gates, PR:L anchoring fixes, and MyBatis/native-code/RCE coverage. P31–P40 tighten warning/wiki checks, REST anchoring, Ruby/Python/IPv6 patterns, root-cause matching, dependency/upload/storage heuristics, CWE/DoS distinctions, attack-surface anchoring, and transport-DoS separation. 
+
+Codex/GPT5.4-xhigh evolution. P02–P05 turn a README-only seed into a structured workflow with CVSS gates, root-cause hypotheses, DoS evidence, XXE/data-exposure checks, and drift control. P06–P13 sharpen auth disclosure, hidden security primitives, output-injection versus DoS separation, token lifecycle checks, vulnerable-path tracing, crypto misuse, and metadata drift. P14–P20 distinguish eval/state bugs, shipped parser/render roots, state and secret boundaries, sibling root causes, guard bypasses, wrapper sinks, and breadth-first ranking. P21–P30 add file/output/SQL sinks, parser trust boundaries, real-path evidence, validator/state bypasses, prototype/evaluator state, upload/write sinks, default entry/config checks, workflow-versus-SSRF separation, meta-object/plugin/body-DoS checks, and read/auth/SQL/DoS triage. P31–P40 converge on default-boundary clearing, security-signal-guided families, launcher/SQL validation paths, runtime surfaces, artifact lifecycle, named-guard fit, sibling roots, exception/DoS/leak separation, framework router/path/prototype roots, and final root-cause comparison. 
+
+Figure 6. Compact comparison of normalized playbook pointer histories. Blue nodes are selected incumbents; orange nodes are retained alternatives; purple outlines and arrows mark candidates promoted to the next incumbent. Horizontal fan-out shows alternatives evaluated under the same incumbent, not candidate-to-candidate ancestry. Appendix D. Case Walkthrough: rusqlite 
+
+rusqlite is a Rust SQLite binding library with public transaction and savepoint APIs. E VO HUNT identified a pre-viously unknown SQL injection in the savepoint-name path: caller-controlled identifier text is interpolated verbatim into 
+
+SAVEPOINT , RELEASE , and ROLLBACK TO commands executed via execute_batch , with no quoting, escaping, or allowlisting. The flaw dates to May 2016 (ten years ago) , when commit 703cf22b5 (“Separate Savepoint out from Transaction” ) first introduced the savepoint-name parameter—baked in from the API’s inception without SQL guards and undetected for nearly a decade until fixed after responsible disclosure. Critically, Rust’s type system offered no protection: T: Into<String> is safe at the language boundary but not at the SQL-semantics level. The five-turn run used 52 tool calls and 3.2M tokens (95% cached), and produced a passing PoC. We highlight three aspects where, in our view, playbook guidance changes what the agent does—Turn 3’s source-to-sink trace reflects methodology any skilled analyst would apply regardless of procedure; the three below do not:  
+
+> •
+
+Structured scoping. Turns 1–2 show the playbook di-recting the agent to build a bounded release-surface map before any deep validation, steering it away from isolated sinks toward repository-owned construction boundaries.  
+
+> •
+
+Sibling clearing. Turn 4 illustrates checklist discipline: adjacent families (PRAGMA builders, Name helpers, raw SQL APIs) must each reach a terminal state before the savepoint path is accepted, preventing symptom drift.  
+
+> •
+
+Executable, pinned PoC. Turn 5 shows the playbook mandating a replayable proof with a verifier signal—the same ground truth used to score all benchmark results. 
+
+Turn 1: Release-Surface Scoping. The playbook directs EVO HUNT to analyze rusqlite from the perspective of its callers, not its internals: attacker influence enters not through implementation details but through the safe, typed APIs that downstream applications invoke with lower-trust values. Reading the manifest, README, and exported mod-ules, E VO HUNT anchors the run to five families on a live checklist—savepoints, PRAGMA builders, raw SQL APIs, 
+
+Name helpers, and optional extension/vtab/blob paths— establishing a bounded surface map before deep validations. 
+
+Turn 2: SQL Triage. EVO HUNT applies the SQL-injection guide and draws a critical distinction: caller-controlled SQL APIs (intended for arbitrary queries) are not a bug class, but repository-owned wrappers that silently translate non-SQL input—names, identifiers, fragments—into executable SQL text are. PRAGMA builders pass this test; they validate key-words and escape identifiers before execution. Savepoint-name handling does not: the library accepts any string and renders it directly as SQL syntax, with no comparable guard. Raw SQL and PRAGMA stay open as comparison families. 
+
+Turn 3: Savepoint Source-to-Sink Trace. EVO HUNT con-firms that the savepoint-name parameter travels from the public API to the SQL executor.                  
+
+> Playbook read. “attacker-controlled input source” ;
+> “query-construction path” ;“exact unsafe SQL boundary” ;“prove parameterization is absent, partial, or bypassed” .
+> Reasoning. I follow the savepoint-name parameter because T: Into<String> is type-safe at the Rust boundary—the type system accepts any string as a savepoint name—but not SQL-safe: once that string is rendered as SQL syntax, it can carry arbitrary statements that SQLite will execute.
+> Operation. EVO HUNT traces Connection::savepoint_with_ name and Transaction::savepoint_with_name into
+> Savepoint::with_name_ , where SAVEPOINT {name} reaches
+> execute_batch ; the same name is reused verbatim in RELEASE
+> and ROLLBACK TO , yielding three unsanitized SQL entry points from one parameter.
+> Signal. One public wrapper passes attacker-controlled text into three unguarded SQL commands.
+
+Turn 4: Sibling Clearing and Root-Cause Fit. EVO HUNT 
+
+does not accept the savepoint finding until every family on the checklist reaches a terminal state with repository-grounded justification, ruling out the possibility that astronger or more central boundary was missed.           
+
+> Playbook read. “Every family in the checklist must end in a terminal state” ;“Do not start writing a final report or reproduction bundle until the checklist names the accepted component family, at least one sibling primitive in that family that you directly cleared, and any higher-signal family you deliberately pruned with repository-grounded justification” .
+> Reasoning. I need the savepoint path to remain the strongest repository-owned boundary after comparing PRAGMA—the most plausible competitor, since it also converts non-SQL identifiers into SQL—along with Name helpers, raw SQL APIs, and optional feature paths.
+> Operation. EVO HUNT clears PRAGMA through its own keyword allowlist and identifier/literal escaping; clears Name helpers because they pass C strings to SQLite rather than constructing SQL text; prunes raw SQL as intended caller capability; and prunes optional feature surfaces as lower-centrality or explicitly unsafe.
+> Signal. Savepoints remain the only unprotected boundary after all sibling families are cleared or pruned.
+
+Turn 5: PoC Validation and Artifact Finaliza-tion. EVO HUNT materializes the accepted path as a pinned, replayable proof. The payload exploits a property of the savepoint lifecycle: because the name appears in both 
+
+SAVEPOINT and RELEASE , a single injected INSERT 
+
+executes twice.

@@ -1,0 +1,582 @@
+Title: Semantic Integrity Failures in Document-to-LLM Supply Chains
+
+URL Source: https://arxiv.org/pdf/2606.15020v1
+
+Published Time: Tue, 16 Jun 2026 00:19:47 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# Semantic Integrity Failures in Document-to-LLM Supply Chains 
+
+Side Liu and Jiang Ming 
+
+Tulane University 
+
+Abstract —Document-to-LLM applications typically read up-loaded PDFs by first translating them into text through a hidden extraction layer that users cannot observe or audit. We show that this layer enables split-view PDFs : one document can have two semantic views before model reasoning. By mining specification-permitted or implementation-tolerated representa-tion gaps at the PDF render/extract boundary, we instantiate 25 extraction gaps (EG) in which extractors return attacker-controlled or extractor-dependent text while the rendered page shows benign or different content. The gaps form four families: semantic overrides, hidden semantic injection, reading-order splits, and font-decoding splits, and 14 gaps have no exact path/mechanism-level match in prior PDF-to-LLM attacks. We evaluate these gaps on 16 PDF processing stacks and 7 commercial LLM services that accept PDFs through official APIs and web chat. Each gap causes render-extract divergence on at least one stack. Under a gap-level exposure criterion, every evaluated service exposes at least one gap, with 12/25 to 21/25 exposed gaps. Across deployment variants, exposure is driven mainly by the ingestion stack—not model identity alone—that constructs the model’s document context: APIs, cloud backends, web frontends, and local runtimes can expose different views of the same PDF. We further show that tested safety filters cover only selected hidden-text constructions. To support triage, we also develop a static screening scanner whose rules trigger on all 25 benchmark gaps in our self-test, and we discuss dual-view consistency as a longer-term defense direction. 
+
+## 1. Introduction 
+
+The Portable Document Format (PDF) dominates docu-ment exchange worldwide [1], [2]. LLM applications now routinely accept PDF uploads for summarization, question answering, structured extraction, and review [3], [4], [5], [6], [7], [8]. Across official APIs, web chat, and document-analysis products, they share a hidden ingestion layer that converts PDFs into model-consumed text before reasoning, a layer that users cannot observe or audit. Document-to-LLM pipelines therefore assume that the extracted text consumed by the LLM reflects the meaning visible to the user. That assumption is fragile because PDF separates visual rendering from text extraction, and extractors differ in how they resolve ambiguous or optional structures [2], [9], [10]. Figure 1 illustrates the core primitive: a split-view PDF 
+
+whose rendered page appears benign while the extracted text carries attacker-controlled or extractor-dependent semantics. This is a document-ingestion supply-chain failure upstream of Split -View   
+
+> PDF
+> "The library will
+> reopen on
+> March 15 ···"
+> PDF Viewer
+> "A criminal
+> investigation has
+> been opened …"
+
+T   
+
+> Render
+> Text Extractor
+> User sees benign
+> announcement
+> Model sees
+> extractor -side
+> content
+> visible to human
+> invisible to human
+> Figure 1. A split-view PDF creates a mismatch between the user-visible page and the model-consumed representation.
+
+model reasoning: the hidden ingestion layer constructs a doc-ument context the user cannot observe. Prior work [11], [12], [13], [14], [15] has exposed related risks: untrusted external content can steer LLM-integrated applications, visual and font-based encodings can create human-machine perception gaps, and PDF-specific hidden-text or obfuscation techniques can reach the model through document-ingestion pipelines. Together, these works show that adversarial document content can reach LLM workflows, but leave the ingestion layer largely as a black box: they do not characterize the PDF render/extract mechanisms, parser fallbacks, and deployment choices that construct a model-consumed view different from the user-visible page. In this paper, we mine specification-permitted or implementation-tolerated render/extract divergence points in ISO 32000 rather than enumerate isolated tricks. Starting from places where semantic layers, visibility state, reading order, or font metadata allow renderers and extractors to diverge, we instantiate candidates as canaries and keep only those with stable rendering and attacker-controllable extractor divergence. This process yields 25 confirmed extraction gaps (EG) across four families—semantic overrides, hidden semantic injection, reading-order splits, and font-decoding splits—including 14 gaps with no direct counterpart in prior PDF-to-LLM attack work. Several gaps require no hidden text: the page is fully visible, yet extraction returns different semantics. Hidden-text filters do not address such cases because there is no hidden payload text to remove. We organize the gap set into a two-tier benchmark: mechanism canaries for parser and ingestion-stack measurement, and end-to-end attack documents for LLM services and applications. We evaluate the benchmark across 16 PDF processing stacks and 7 commercial LLM services, then compare official APIs, cloud-hosted backends, web chat products, and local runtimes for the same nominal models. The results show that every gap produces render-extract divergence on at least one stack. Our 1
+
+> arXiv:2606.15020v1 [cs.CR] 12 Jun 2026
+
+evaluation results show that every evaluated LLM service is affected, with EG-level coverage ranging from 12/25 to 21/25 gaps and many successful cells repeating across trials. Exposure is primarily shaped by the ingestion stack that constructs the model’s document context. The same canaries also provide a side channel for fingerprinting hidden ingestion behavior: their parser-dependent outputs reveal which PDF parser or loader-equivalent path is likely used by an LLM application or RAG pipeline within our controlled panel. In a nutshell, we make the following key contributions:  
+
+> •
+
+We systematically identify and categorize 25 PDF ex-traction gaps across four root-cause families, including 14 with no direct counterpart in prior studies.  
+
+> •
+
+We build a two-tier benchmark for testing PDF-ingestion semantic integrity in LLM services and applications. Mechanism canaries isolate each extraction gap at the parser layer, while end-to-end attack documents test whether the gap propagates into model outputs.  
+
+> •
+
+We conduct a large-scale measurement across 16 PDF processing stacks and 7 commercial LLMs, comparing official APIs, cloud-hosted backends, web chat products, and local runtimes. The results show that PDF ingestion is a supply-chain security boundary: exposure is shaped by parser, converter, and deployment choices, not by the model name alone.  
+
+> •
+
+We show that benchmark canaries support fingerprinting of PDF ingestion stacks, allowing auditors to infer the parser or loader-equivalent path used by LLM appli-cations within our controlled panel. We also evaluate current PDF safety filters and develop a static scanner. 
+
+## 2. Background & Related Work 
+
+2.1. The PDF Dual-Path Problem 
+
+The PDF format, standardized as ISO 32000 [16], sepa-rates the concerns of visual rendering and text extraction into two independent processing paths. A PDF page’s content stream contains drawing operators that position and render characters using specific fonts. The visual appearance of each character is determined by the font’s glyph program or glyph outlines. Text extraction, the process of recovering Unicode text from a PDF, follows an entirely separate path. 
+
+Text Extraction Resolution Hierarchy When a text extractor encounters a character code in a content stream, it must resolve the corresponding Unicode character. The PDF specification defines a resolution hierarchy: (1) if a 
+
+/ToUnicode CMap is present, use it to map the character code directly to a Unicode string; (2) if /ToUnicode is absent, fall back to the font’s /Encoding dictionary and 
+
+/Differences array to obtain glyph names, then infer Unicode from the Adobe Glyph List; (3) if no encoding information is available, use the raw character code as a Unicode code point. Each fallback level introduces extractor-dependent behavior, since different implementations resolve ambiguities differently. 
+
+The Independence Property Critically, /ToUnicode 
+
+mapping is entirely independent of the font’s visual rendering. A /ToUnicode CMap can map a character code to any arbitrary Unicode string regardless of what glyph the font program draws for that code. This independence is by design: the PDF specification introduced /ToUnicode to support search and accessibility for fonts with non-standard encod-ings [16]. However, it means that a font can be constructed where every glyph visually displays one character while the 
+
+/ToUnicode mapping returns a completely different string. 
+
+Semantic Markup Path Beyond font-level mappings, PDF provides document-level mechanisms that can override text extraction. The /ActualText attribute on marked-content sequences specifies the text that a content span represents [16]. Extractors that implement accessibility-aware text extraction substitute the /ActualText value for the content-stream character codes. Since /ActualText is invisible in the rendered view, existing only in the PDF’s logical structure tree, it creates a channel for divergence between visible and extracted content. 
+
+Format Design Versus Pipeline Assumption The inde-pendence of rendering and extraction paths is not a defect of the PDF specification. PDF predates LLM ingestion, and its parallel paths support legitimate accessibility, search, and copy-paste use cases. The semantic integrity gap we study is not that rendering or extraction operations are individually broken, but that ISO 32000 does not require their outputs to remain mutually consistent at a document-to-LLM pipeline boundary. That boundary did not exist when the standard was written, and deployed document-to-LLM systems still do not enforce it today. 
+
+2.2. PDF Text Extractors in LLM Pipelines 
+
+Modern LLM applications employ a variety of PDF tools, which we categorize into three classes. 
+
+Rule-Based Extractors Libraries such as pypdf [17], pdfminer [18], MuPDF [19], Poppler [20], PDFium [21], PDF.js [22], and Xpdf [23] parse PDF object structures and follow the extraction path described above. Each library independently implements the resolution hierarchy, with different fallback behaviors for ambiguous or absent fields. These implementation differences are the primary source of extraction gaps exploited in this work. 
+
+Rendered-Page Extraction Some document pipelines first render PDF pages to images and recover content from the rendered-page representation through OCR, vision models, or hybrid converters such as Docling [24] and Unstructured [25]. This approach is designed to resist text-level split-view attacks because the model or OCR system observes the same pixel representation as the human. However, as we observe in one commercial web frontend (§5.6), this resistance can be conditional in cost-sensitive deployments: above an internal page-count threshold, the platform silently falls back to text extraction, re-exposing the attack surface it otherwise avoids. 
+
+AI-Oriented Extractors Tools designed specifically for LLM pipelines, including LlamaParse [8] and OpenDat-aLoader [26], often wrap rule-based extractors with additional 2preprocessing. OpenDataLoader advertises built-in rendering-mismatch safety filters for PDF prompt-injection content. We evaluate the tested default configuration as part of our defense analysis in §5.6. 
+
+2.3. Adjacent Threats and Scope 
+
+Indirect Prompt Injection and Document Threats Indirect prompt-injection work shows that LLM-integrated systems can be steered by attacker-controlled external content such as web pages, emails, or retrieved documents [11]. Follow-up document attacks instantiate this threat in PDF and RAG settings using hidden prompts, low-visibility text, metadata, Unicode tricks, and loader-specific behaviors [13], [27], [28], [29]. Together, they show that attacker-controlled content embedded in documents can enter LLM workflows and alter model outputs. We study how PDF documents create that divergent input path: PDF structures and tolerated fallback paths can supply model-consumed text that differs from the page a user inspected. 
+
+PDF Visibility and Representation Attacks PDF-specific work has long exploited differences between visual content and machine-consumed content. PDF Mirage masks content for online services by manipulating font/glyph interpreta-tion [30]. Recent PDF-to-LLM work extends this direction with obfuscation, absolute-position reordering, hidden text, and font-data manipulation [13], [14], [15]. Related visual-smuggling work shows that human and model views can diverge even outside the PDF parser stack [12]. These works demonstrate that individual PDF carriers can hide, reorder, or reshape content before it reaches a model. We study a different unit of failure: extraction gaps, i.e., reproducible render/extract divergences that make the ingestion stack construct a model-consumed document different from the user-visible one. This shift separates hidden-text delivery from broader semantic-integrity failures where no hidden payload text needs to be present. 
+
+Other PDF Security Research PDF security research also spans several adjacent but distinct problems: content-integrity failures in signed documents, including approval-signature bypasses, shadow attacks, and certification-signature attacks [31], [32], [33]; PDF malware analysis and detection [34], [35], [36], [37]; and PDF parser differential and compatibility studies [2]. These works target signature validation, malware classification, or parser robustness. Our scope is different: document-to-LLM semantic integrity, where the question is whether the text constructed by a PDF ingestion stack matches the page a user inspected. 
+
+## 3. Threat Model 
+
+Attacker An attacker controls a PDF document that enters a document-to-LLM pipeline through any normal ingestion path. The attacker has no access to model weights, system prompts, internal implementations, or preprocessing stacks. Representative scenarios include RAG systems that index external documents, user-uploaded third-party PDFs for document review, and enterprise workflows ingesting external invoices, contracts, compliance submissions, or review manuscripts. The attacker does not control the user’s task prompt, such as “summarize this document.” The attacker controls only the PDF file and its objects, which can cause the model-facing PDF preprocessing stack to output text that differs from the rendered page the user inspected. In our evaluation, the attacker-controlled strings are benign claims or answer spans rather than jailbreaks or imperative instructions. The attacker’s primary goal is to induce a downstream 
+
+semantic-integrity violation : model output becomes unfaithful to the human-visible document by incorporating attacker-controlled claims, contradicting or omitting visible claims, or acting on extractor-dependent artifacts. The same extraction gaps could also carry malicious instructions and serve as carriers for indirect prompt injection, but whether a model follows, refuses, or is jailbroken by such instructions is a downstream robustness question outside this work. Visible-text prompt injection [38], LLM jailbreaks [39], JavaScript or Actions [40], and memory exploitation [41] are also out of scope. The same canaries support ingestion-stack fingerprinting (§5.5) by exposing hidden extraction behavior. 
+
+Security Property We formalize the underlying semantic integrity assumption. Let V (D) be the human-visible claim set and Xe(D) the machine-consumed claim set produced by extractor e. Soundness requires Xe(D) to contain no material claim absent from or contradicting V (D) (claim injection ,
+
+claim contradiction ). Completeness requires Xe(D) not to omit any element of V (D) whose absence would change a downstream task outcome ( claim omission ). The same properties apply at the model-output level, with pipeline output Mp(D, q ) under task prompt q in place of Xe(D).We operationalize materiality at the task level: a claim is material if its presence, absence, or contradiction changes the labeled summary fact set or QA answer. 
+
+## 4. Split-View PDFs: Construction and Benchmark 
+
+4.1. Root Causes and Mechanism Families 
+
+Split-view PDFs arise not from implementation bugs in any single tool, but from specification-permitted repre-sentation or implementation-tolerated gaps in PDF’s dual rendering and extraction model. ISO 32000 permits renderers and extractors to consume different document representations without requiring their outputs to remain mutually consistent. We group the confirmed gaps into four root-cause families. We use EG as shorthand for extraction gap: EG01–EG25 are stable catalog identifiers, not severity rankings. 
+
+Semantic Override The PDF standard provides two extraction-side mechanisms that can declare Unicode text in-dependently of the glyphs painted on the page: the font-level 
+
+/ToUnicode CMap and the span-level /ActualText 
+
+marked-content attribute. A split-view PDF arises when these declarations describe different text from the visible 3Rendering Path Extraction Path                                        
+
+> 0x5 2
+> Font /glyph
+> program
+> Glyph
+> outline "R"
+> Pixels "R"
+> Hijacked
+> /ToUnicode CMAP
+> <52> ➔<0052> ("R")
+> <52> ➔<0041> ( "A")
+> Unicode text "A"
+> Before
+> Content stream code
+> unchanged modified
+> After
+> Marked -content span
+> /Span <<
+> /ActualText ("FRAUD ")>>
+> BDC BT ... ("SAFE ")Tj ...
+> Text painting
+> operator ("SAFE") Tj
+> Glyph outline
+> "SAFE"
+> Pixels
+> "SAFE "
+> /ActualText
+> property overrides
+> child text
+> Unicode text
+> "FRAUD "
+> Extracted span text
+> ➔"FRAUD "
+> Rendering Path Extraction Path
+> (a) /ToUnicode overrid e(b) /ActualText override
+> R
+> Use rsees
+> A
+> Parser outputs
+> SAFE
+> Use rsees
+> FRAU D
+> Parser outputs
+
+Figure 2. Semantic override mechanisms: rendering follows the font/glyph program while extraction follows a divergent semantic declaration. (a) 
+
+/ToUnicode CMap remap. (b) /ActualText span substitution. BT … 3 Tr … (PAYLOAD) Tj … ET BT … 7 Tr … (PAYLOAD) Tj … ET                   
+
+> Benign page PAYLOAD
+> Extractor extracts
+> (PAYLOAD)
+> from Tj
+> User sees
+> benign page only
+> PDF Viewer
+> No painted pixels
+> PAYLOAD
+> Extractor extracts
+> (PAYLOAD)
+> from Tj
+> PDF Viewer
+> Glyph outlines
+> generated
+> Outline as clip
+> path (not paint)
+> Later drawing
+> is clipped by
+> this mask
+> (a) EG -04 : Tr=3 non -paint ing text (b) EG -11 : Tr=7 text -as -clip
+> Benign page
+> User sees
+> benign page only
+> Shown for
+> illustration only
+
+Figure 3. Hidden semantic injection via text rendering modes. The top boxes show the underlying PDF content stream: the string (PAYLOAD) remains in a Tj text operator, while Tr controls how the glyphs are rendered. (a) With 
+
+Tr=3 , the renderer generates glyph outlines but neither fills nor strokes them, so no payload pixels appear. (b) With Tr=7 , the glyph outlines become a clipping mask rather than visible letters. 
+
+glyphs. EG01 targets the font-level channel (Figure 2(a)). A PDF content stream stores character codes, not Unicode characters. In Figure 2(a), code 0x52 still indexes the font glyph that draws “R”, but EG01 changes the corresponding 
+
+/ToUnicode entry from <0052> to <0041> . During ex-traction, the parser follows this CMap entry, reads <0041> ,and emits “A”; during rendering, the viewer ignores that Unicode mapping and draws the unchanged glyph. No extra text object is inserted, and the replacement applies to every occurrence of the affected code. EG02 targets the span-level channel (Figure 2(b)). Marked content can wrap a normal text operator with 
+
+/ActualText , originally for accessibility and copy-paste. The renderer paints the child text, such as ("SAFE") Tj ,but extractors that honor the wrapper output the declared alternate text, such as /ActualText("FRAUD") , instead. EG03 applies the same replacement at individual-character granularity. This family requires no hidden payload layer: the visible page content remains fully visible, but extraction may be governed by an explicit semantic channel outside the threat model of existing hidden-text filters. 
+
+Hidden Semantic Injection Hidden semantic injection creates text that is visible to extractors but invisible in the rendered page. Across this family, hiding can arise from ren-PDF Viewer 
+
+A B
+
+C D
+
+E F                                           
+
+> BT ... x1 y1 Tm (A) Tj ET
+> BT ... x1 y2 Tm (C) Tj ET
+> BT ... x1 y3 Tm (E) Tj ET
+> BT ... x2 y1 Tm (B) Tj ET
+> BT ... x2 y2 Tm (D) Tj ET
+> BT ... x2 y3 Tm (F) Tj ET ⑥
+> ①
+> ②
+> ③
+> ④
+> ⑤
+> Left column
+> content first
+> Right column
+> content next
+> User reading path (row -major) Extractor may follow operator order ( column -major)
+> PDF Viewer: spatial layout
+> User reads row -wise
+> PDF Content Stream: operator order
+> Extractor may read stream -wise (column -major)
+> A➔B➔C➔D➔E➔FA➔C➔E➔B➔D➔F
+> ⑥
+> ①②
+> ③④
+> ⑤
+
+Figure 4. Reading-order split in EG16: two-column visible layout versus column-major content-stream order. 
+
+dering state, color or transparency, page or clipping geometry, occlusion, matrix or scale degeneration, or optional-content visibility. The common pattern is that a human reader sees a benign page, while extractors that read the PDF content stream may still return the hidden payload. Appendix A gives the per-gap details. Below we illustrate two representative render-mode mechanisms, including EG11, which has no direct counterpart in prior PDF-to-LLM attack work. Figure 3 illustrates two text rendering ( Tr ) modes. EG04 sets Tr=3 , the PDF mode that neither fills nor strokes text: the payload remains in the content stream, but the renderer paints no glyphs. EG11 sets Tr=7 , which uses the text outline as a clipping path, i.e., a mask that limits where later drawing can appear, rather than painting the text itself. In both cases, extractors that decode PDF text commands without tracking rendering state may return the payload. 
+
+Reading-Order Split The PDF specification does not require content-stream order to correspond to spatial reading order. Text fragments are placed on the page by drawing commands with explicit coordinates, and the order of those commands in the file often reflects how the PDF was generated, not how a reader should read the page. Figure 4 illustrates EG16, a two-column layout. The visible page presents six tokens in a row-major grid that a human reader traverses as A →B→C→D→E→F. The content stream, however, emits the left column before the right column. An extractor that follows byte-stream order therefore returns A→C→E→B→D→F, silently changing cross-column rela-tionships. Extractors that instead reconstruct reading order from glyph geometry may return the human-visible sequence, so the same PDF yields different text without hiding any token. EG17 uses the same construction with three columns, testing the same stream-order split under a denser layout. 
+
+Font-Decoding Split For Type 3, composite, and CID-keyed (Character Identifier-keyed) fonts, Unicode recovery can depend on font metadata and fallback behavior when required fields are absent or malformed. Figure 5 illustrates two subfamilies that exploit this hierarchy. EG18 targets Type 3 fonts (Figure 5(a)). A Type 3 font without /ToUnicode 
+
+renders each character through a custom CharProcs glyph program. The encoding table maps content codes to glyph names in an arbitrary order: code 0x41 selects /C_glyph ,40x41                                      
+
+> ("A")
+> 0x42
+> ("B")
+> 0x43
+> ("C")
+> /C_glyph /A_glyph /B_glyph
+> Content
+> code
+> Encoding
+> glyph name
+> A
+> CABExtractor
+> extracts
+> CharProc
+> draws visible
+> glyph BC
+> No / ToUnicode CMap → glyph -name fallback
+> User sees: ABC Extractor reads: CAB
+> 53
+> Remaining descendant -font
+> glyph data
+> 54 4F 50
+> Rendered glyphs assemble
+> STOP
+> U+5354 U+4F50
+> 協佐
+> Content bytes (hex)
+> Descendant /Type missing → byte -pair fallback
+> User sees: STOP Extractor reads: 協佐
+> (a) EG -18 : Type3 glyph -name fallback mismatch (b )EG -23 : CID descendant -font metadata fallback Figure 5. Font-decoding split under incomplete font-to-text metadata. Although the page renders the intended glyphs, extractors fall back to different Unicode recovery rules. (a) EG18 renders ABC , but Type 3 glyph-name fallback extracts CAB . (b) EG23 leaves STOP visible, but CID descendant-font byte-pair fallback extracts CJK text.
+
+code 0x42 selects /A_glyph , and code 0x43 selects 
+
+/B_glyph , so the rendered glyphs assemble the visible string ABC . An extractor that falls back to glyph-name lookup in the absence of /ToUnicode recovers the names in encod-ing order and returns CAB instead. The visual and extracted token sequences are permutations of the same character set, making the divergence invisible to any diff-based integrity check. EG23 targets CID composite fonts (Figure 5(b)). Re-moving the descendant /Type field leaves rendering intact, but some extractors reinterpret raw content bytes in pairs as two-byte CID or Unicode values, producing CJK (Chinese, Japanese, and Korean) text codepoints instead of the visible ASCII string. The broader CID subfamily removes individual metadata fields— /Subtype at the top-level or descendant font, /FontDescriptor , /CIDSystemInfo , descen-dant /Type , or default width /DW —causing extractors to take different fallback branches. These branch-specific tokens are stable, making font-decoding splits useful as both exploit carriers and fingerprinting canaries. A complete per-mechanism catalog, including precise PDF constructs and mechanisms for each of the 25 confirmed gaps, is provided in Appendix A (Table A1). Table A2 separately marks prior-work overlap and the 14 gaps for which we found no exact or mechanism-level adjacent construction in the prior work. We use “no direct counterpart” conservatively: a gap qualifies only when no surveyed prior work instantiates the same PDF path or a mechanism-level adjacent construction in the same interpretation chain. 
+
+4.2. Specification-Grounded Gap Mining 
+
+Candidate Mining and Test Generation Our mechanism catalog was not assembled through ad hoc PDF tricks. We mine candidate render/extract divergence points : places where plausible PDF implementation choices can diverge. Because ISO 32000 is prose, we work over the Arlington PDF Model [42], which indexes PDF objects, keys, values, and constraints in machine-readable tables. An evidence-constrained LLM-assisted pass proposes candidate divergence points and bounded mutation spaces from those tables, but these outputs are treated only as hypotheses; evidence comes from downstream differential execution and canary validation. Appendix B provides the prompt and output schema. We focus on split-view PDF behavior, so we keep only candidates that can affect visible rendering or extracted text: semantic text layers, visibility and graphics state, page geom-etry, reading order, and font-to-Unicode recovery. Candidates outside the render/extract interface are excluded. We instanti-ate the retained set with minimal PDF templates implemented in our generator. Each template places one object class in a PDF context where it can affect rendering or extraction, such as text drawn through a font dictionary, painting through a color-space resource, an invoked XObject, or a mutated page dictionary. For each candidate, the generator selects the matching template and inserts bounded key/value variants. The archived generation manifest records 532 executable divergence test groups, each expanding into multiple bounded PDF variants. We use cross-engine differential execution as a discovery filter. Each variant runs over the open-source PDF engines in our parser panel (Table 2), and we compare rendered images and extracted text strings across engines for the same input. We retain a group when at least two engines produce distinct outputs: visibly distinct rendered images or different normalized text hashes after excluding whitespace-only differences. This stage retained 154 groups with observable implementation-level divergence; it does not by itself establish a split-view security gap. We then focus on the 72 retained groups with extracted-text divergence, because only these can change the document text supplied to an LLM pipeline, and reduce them to split-view candidates in the promotion step below. These groups are concentrated in CID font mapping, page-geometry and visibility, Type 3 font mapping, and simple font-dictionary fallback. 
+
+From Divergences to Confirmed Gaps The 72 text-divergent groups are evidence units, not independent gaps: multiple bounded mutations can induce the same extractor-output pattern. We collapse them by normalized extractor output and root PDF mechanism, then instantiate one repre-sentative canary per stable mechanism. A representative is promoted only if it preserves a stable visible interpretation, induces non-empty extractor text that diverges from the rendered view, and is attributable to one dominant PDF mech-anism. The resulting catalog contains 25 confirmed extraction gaps grouped by security effect in §4.1. It is not complete coverage over PDF parser behavior, but a set of robust split-view primitives validated by deterministic render/extract evidence. The catalog spans both specification-permitted features ( /ToUnicode , /ActualText , rendering state, and reading-order freedom) and metadata-incomplete PDFs that robust renderers tolerate but extractors resolve through fallback paths, especially in CID font decoding. Both regimes produce the same security symptom: a model-consumed view that differs from the user-visible page. 
+
+4.3. Two-Tier Benchmark Design 
+
+Our benchmark separates mechanism validation from downstream impact. Corpus A tests whether PDF engines traverse a targeted split-view path; Corpus B tests whether 5Table 1. A TTACK MODALITY ASSIGNMENT . G APS MARKED WITH † ALSO HAVE AN INLINE QA VARIANT .Primary Modality Gaps Count Summary Attack EG01 †, EG02 †, EG04 †, EG05 †, EG06, EG07 †, EG08 †, EG09 †, EG10 †, EG11 †,EG12, EG13 †, EG14 †  
+
+> 13 QA Attack EG03, EG15–EG25 12
+
+the resulting extraction divergence propagates into LLM output. This separation ensures that end-to-end attacks rest on mechanisms with stable, attributable extractor behavior. 
+
+Corpus A: Mechanism Canary Corpus Corpus A consists of 25 minimal one-page PDFs, one per confirmed extraction gap. Each sample isolates one mechanism and embeds a semantically inert canary token absent from all other corpus documents. Extractor output is scored by whether it returns the canary, the visible text, a deterministic artifact, or dropout. Each sample is annotated with its mechanism family, human-visible content, extractor-side content or artifact, and expected extractor-level effect. 
+
+Corpus B: End-to-End LLM Corpus Corpus B provides semantically rich one-page documents that embed each confirmed gap in a downstream task carrier rather than a synthetic canary. Corpus B uses two task modalities. Sum-mary Attack measures passage-level contamination: semantic override and hidden semantic injection samples inject a full paragraph or appendix-style extractor-side claim, and success is scored when the model repeats it. QA Attack measures answer-span corruption: the mechanism is woven into a short field or sentence, often within the same line or text object as the visible answer. Success requires the model to return the extractor-side answer. Corpus B covers all 25 extraction gaps. Each gap is assigned one primary end-to-end modality: 13 are Summary-primary and 12 are QA-primary (Table 1). Eleven Summary-primary gaps also support a clean inline QA carrier (all except EG06 and EG12), adding 11 secondary QA pairs. Thus Corpus B contains 25 mechanism instances and 36 total gap–modality pairs. Each Corpus B sample records the visible claim or answer span, the extractor-side content or artifact, and the task prompt. Summary samples use attacker-chosen claims; QA samples use mutated answers, reordered spans, or deterministic fallback artifacts. The visible oracle is established by manual review over the same 10 render-capable PDF tools used in Table 2: a sample is retained only if the attacker-side claim or answer is not visible in any rendering, and renderer-dependent benign details are scored from the manually recorded visible state rather than a single reference renderer. 
+
+## 5. Evaluation 
+
+In this section, we present our results on various PDF parsers and LLMs, measuring upstream extraction gaps, downstream model effects, deployment variation, fingerprint-ing, and defenses through five research questions: 
+
+RQ1. How prevalent are extraction gaps across upstream PDF parsers? (§5.2) 
+
+RQ2. Do extraction gaps propagate into downstream LLM failures? (§5.3) 
+
+RQ3. How do deployment entry points, third-party ingestion layers, and vendor service versions reshape PDF attack risk? (§5.4) 
+
+RQ4. Can canaries we design reliably fingerprint hidden PDF ingestion stacks? (§5.5) 
+
+RQ5. How much do existing filters, vision-based ingestion, and our static scanner reduce split-view risk, and what attack surface remains? (§5.6) 
+
+5.1. Settings 
+
+Benchmark Suite We evaluate against the two-tier bench-mark described in §4.3. Corpus A provides 25 minimal canary samples for RQ1 and RQ4; Corpus B provides 36 semantically rich gap–modality instances for RQ2 and RQ3, with the Summary/QA assignment shown in Table 1. 
+
+PDF Parsers and LLMs We evaluate our benchmark against 16 upstream PDF processing stacks: 10 dual-capability PDF parsers that expose both rendering and text extraction, and 6 text-extraction or document-conversion pipelines whose relevant output is the text handed downstream. Among the 10 dual-capability parsers, three are commercial PDF readers: Adobe Acrobat, Foxit, and PDF Expert. The remaining stacks include open-source libraries and document-processing pipelines commonly deployed in document-to-LLM systems. For the end-to-end LLM evaluation, we select 7 com-mercial platforms that expose a native PDF ingestion path through their official API, using the most capable production model with an official PDF-accepting API available in the March 2026 measurement window: Sonnet 4.6, Grok 4.2, GPT-5.4, Gemini 3, Kimi K2.6, Qwen-Long, and GLM-5.1. Each platform either processes PDF files directly within the model’s multimodal context or routes uploads through an officially-documented file extraction chain before inference. All evaluations are conducted via API invocation using each platform’s documented PDF submission interface with default generation parameters, ensuring that the preprocessing behavior observed reflects the production ingestion stack rather than any third-party wrapper. All experiments are conducted on machines running Ubuntu 24.04 with an Intel Core Ultra 9 285K CPU and 64 GB of RAM. 
+
+5.2. RQ1: Upstream Extraction Gap Prevalence 
+
+Before a model begins reasoning, the text it receives may already diverge from what the user sees. RQ1 measures this upstream step with Corpus A canaries across Table 2’s two extractor classes: dual-capability parsers with rendering and extraction outputs, and text-extraction pipelines whose observable output is downstream text. For dual-capability parsers, each cell is checked against that engine’s rendered image: OCR provides a first-pass comparison, and every ren-dering is manually inspected. An exposed marker therefore 6Table 2. C ORPUS A UPSTREAM PARSER OUTCOMES . L EFT : DUAL -CAPABILITY RENDER /EXTRACT CONSISTENCY ; RIGHT : TEXT -PIPELINE EXPOSURE . •                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
+
+> GAP EXPOSED ,◦CLEAN /RENDER -ALIGNED OUTPUT , – DROPOUT /ERROR .Dual-capability PDF parsers Text-extraction pipelines Extraction Gap MuPDF Poppler Xpdf Pdfium PDFBox PDF.js GhostScript Adobe Acrobat PDF Expert Foxit Gap exposed PyPDF PDFMiner LlamaParse OpenDataLoader Docling Unstructured Gap exposed Semantic Override EG01 ••••••◦◦•◦7/10 ••••••6/6 EG02 •••••◦◦◦◦◦5/10 ◦◦◦◦◦◦0/6 EG03 •••••◦◦◦◦◦5/10 ◦◦◦◦◦◦0/6 Hidden Semantic Injection EG04 •••••••◦••9/10 ••••••6/6 EG05 •••••••◦••9/10 ••••••6/6 EG06 ◦◦◦••◦•◦◦◦3/10 ••◦•◦•4/6 EG07 ••••••••••10/10 ••◦◦••4/6 EG08 ••••••••••10/10 ••••••6/6 EG09 ◦••••••◦••8/10 ••••••6/6 EG10 •••••••◦••9/10 ••••••6/6 EG11 •••••••◦••9/10 ••••••6/6 EG12 ••••••◦•••9/10 ••◦◦••4/6 EG13 ••••••••••10/10 •••••◦5/6 EG14 ◦◦◦•••◦•••6/10 •••◦••5/6 Reading-Order Split EG15 •◦◦◦••◦◦◦◦3/10 •◦◦◦◦◦1/6 EG16 •◦◦•••◦••◦6/10 •◦◦•◦◦2/6 EG17 •◦◦•••◦◦•◦5/10 •◦◦•◦•3/6 Font-Decoding Split EG18 ••–◦◦◦◦◦◦◦2/10 •◦◦–•◦2/6 EG19 •◦◦◦◦–◦•◦◦2/10 ◦◦◦–•◦1/6 EG20 ◦◦◦•––••••5/10 ◦◦––•◦1/6 EG21 ◦•–•–◦◦–••4/10 ••––••4/6 EG22 •–◦•–◦◦–••4/10 ••–––•3/6 EG23 ••–•–◦◦–••5/10 ••––••4/6 EG24 ••–•••••••9/10 •••–••5/6 EG25 ◦•–•–◦◦–••4/10 ◦•◦–••3/6 Total 19/25 17/25 12/25 22/25 18/25 15/25 11/25 9/25 19/25 16/25 –20/25 17/25 10/25 11/25 18/25 17/25 –
+
+requires benign rendering plus extraction of the canary or expected artifact. For text-extraction pipelines, • means that this artifact appears in downstream text without asserting an intra-engine render/extract inconsistency. 
+
+Intra-Engine Render-Versus-Extract Consistency The left block of Table 2 reports the intra-engine consistency matrix for the 10 dual-capability parsers. Across all 25 gaps, exposed markers dominate, and no parser stays aligned with rendering across the catalog. The key pattern is not only prevalence but structure: tools differ in whether extraction follows the rendered page, raw text operators, font metadata, accessibility mappings, or layer visibility. Since each tool is compared against its own rendered PNG, a returned marker indicates an internal render/extract mismatch in that stack, not an artifact of choosing an overly strict reference viewer. Conversely, clean markers indicate alignment only for that mechanism; the same engine often diverges elsewhere. Even Adobe Acrobat, the most conservative dual parser in our panel, diverges on 9/25 gaps. At the other end, Pdfium (22/25) exposes nearly all gaps, while MuPDF and PDF Expert (19/25 each) also expose most of the catalog. Semantic overrides show that extractors do not all trust the same text-to-Unicode source. EG01 poisons 
+
+/ToUnicode , a mapping used by many native text extrac-tors, and therefore reaches most stacks. In contrast, EG02– EG03 use /ActualText , which only affects parsers that apply marked-content replacement during extraction. Hidden semantic injection exposes a different split: the payload remains an ordinary text-showing operand in the content stream, but rendering state prevents it from appearing on the page. EG07, EG08, and EG13 are therefore exposed by all dual-capability parsers in our panel. Other cases, such as no-paint text, clipping, and occlusion, are filtered by only some tools, showing that visibility checks are selective rather than a general render/extract consistency guarantee. Reading-order and font-decoding splits show that a split view does not require hidden payload text. In reading-order gaps, the visible tokens remain on the page, but extraction changes their order or binding when it linearizes the page. In font-decoding gaps, the page still renders the intended glyphs, but extractors fall back to different text-recovery rules, producing visible text, anomalous Unicode/CID output, 7dropout, or errors. We treat dropout and error outcomes as availability failures, not as clean extraction-consistency violations; Adobe Acrobat illustrates this case, as several CID font-decoding canaries fail during text export rather than returning render-aligned text. The contrast between EG24 (9/10) and EG18 (2/10) also shows that even the same Type 3 fallback family can behave differently depending on the concrete canary construction. More broadly, the outcome vectors across EG18–EG25 form parser-specific signatures, motivating their use for parser-stack attribution. 
+
+Text-Extraction Pipeline Baseline The right block of Table 2 evaluates six text-extraction or document-conversion pipelines: PyPDF, PDFMiner, LlamaParse, OpenDataLoader, and text-mode Docling and Unstructured. Some may render or OCR internally, but the observable benchmark output is the text that would be handed to a downstream RAG or QA pipeline. An exposed marker therefore means that the pipeline emits the canary or expected artifact into downstream text; it does not assert an intra-engine render/extract inconsistency. The main result is that extraction pipelines do not turn PDF divergence into a safer text view. PyPDF and PDFMiner preserve EG01 and every hidden semantic in-jection payload, because they recover the PDF text layer rather than adjudicating human visibility. More sophisti-cated pipelines are more selective, but not reliably safer: LlamaParse, OpenDataLoader, Docling, and Unstructured drop or normalize some difficult font and geometry cases, yet still expose attack-relevant text across four families. Their dropout/error markers are stable conversion or dropout signatures, not evidence of semantic consistency. LlamaParse and OpenDataLoader are the most selective pipelines in the right block of Table 2. LlamaParse exposes the fewest gaps, but its remaining exposures still span semantic override, hidden semantic injection, and font-decoding fallback. Open-DataLoader, which documents rendering-mismatch filters for hidden or visually suppressed PDF content, suppresses several matching cases in the tested configuration, but still exposes EG01, several hidden semantic injection gaps, and reading-order splits EG16–EG17. Fixed visibility heuristics can reduce some hidden-text attacks, but they do not provide semantic consistency against parser differentials. 
+
+Finding I: All 25 extraction gaps produce an inconsistent outcome across the extractor panel. Divergence patterns are stable by extractor class, consistent with architecture rather than isolated bugs. 
+
+5.3. RQ2: Downstream LLM-Pipeline Exploitability 
+
+Upstream extraction gaps become security-relevant only when the extractor-side document view is consumed by a downstream model. We therefore evaluate each gap as an end-to-end LLM-pipeline attack using Corpus B, after first establishing the same human-visible oracle as §4.3: every sample is rendered by the 10 render-capable PDF tools in the left block of Table 2 and manually inspected to confirm that the attacker-side claim, substituted claim, or manufactured 0 5 10 15 20 25                         
+
+> Gaps exposed (out of 25) Sonnet 4.6 Grok 4.2 GPT-5.4 Gemini 3 Kimi K2.6 Qwen-Long GLM-5.1
+> 15 17 21 12 17 17 14
+> (a)
+> Sonnet 4.6 Grok 4.2 GPT-5.4 Gemini 3 Kimi K2.6 Qwen-Long GLM-5.1
+> 2/3 8/11 0/3 5/8 3/3 10/11 0/3 4/8 3/3 11/11 1/3 6/8 2/3 10/11 0/3 0/8 3/3 7/11 2/3 5/8 1/3 9/11 3/3 4/8 1/3 11/11 1/3 1/8
+> (b)
+> 050 100
+> Exposed-gap fraction (%) Sem. Override Hidden Injection Reading Order Font Decoding
+> Figure 6. Per-platform extraction-gap coverage by family. (a) Exposed-gap counts, stacked by family. (b) Family-level exposed-gap fractions.
+
+answer span is absent from the rendered pages. Corpus B uses two modalities. Summary Attack tests passage-level contamination: the extractor view contains an attacker-side claim absent from the visible document, and success requires the response to report that claim rather than only summarize the visible story. QA Attack tests answer-span corruption: the visible document contains the benign answer, but the extractor view mutates, appends, reorders, or font-decodes it into an attacker-side span; success requires returning the extractor-side answer instead of the visible answer. We score Summary trials by multi-keyword matching against extractor-side terms absent from the visible content; QA trials use exact answer matching, and each trial is a separate API call. As a matched control, we remove the gap construct from every Corpus B sample while keeping the visible story and prompt unchanged; across 1,260 matched-control runs (36 gap–modality pairs × 7 platforms × 5 trials), none produces the attacker-side claim or answer. Table 1 lists the full assignment; Appendix C gives the benign prompt templates and representative visible/extractor-side carriers (Figure A1, Figure A2, and Figure A3). 
+
+Overall Gap Coverage Figure 6 summarizes EG-level coverage: an EG–platform pair is counted once if any evalu-ated attack form succeeds in at least one of ten independent API calls. Every platform is affected under this criterion, with coverage ranging from 12/25 to 21/25 gaps. The repeat matrices (Figures 7 and 8) show that this coverage is usually stable rather than one-off: under a stricter high-repeat cutoff, 65/69 exposed Summary EG–platform pairs and 96/100 exposed QA EG–platform pairs succeed in at least 8/10 trials. We manually audited every successful Summary output. We count success only when the model treats the extractor-side claim as document content, not when it merely warns about hidden or non-visible text. 
+
+Finding II: In our benchmark, downstream failures are primarily induced upstream: when the ingestion stack admits the extractor-side view, LLMs usually treat it as ordinary document evidence. 
+
+Attack Modality Matters Figures 7 and 8 separate two risks hidden by a single coverage number. Summary attacks test whether hidden or overridden passage-level content contaminates free-form generation, making them strongest 8Sonnet 
+
+> 4.6
+> Grok
+> 4.2
+> GPT
+> 5.4
+> Gemini
+> 3
+> Kimi
+> K2.6
+> Qwen
+> Long
+> GLM
+> 5.1
+> EG01
+> EG02
+> EG04
+> EG05
+> EG06
+> EG07
+> EG08
+> EG09
+> EG10
+> EG11
+> EG12
+> EG13
+> EG14
+> 6
+> 9
+> 7
+> 6
+> 9
+> 5
+> Summary Attack
+> 0
+> 5
+> 10
+> Successes / 10 trials Figure 7. Summary attack heatmap over the 13 Summary-primary gaps. Each cell reports successes out of 10 trials for a given gap–platform cell. Annotated values mark partial scores (1–9); blank cells indicate 0/10.
+
+for semantic override and hidden semantic injection. Many summary cells are stable ‘10/10’, showing that once injected passages enter document text, models often summarize them as ordinary content. QA attacks expose a different failure mode: models become faithful readers of the wrong extracted span. This is why QA is essential for reading-order split and font-decoding split. These families do not necessarily create a fluent hidden paragraph, but they can corrupt the binding between a question and its answer, or mutate a visible token through font fallback. The QA heatmap therefore captures exact-answer failures that summary evaluation would understate. In particular, reading-order gaps are sparse but highly diagnostic, while font-decoding gaps produce platform-specific corrupted spans that reveal the model is consuming a non-visual decoding path. 
+
+Pipeline Architecture Shapes the Profile The most informa-tive axis is not the model name alone but the upstream PDF ingestion architecture. Native PDF platforms and adapter-mediated platforms expose different subsets of the same gap catalog. GPT-5.4 has the broadest coverage (‘21/25’), spanning all semantic override and hidden semantic injection gaps, one reading-order gap, and most font-decoding gaps. Gemini 3 has the lowest total (‘12/25’), but its failures are not random: it is highly vulnerable to hidden semantic injection (‘10/11‘) while showing no successful font-decoding attacks. This profile is consistent with an ingestion path that admits many hidden text objects but does not expose the same composite-font fallback behavior. The adapter-mediated systems show even clearer parser fingerprints. Qwen-long is exposed to all three reading-order gaps, indicating a content-order or file-extraction path that preserves operator order where a visual reader would use spatial ordering. GLM-5.1 is exposed to all hidden semantic injection gaps but just one of the font-decoding Sonnet   
+
+> 4.6
+> Grok
+> 4.2
+> GPT
+> 5.4
+> Gemini
+> 3
+> Kimi
+> K2.6
+> Qwen
+> Long
+> GLM
+> 5.1
+> EG01
+> EG02
+> EG03
+> EG04
+> EG05
+> EG07
+> EG08
+> EG09
+> EG10
+> EG11
+> EG13
+> EG14
+> EG15
+> EG16
+> EG17
+> EG18
+> EG19
+> EG20
+> EG21
+> EG22
+> EG23
+> EG24
+> EG25
+> 9
+> 8
+> 7
+> 9
+> 9
+> 72
+> 8
+> 99
+> 9
+> 6
+> 9
+> QA Attack
+> 0
+> 5
+> 10
+> Successes / 10 trials
+> Figure 8. QA attack heatmap over the 12 QA-primary gaps and the 11 cross-modality QA variants of Summary-primary gaps.
+
+family, suggesting a text extractor that retains hidden text but normalizes or drops harder font fallback cases. Kimi K2.6 is more selective: it is exposed to all semantic override gaps and many font-decoding and reading-order gaps, but only ‘7/11’ hidden semantic injection gaps. This mixture indicates that platform-side filtering can suppress some hidden-content carriers without providing semantic consistency against override, ordering, or font-decoding differentials. 
+
+Finding III: Exposure is stable and platform-specific: most heatmap cells are either 0/10 or high-repeat successes, with only a small number of partial outcomes, so each platform largely admits or drops a given extraction gap consistently across trials. 
+
+Beyond Hidden Text Figure 6(b) separates exposed-gap coverage by mechanism family. Hidden semantic injection is the broadest carrier because a pipeline need only retain renderer-suppressed text. The more important result is that exposure persists outside hidden text. Semantic override changes the Unicode authority used by extraction; reading-9order split changes the linearization of visible tokens; and font-decoding split exposes extractor-specific fallback arti-facts. These families do not require an invisible paragraph or hidden instruction, yet they still cause models to summarize or answer from a document view the user did not see. 
+
+5.4. RQ3: Deployment-Layer PDF Risk 
+
+RQ2 treats each platform as a single PDF-to-LLM pipeline. RQ3 varies the production path that constructs the model’s document context: hosted cloud routes, Web chat products, vendor service versions, and local client applications. These paths are not thin wrappers around the same model. Each can introduce its own PDF renderer, parser, OCR path, file adapter, chunker, or safety filter before the model sees the document. All deployment paths follow the RQ2 unique-EG rule: an EG is counted as exposed if any evaluated attack form succeeds at least once under that path, with Web-chat and local-runtime paths evaluated manually. 
+
+Alternative Cloud Deployments Table 3 compares official API access with provider-restricted cloud routes for the same nominal model. The two routes show different effects. GPT-5.4 through Azure drops from 21/25 to 17/25. The missing gaps are concentrated in geometry-sensitive cases: off-page positioning (EG06), tiny text (EG07), zero-height text matrices (EG12), and a reading-order split (EG16). In contrast, semantic override and font-decoding gaps largely persist. This pattern suggests that Azure’s hosted route changes the PDF preprocessing boundary: it appears to normalize or filter some spatially degenerate text, but does not remove semantic remapping or font-metadata divergences.              
+
+> Table 3. O FFICIAL -API VS .CLOUD -BACKEND PDF EXPOSURE FOR MODELS TESTED ON BOTH ROUTES .LLM Official API Cloud Backend ∆
+> GPT-5.4 (Azure) 21 17 ↓4Sonnet 4.6 (Bedrock) 15 15 0
+
+Sonnet 4.6 through Amazon Bedrock remains at 15/25, matching the official API count. This does not mean that Bedrock is a neutral transport layer in general; it means that, for this model and corpus, the routed deployment does not measurably reduce aggregate exposure. The contrast with Azure is the important point: changing the hosting path can change which PDF ambiguities reach the model, even when the nominal model is unchanged. 
+
+Finding IV: Cloud deployment is a PDF security boundary. The same nominal model can expose a different gap set when routed through a hosted backend, because the backend may change the parser, converter, or normalization layer before inference. 
+
+Product Entry Points: API versus Web Chat Table 4 compares official API access with each vendor’s Web chat product. The direction is not uniform: Web chat is sometimes less exposed, sometimes more exposed, and sometimes                             
+
+> Table 4. E XPOSED GAP COUNTS VIA OFFICIAL API AND WEB CHAT .LLM Official API Web Chat ∆
+> Sonnet 4.6 15 19 ↑4Grok 4.2 17 18 ↑1GPT-5.4 21 19 ↓2Gemini 3 12 0↓12 Kimi K2.6 17 14 ↓3Qwen 3.5 †17 13 ↓4GLM-5.1 14 14 0
+> †Qwen-Long is API-only; Web chat test uses Qwen 3.5.
+
+unchanged. This already rules out treating a vendor’s API and Web product as equivalent security surfaces. Gemini is the clearest example. Its API path exposes 12/25 gaps, while its Web chat path is 0/25 on the one-page corpus. The affected API gaps span semantic override, hidden semantic injection, and font-decoding split, all of which require a text extraction view to reach the model. The Web result is consistent with a rendering- or vision-first frontend that does not expose the extractor-side text layer on these short documents. This is not a semantic guarantee, however: in a page-count probe, 40- and 80-page variants remain at 0/25, but a 120-page version with the attack page at the end falls back to a text-oriented route and exposes 21/25 gaps. Thus, the apparent protection is a routing heuristic, not a robust PDF consistency defense. Other products move in the opposite direction. Sonnet 4.6 and Grok 4.2 are more exposed through Web chat than through API access, indicating that their Web frontends admit additional PDF-derived text views not present in the API path. GPT-5.4, Kimi K2.6, and Qwen show reduced Web coverage, while GLM-5.1 is unchanged. Qwen is a special case because the API result uses Qwen-Long’s dedicated file-processing path, whereas the Web experiment uses Qwen 3.5; we therefore interpret it as a vendor entry-point comparison rather than a strict same-model comparison. 
+
+Finding V: API and Web chat are distinct PDF pipelines, not interchangeable access modes. A Web frontend can eliminate, preserve, or introduce exposed gaps depending on its rendering, OCR, file-conversion, and routing heuristics. 
+
+Within-Vendor Version Updates Model-version labels can hide ingestion-service changes. We therefore extend Corpus B to additional OpenAI and Anthropic versions while keeping the main RQ2 table fixed. The extension uses the same prompts, submission path, and EG-level success criterion as RQ2, and Table 5 reports only EG-level coverage. The two vendors show different update patterns. An-thropic is internally stable: Haiku 4.5, Sonnet 4.6, and Opus 4.7 expose the same 15/25 gaps with the same per-EG pattern, despite spanning different capability tiers. This indicates that the shared ingestion service, rather than model capability, dominates exposure. OpenAI shows a narrow service update. GPT-5.3 and GPT-5.4 expose the 10 Table 5. W ITHIN -VENDOR MODEL VERSION COMPARISON ON CORPUS B. MAIN RQ2 ROWS ARE INCLUDED AS REFERENCES .Vendor Model Exposed EGs ∆            
+
+> OpenAI GPT-5.3 21/25 0GPT-5.4 (main) 21/25 ref. GPT-5.5 18/25 ↓3Anthropic Haiku 4.5 15/25 0Sonnet 4.6 (main) 15/25 ref. Opus 4.7 15/25 0
+
+same 21/25 gaps, while GPT-5.5 drops to 18/25 by no longer exposing EG06 (off-page text), EG07 (near-zero font size), and EG12 (zero-height text matrix). These three are degenerate geometric hiding constructions. Semantic override, most hidden-injection mechanisms, and font-decoding gaps persist across all three GPT versions. This pattern echoes the Azure-deployed GPT-5.4 result above (Table 3): two independent ingestion-side changes, a third-party cloud route and a vendor version update, converge on narrow geometric filtering while leaving the structural split-view class intact. 
+
+Local Deployment Ollama and LM Studio, two widely used local model applications with built-in PDF interaction, expose a third deployment pattern. PDF parsing happens inside the client application before any tokens reach the local model. We therefore evaluate this setting at the ingestion boundary rather than as a benchmark of local model capability: for each sample, we inspect the model input context and count exposure when the extractor-side content is present in that context. This design is intentional. The local model is constrained by commodity hardware and is not the object of attribution; once a hidden or corrupted PDF view has entered the prompt, whether a model follows, refuses, or recognizes it as suspicious is a downstream prompt-injection robustness question outside the scope of this RQ. Table 6 shows that local deployment does not remove the attack surface. Ollama exposes extractor-side content for 16/25 gaps and LM Studio for 17/25, comparable to the exposure rates of commercial API paths in RQ2. The reason is structural: the local model receives whatever text the desktop application’s PDF extractor emits. Hidden text operands, off-page text, and reordered spans can therefore enter the local context without any cloud-side ingestion filter.        
+
+> Table 6. L OCAL DEPLOYMENT INGESTION OUTCOMES . T IMEOUT MARKS PARSER OR RUNTIME FAILURE BEFORE USABLE CONTEXT .Ollama LM Studio Gap exposed 16 17 Not exposed 95Timeout 03
+
+The non-exposed cases are also informative. EG02 and EG03 do not propagate on either local runtime because the PDF extractors bundled with Ollama and LM Studio ignore /ActualText ; they return the visible stream text rather than the override. Thus, local resistance is not a model property, but a parser capability mismatch. LM Studio additionally times out on EG21, EG22, and EG25. These cases produce anomalous font-decoding artifacts in the input context; the result is not a successful payload injection, but an availability failure caused by parser output that the local runtime does not handle gracefully. 
+
+Finding VI: Local deployment shifts PDF risk to the client-side extractor. Without a managed ingestion service, parser artifacts can directly become model context, and in some font-decoding cases even trigger availability failures. 
+
+5.5. RQ4: Ingestion-Stack Fingerprinting 
+
+RQ1 shows that the same PDF can yield different extractor-side strings across parsers. RQ4 asks whether these differences are stable enough to fingerprint the hidden preprocessing path behind a PDF-to-LLM pipeline. The key observation is that extraction gaps are not only attack vectors: they are also diagnostic probes. A gap that causes one parser to emit a glyph name, another to emit a Unicode fallback, and another to drop the span entirely creates a compact signature of the ingestion stack. 
+
+Controlled Parser-Panel Fingerprints We first validate the idea on the controlled extractor panel from RQ1. We construct a packed four-page canary from four main gaps: EG01 ( /ToUnicode semantic override), EG17 (reading-order split), EG19 (font-decoding fallback), and EG25 (CID fallback). This canary spans three mechanism families, using two font-decoding probes to exercise different fallback paths, and produces a tuple of short extracted strings. After the same canonicalization used by the fingerprint oracle, the tuple uniquely separates all 16 parser and ingestion paths in the RQ1 panel, including dual-capability parsers and text-extraction pipelines. This result does not rely on a single fragile parser quirk. The four pages exercise independent axes of PDF processing: semantic mapping, layout linearization, font fallback, and CID recovery. A pipeline may agree with another pipeline on one axis, but disagreement on any other axis separates their signatures. This is why a small canary set can distinguish a heterogeneous parser panel. 
+
+Finding VII: Extraction gaps are diagnostic as well as attack-relevant. A four-page canary spanning semantic mapping, layout order, and font fallback uniquely separates all 16 parser paths in our con-trolled panel. 
+
+Framework-Level Fingerprints We next test whether the same principle applies to realistic LLM framework configurations. We use LangChain [43], a widely used LLM application framework with multiple PDF loaders that wrap different underlying extraction stacks. LangChain is parser-agnostic: the security behavior of a LangChain pipeline depends on which PDF loader is selected, not on LangChain as a framework. We therefore configure seven concrete LangChain PDF loaders: PyPDFLoader, PyMuPDFLoader, 11 Table 7. L ANG CHAIN LOADER SIGNATURES FOR THE TWO -DOCUMENT FINGERPRINT SET . E NTRIES SHOW THE SALIENT NORMALIZED OUTPUT USED FOR ATTRIBUTION .Loader EG12 EG18 PyPDFLoader LARK-27XQ9 /C_GLYPH/A_GLYPH/B_GLYPH             
+
+> PyMuPDFLoader LARK-27XQ9 CAB
+> PyPDFium2Loader LARK-27XQ9 ABC
+> PDFMinerLoader LARK-27X...Q9 ABC
+> DoclingLoader XQ9...LARK-27 /C_GLYPH/A_GLYPH/B_GLYPH
+> OpenDataLoader LARK-27 EMPTY
+> Unstructured LARK-27X ABC
+
+PyPDFium2Loader, PDFMinerLoader, DoclingLoader in text mode, OpenDataLoaderPDFLoader, and Unstructured in fast mode. We exclude PDFPlumberLoader from the independent target set because it is a PDFMiner-family wrapper. Rather than using the packed four-page canary, we search for a minimal set of individual PDF probes that separates these loader backends. The selected set contains two documents: an EG12 zero-height-matrix suffix carrier, which separates loaders by whether the hidden suffix is joined, displaced, partially recovered, or removed, and EG18, which separates Type 3 glyph-name fallback behavior. Together, these two documents cover all 21 pairwise distinctions among the seven loaders with no unresolved collisions. The table illustrates why multi-probe fingerprints are necessary. EG12 alone cannot distinguish PyPDF, PyMuPDF, and PyPDFium2, which all recover the full suffix 
+
+LARK-27XQ9 . EG18 alone cannot distinguish PyPDFium2, PDFMiner, and Unstructured, which all recover the visible token ABC . The pair is discriminative because the two mechanisms fail along different parser boundaries. Thus, fingerprinting does not require a large probe corpus; it requires probes whose ambiguities are orthogonal. 
+
+Scope of Attribution In the controlled settings above, where parser or loader identities are known, the canaries separate all 16 parser paths and all seven LangChain loader backends. In black-box production deployments, however, an output tuple should be interpreted as family-level or behavior-level evidence rather than exact parser-version attribution. Wrappers, version drift, OCR fallbacks, and platform-side cleanup or chunking can collapse or modify signatures. The security value is therefore not exact library identification, but making hidden preprocessing behavior observable: it tells an auditor which PDF view is likely to reach the model. 
+
+5.6. RQ5: Defense Evaluation 
+
+We evaluate three classes of defense against extraction-gap attacks: existing extraction-layer safety filters, vision-based processing, and a proposed static scanner. For each defense, we focus on what class of PDF divergence it actually controls, and where the protection fails. 
+
+Existing Safety Filters OpenDataLoader is the only publicly available PDF extractor in our panel that advertises built-in PDF prompt-injection safety filters. These filters should be understood as fixed rendering-mismatch heuristics, not as a semantic consistency checker. In the tested configuration, OpenDataLoader suppresses mechanisms that match its rule set, such as near-zero text size (EG07), zero-height text (EG12), and hidden optional-content layers (EG14). It still exposes many other hidden-state variants (EG04–EG06, EG08–EG11, EG13), as well as semantic override, reading-order, and font-decoding gaps. The failure mode is therefore a scope mismatch: visibility heuristics can remove some hidden chunks, but they do not enforce semantic consistency between the rendered page and the extracted text. Kimi K2.6 shows a related but more deployment-specific filtering pattern. Its file-extract path largely suppresses stan-dalone hidden paragraphs in the one-page summary carriers, but the same mechanisms remain effective when encoded at a smaller granularity. In the QA carriers, the visible field contains Review code: LARK-27 , while the extractor-side answer is formed by an inline hidden suffix such as XQ9 
+
+placed in the same line or text object. Kimi remains exposed on most corresponding QA gaps, showing that chunk-level filtering does not provide mechanism-complete protection. 
+
+Finding VIII: Existing PDF safety filters cover only a limited subset of hidden-text constructions. They can suppress some standalone hidden chunks, but do not address semantic overriding. 
+
+OCR-Based Defense and Its Cost Threshold Vision-based processing is the strongest defense against text-layer split-view attacks when it is applied consistently. If a platform renders each PDF page to an image and extracts content from the visual representation, extractor-only text that is not visible to the user cannot directly enter the model context. RQ3 confirms this behavior in the Gemini 3 Web Chat setting: one-page submissions achieve 0/25 attack successes, versus 12/25 through Gemini’s API extraction path.                                  
+
+> Table 8. G EMINI 3 W EB CHAT ATTACK SUCCESS UNDER PAGE -COUNT SCALING ,BROKEN DOWN BY FAMILY .Pages Sem. Hidden Reading Font Total 10/3 0/11 0/3 0/8 0/25 40 0/3 0/11 0/3 0/8 0/25 80 0/3 0/11 0/3 0/8 0/25 120 3/3 ↑11/11 ↑1/3 ↑6/8 ↑21/25 ↑
+
+A likely deployment pressure is cost. Rendering and vision processing scale with page count, so production systems may silently switch to cheaper text extraction for long documents. We probe this behavior by padding each submission with benign filler pages while keeping the attack payload on the final page. Gemini 3 Web Chat remains at 0/25 through 1-, 40-, and 80-page submissions, but changes to 21/25 at 120 pages (Table 8). Semantic-override and hidden-injection attacks then succeed completely, while reading-order and font-decoding show partial resistance. The user receives no indication that the ingestion mode has changed. This makes OCR an effective defense only when the platform commits to visual processing across document sizes, rather than using it as a short-document optimization. 12 Finding IX: In Gemini Web Chat, vision-based ingestion eliminates text-layer extraction gaps through 80 pages in our probe, but a 120-page submission silently re-enables the vulnerable text-extraction path. 
+
+Proposed Static Scanner We implement a lightweight scanner that flags structural conditions associated with our extraction gaps before a document is sent to an LLM. The scanner parses PDF objects, content streams, text-rendering state, marked-content attributes, optional-content groups, and font metadata. It does not search for a particular payload string; instead, it checks for mechanisms that can separate the rendered view from the extracted view, such as extractor-side replacement text, non-painted text operators, disabled layers, reading-order ambiguity, and incomplete font-to-Unicode metadata. Each rule triggers on the Corpus A canary for the gap it was designed to detect. We evaluate benign finding rates on two corpora: 5,000 Web PDFs from the PDF Association corpus [44], and 4,722 public academic papers from recent security and AI venues, with venue distribution in Appendix D. We report any finding , where a document triggers at least one family rule, and high-confidence finding , where the matched structure directly changes extractor-visible text or closely matches a confirmed mechanism. High confidence is a structural signal, not a claim that the document is malicious.                      
+
+> Table 9. S CANNER BENIGN FINDING RATES BY FAMILY . R ATES ARE DOCUMENT -LEVEL ;FAMILIES ARE NON -EXCLUSIVE .
+> Web Academic Family Any High-conf. Any High-conf. Semantic override 0.46% 0.46% 0.02% 0.02% Hidden injection 0.48% 0.28% 0.11% 0.04% Reading order 1.53% 0.00% 3.08% 0.00% Font decoding 0.24% 0.24% 6.81% 6.81%
+
+Table 9 shows the intended calibration. Semantic-override and hidden-injection findings are rare in both benign corpora, so the strongest claim-rewriting and hidden-text mechanisms impose low benign burden. Reading-order ambiguity is more common, but never high confidence, because multi-column layouts and tables are ordinary document structures. Font-decoding findings are elevated in academic PDFs because LaTeX-derived toolchains often embed Type 3 or subset fonts without authoritative /ToUnicode maps: these files render correctly, but extractors must recover Unicode through fallback heuristics. To validate this in-terpretation, we manually inspected 30 randomly sampled high-confidence font-decoding findings; all were benign 
+
+FONT_TYPE3_NO_TOUNICODE hits, mostly from TeX-derived academic PDFs, and none contained attack-like pay-loads. We therefore treat font-decoding findings as extraction-integrity audit signals requiring render/extract confirmation, not as standalone blocking evidence. We also cross-check PDF-Prompt-Injection-Toolkit [29], an open-source red/blue-team toolkit for PDF-to-LLM prompt injection. Its generator covers common hidden prompt carriers such as white text, tiny text, off-page text, OCG layers, metadata, and zero-width Unicode; at the attack-generation level, this overlaps four gaps in our catalog (EG05, EG06, EG07, and EG14). Our static scanner flags 5 of 7 toolkit samples; the two misses, metadata and zero-width Unicode, are outside our 25-gap render/extract scope. In the reverse direction, the toolkit scanner flags EG05, EG06, EG07, EG09, EG12, and EG14 through hidden-text heuristics; this shows existing detection coverage, not prior attack mechanisms. The toolkit does not target semantic override, reading order, or font-decoding gaps. Thus, the scanner is best used for intake triage: it flags PDFs that warrant render/extract confirmation, not standalone blocking. 
+
+## 6. Discussion & Conclusion 
+
+Semantic Integrity Requires a Boundary Contract For LLM ingestion, the platform must enforce a contract between the user-visible meaning and the model-consumed text. Patching individual extractors can narrow specific mech-anisms, but new compliant implementations may re-expose the same ambiguity. RQ3 shows this pattern in deployed services: GPT-5.5 removes three geometric-hiding gaps while preserving semantic-override and font-decoding exposure, whereas Anthropic’s model tiers expose the same gap set despite different model capabilities. The missing property is not that rendering must always equal extraction; it is that the pipeline must decide which differences are legitimate and block unaudited changes. Durable mitigation requires tighter specification language or boundary verification; our dual-view consistency check is one such direction. 
+
+Opaque Ingestion Identity Our fingerprints identify inges-tion behavior, not exact backend implementations. A vendor name or visible tool trace may expose only part of the PDF pipeline. For example, Adobe desktop Acrobat and Adobe PDF Services Extract show different, non-contained gap sets, and one Kimi Web Chat case produced a final answer inconsistent with its visible PyPDF2 trace. Thus, a canary signature indicates which PDF view reached the model, not which library version a vendor used. 
+
+Portability Beyond Minimal Canaries As a portability check, we transplanted EG01–EG14 into an existing PDF without changing the rendered appearance of its first page. Each embedded gap marker was recovered by at least one of the six text-extraction pipelines in Table 2. This check is separate from the main LLM benchmark, which uses independently constructed Corpus B, but it shows that payload-carrying gaps are not tied to synthetic canaries. 
+
+Conclusion We identified 25 split-view mechanisms that make PDF-to-LLM pipelines consume text different from the page the user saw. Every tested PDF processing stack and evaluated LLM platform exposes at least one gap. The root problem is an unenforced semantic-integrity boundary between PDF rendering and extraction. PDF-to-LLM systems should treat hidden extraction as a first-class security compo-nent and enforce consistency at the PDF-to-text boundary. 13 References 
+
+[1] D. Johnson, “PDF’s Popularity Online,” https://pdfa.org/pdfs-popular ity-online/, 2021. [2] D. Lam, L. Li, and C. Anderson, “PDF Investigation with Parser Dif-ferentials and Ontology,” IEEE Transactions on Information Forensics and Security , vol. 19, 2024. [3] X. Xie, H. Yan, L. Yin, Y. Liu, J. Ding, M. Liao, Y. Liu, W. Chen, and X. Bai, “PDF-Wukong: A Large Multimodal Model for Efficient Long PDF Reading with End-to-End Sparse Sampling,” arXiv preprint arXiv:2410.05970 , 2024. [4] “AI Chat with PDF: Comprehensive Analysis & Market Overview,” https://guptadeepak.com/ai-chat-with-pdf-comprehensive-analysis-m arket-overview/. [5] “ChatPDF,” https://www.chatpdf.com/pdf-ai. [6] R. Biswas and B. Liu, “Approaches to PDF Data Extraction for Information Retrieval,” https://developer.nvidia.com/blog/approaches-t o-pdf-data-extraction-for-information-retrieval/, July 2025. [7] NVIDIA, “Build an Enterprise RAG Pipeline Blueprint,” https://build. nvidia.com/nvidia/build-an-enterprise-rag-pipeline, 2026. [8] LlamaIndex, “Welcome to LlamaIndex!” https://github.com/run-llama /llama index. [9] L. Blecher, G. Cucurull, T. Scialom, and R. Stojnic, “Nougat: Neural Optical Understanding for Academic Documents,” arXiv preprint arXiv:2308.13418 , 2023. [10] C. Siebenschuh, K. Hippe, O. Gokdemir, A. Brace, A. M. Khan, K. Hossain, Y. Babuji, N. Chia, V. Vishwanath, A. Ramanathan et al. ,“AdaParse: An Adaptive Parallel PDF Parsing and Resource Scaling Engine,” in Proceedings of the 2025 Machine Learning and Systems (MLSys ’25) , 2025. [11] K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, and M. Fritz, “Not What You’ve Signed Up For: Compromising Real-World LLM-Integrated Applications with Indirect Prompt Injection,” in Proceedings of the 16th ACM Workshop on Artificial Intelligence and Security ,2023. [12] Z. Li, Z. Ma, Y. Pan, Z. Zhang, X. Lv, B. Li, J. Gao, J. Zhang, C. Yuan, B. Li, and W. Hu, “Making MLLMs Blind: Adversarial Smuggling Attacks in MLLM Content Moderation,” arXiv preprint arXiv:2604.06950 , 2026. [13] H. Jin, S. Sung, S. Park, S. Baik, and Y.-S. Han, “TRAPDOC: Deceiving LLM Users by Injecting Imperceptible Phantom Tokens into Documents,” in Findings of the Association for Computational Linguistics: EMNLP 2025 , 2025. [14] J. Xiong, C. Zhu, S. Lin, C. Zhang, Y. Zhang, Y. Liu, and L. Li, “Invisible Prompts, Visible Threats: Malicious Font Injection in External Resources for Large Language Models,” in Findings of the Association for Computational Linguistics: EMNLP 2025 , 2025. [15] Z. Luo, J. Zhang, and Z. Zhong, “Exploiting PDF Obfuscation in LLMs, arXiv, and More,” Cryptology ePrint Archive, Paper 2026/278, 2026. [Online]. Available: https://eprint.iacr.org/2026/278 [16] ISO, “Iso 32000-2:2020 - document management — portable document format — part 2: Pdf 2.0,” https://www.iso.org/standard/75839.html, December 2020. [17] pypdf, https://github.com/py-pdf/pypdf, 2026. [18] pdfminer.six, https://github.com/pdfminer/pdfminer.six, 2026. [19] MuPDF, https://mupdf.com/, 2025. [20] Poppler, https://poppler.freedesktop.org/releases.html, 2026. [21] pdfium, https://pdfium.googlesource.com/pdfium, 2026. [22] PDF.js, https://mozilla.github.io/pdf.js/, 2026. [23] XpdfReader, https://www.xpdfreader.com/, 2025. [24] N. Livathinos, C. Auer, M. Lysak, A. Nassar, M. Dolfi et al. , “Docling: An Efficient Open-Source Toolkit for AI-driven Document Conversion,” 
+
+arXiv preprint arXiv:2501.17887 , 2025. [25] Unstructured, “Open-Source Pre-Processing Tools for Unstructured Data,” https://github.com/Unstructured-IO/unstructured. [26] OpenDataLoader, “PDF Parsing Built for RAG,” https://opendataload er.org/, 2026. [27] A. Castagnaro, U. Salviati, M. Conti, L. Pajola, and S. Pizzi, “The Hidden Threat in Plain Text: Attacking RAG Data Loaders,” arXiv preprint arXiv:2507.05093 , 2025. [28] M. G. Collu, U. Salviati, R. Confalonieri, M. Conti, and G. Apruzzese, “Misleading Large Language Models Used (or Misused) in Scientific Peer-Reviewing via Hidden Prompt-Injection Attacks,” arXiv preprint arXiv:2508.20863 , 2025. [29] PDF-Prompt-Injection-Toolkit, “PDF-Prompt-Injection-Toolkit,” https: //github.com/zhihuiyuze/PDF-Prompt-Injection-Toolkit, 2025. [30] I. Markwood, D. Shen, Y. Liu, and Z. Lu, “PDF Mirage: Content Masking Attack Against Information-Based Online Services,” in 
+
+Proceedings of the 26th USENIX Security Symposium (USENIX Security ’17) , 2017, pp. 833–847. [31] V. Mladenov, C. Mainka, K. M. zu Selhausen, M. Grothe, and J. Schwenk, “1 Trillion Dollar Refund: How To Spoof PDF Signatures,” in Proceedings of the 26th ACM SIGSAC Conference on Computer and Communications Security (CCS ’19) , 2019. [32] C. Mainka, V. Mladenov, and S. Rohlmann, “Shadow Attacks: Hiding and Replacing Content in Signed PDFs,” in Proceedings of the 28th Network and Distributed System Security Symposium (NDSS ’21) ,2021. [33] S. Rohlmann, V. Mladenov, C. Mainka, and J. Schwenk, “Breaking the Specification: PDF Certification,” in Proceedings of the 42nd IEEE Symposium on Security and Privacy (S&P ’21) , 2021. [34] C. Carmony, M. Zhang, X. Hu, A. V. Bhaskar, and H. Yin, “Extract Me If You Can: Abusing PDF Parsers in Malware Detectors,” in 
+
+Proceedings of the 23rd Network and Distributed System Security Symposium (NDSS ’16) , 2016. [35] Y. Chen, S. Wang, D. She, and S. Jana, “On Training Robust PDF Malware Classifiers,” in Proceedings of the 29th USENIX Security Symposium (USENIX Security ’20) , 2020. [36] S. Liu, J. Ming, Y. Zhou, J. Fu, and G. Peng, “VAPD: An Anomaly Detection Model for PDF Malware Forensics with Adversarial Ro-bustness,” in Proceedings of the 34th USENIX Security Symposium (USENIX Sec ’25) , 2025. [37] S. Liu, J. Ming, G. Zhou, X. Liu, J. Fu, and G. Peng, “Analyzing PDFs like Binaries: Adversarially Robust PDF Malware Analysis via Intermediate Representation and Language Model,” in Proceedings of the 32nd ACM Conference on Computer and Communications Security (CCS ’25) , 2025. [38] Y. Liu, Y. Jia, R. Geng, J. Jia, and N. Z. Gong, “Formalizing and Benchmarking Prompt Injection Attacks and Defenses,” in Proceedings of the 33rd USENIX Security Symposium (USENIX Security ’24) , 2024. [39] A. Wei, N. Haghtalab, and J. Steinhardt, “Jailbroken: How Does LLM Safety Training Fail?” in Advances in Neural Information Processing Systems (NeurIPS ’23) , 2023. [40] N. ˇSrndic and P. Laskov, “Detection of Malicious PDF Files Based on Hierarchical Document Structure,” in Proceedings of the 20th Network and Distributed System Security Symposium (NDSS ’13) , 2013. [41] L. Szekeres, M. Payer, T. Wei, and D. Song, “SoK: Eternal War in Memory,” in Proceedings of the 2013 IEEE Symposium on Security and Privacy (S&P ’13) , 2013. [42] P. Wyatt, “Work in Progress: Demystifying PDF through a Machine-Readable Definition,” in IEEE Security and Privacy Workshops (SPW) ,2021. [43] LangChain, “LangChain Docs,” https://docs.langchain.com, 2026. [44] PDF Association, “PDF Corpora,” https://github.com/pdf-association /pdf-corpora, 2026. 
+
+14 Ethics Considerations 
+
+Vulnerability Disclosure This work identifies weaknesses in deployed document-to-LLM supply chains. Before submis-sion, we disclosed the findings to the seven LLM platform vendors evaluated in the paper through their available security, safety, bug-bounty, or product-feedback channels. Our reports used synthetic proof-of-concept PDFs containing fabricated content that does not refer to real individuals, organizations, or actionable harm, described the threat model and mitigation directions, and offered access to the full benchmark and scanner for internal evaluation. At submission time, two vendors had confirmed receipt or responded and we were continuing coordination with them; other reports remained under review or unanswered, or were redirected to model-safety or product channels. We treat these as disclosure outcomes rather than vendor confirmation of impact. Our goal in the disclosure process is to give affected providers advance notice, help them evaluate mitigations before public release, and improve the safety of LLM document-ingestion pipelines as a software supply-chain boundary. Because the issue spans parser behavior, document-conversion services, and model-facing file interfaces, we avoid attributing responsibility to any single component or vendor in the paper. We do not include full vulnerability identifiers in this submission. We do not treat vendor scope decisions as confirmation or rejection of the semantic-integrity property; rather, they indicate that this property is not yet standardized as a product security boundary, which is the gap our work motivates. 
+
+Live-System Testing Experiments against commercial LLMs used accounts or public APIs available to the authors, synthetic documents, and benign prompts such as summa-rization or question answering. We did not attempt account compromise, data exfiltration, prompt jailbreaks, denial-of-service or malware delivery, or access to confidential information. Queries were limited to the minimum needed for repeated measurement of document-ingestion behavior, and request volume was kept within normal interactive/API usage and documented service limits. 
+
+Human Subjects and Data The study did not recruit human subjects or collect user data. Human review was limited to the authors’ inspection of rendered PDF pages and model outputs. The benign-corpus scanner study uses publicly available PDFs and records only structural scanner findings and aggregate rates; we do not extract, publish, or analyze any personal information that may incidentally appear in those documents. 
+
+Dual Use Mitigation The mechanisms studied here could be misused to craft documents that mislead PDF-to-LLM systems. We mitigate this risk by using synthetic non-real payloads, evaluating under non-harmful prompts, reporting defenses, and releasing only benchmark evidence rather than attack-generation tooling. The artifact release strategy and the specific items withheld during coordinated disclosure are detailed in the Open Science section. The intended benefit is to help vendors, researchers, and operators audit PDF ingestion pipelines and identify render-extract divergence before document text reaches downstream models. 15

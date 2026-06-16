@@ -1,0 +1,469 @@
+Title: Bayesian-Calibrated Detection of Hallucinated Package Imports in AI-Assisted Code
+
+URL Source: https://arxiv.org/pdf/2606.13918v1
+
+Published Time: Mon, 15 Jun 2026 00:15:12 GMT
+
+Number of Pages: 23
+
+Markdown Content:
+# Bayesian-Calibrated Detection of Hallucinated Package Imports in AI-Assisted Code 
+
+## Lom M. Hillah 1,2∗
+
+## , Jean-Marc Richard 1, Ryan Hasnaoui 1
+
+> 1
+
+NewCo Partners, Paris, France 2Sorbonne Universit´ e, CNRS, LIP6, Paris, France 
+
+{lom.hillah, jean-marc.richard, ryan.hasnaoui }@newco-partners.com 
+
+Abstract 
+
+We present a Bayesian calibration layer for slopsquat detectors — those that flag hallu-cinated package imports in code produced by large language models (LLMs). Where existing pipelines emit binary decisions (flag / do-not-flag), our layer emits a Beta-posterior probability per detection, derived from a 3-category epistemic taxonomy that explicitly classifies each prior as empirically calibrated, constructively argued, or engineering-judgement-traced. Beyond the primary 200/404 registry channel, the calibrated layer exploits PyPI metadata signals — pack-age age, release count, author descriptor, summary — to surface registered-but-suspicious pack-ages that a binary registry detector misses, which is the realistic post-LLM-emission attacker regime. The resulting risk-aware primitive is directly consumable by downstream CI gates and supports principled threshold decisions across detection rules. We evaluate the calibration on a merged corpus of 1 ,734 Python snippets — a stratified 189-prompt BigCodeBench [17] slice plus a 100-prompt niche-library stress-test set, generated across a six-model panel spanning four cloud models (Claude-Sonnet-4.6, Mistral-Large, DeepSeek-v4-pro, DeepSeek-R1) and two local open-weight code models (Mistral Codestral, Meta CodeLlama). Against a re-implemented bin-ary baseline inspired by Mahmud et al. [18] — which shares its registry oracle with our ground truth and therefore serves as a degenerate upper bound rather than a genuine competitor — the calibrated layer reproduces the strict-registry detections and introduces well-calibrated ad-ditional flags on the metadata channel. We assess detector asymmetry with a McNemar paired test and calibration with both a flagged-subset Expected Calibration Error and a strictly proper full-corpus Brier score. 
+
+# 1 Introduction 
+
+The mainstream use of LLMs in software development has introduced a new class of supply-chain risk: slopsquats 1 — non-existent package names emitted in import statements by code-generating LLMs, which adversaries can register on public registries (PyPI for Python, npm for JavaScript, crates.io for Rust, and similar registries for other ecosystems) to hijack downstream installs. Sprac-klen et al. [26] measured the prevalence of LLM package hallucinations at 5–22% of Python snippets across mainstream model families, with attacker-relevant typo-squat-style errors over-represented at registry boundaries (single-character edits of legitimate package names) where an attacker’s pre-emptive registration of the hallucinated name is most likely to be picked up by downstream installs. The industry threat-model framing has converged on the same observation: Igor Seletskiy, CEO of TuxCare, summarises the contemporary state of affairs as “every package a developer pulls now carries an unanswered question about who built it, what’s in it, and whether it can be trusted” — and notes specifically that “AI is accelerating both channels” of vulnerability and supply-chain at-tack [3]. The detection problem itself is conceptually simple: parse imports, drop standard-library names, query the registry, flag the unresolved. Mainstream tooling — representative examples   
+
+> ∗Corresponding author.
+> 1The term slopsquatting — a portmanteau of “AI slop” and “typosquatting” — was coined in April 2025 by Seth Larson (Python Software Foundation Developer-in-Residence) and popularised by Andrew Nesbitt [25].
+
+1
+
+> arXiv:2606.13918v1 [cs.SE] 11 Jun 2026
+
+include Bandit, Semgrep, CodeQL, and the pip-audit family — follows this template and emits a binary decision. We argue that a binary decision is the wrong primitive for downstream defence. Continuous-integration gates must trade false-positive friction against missed-hallucination risk; agents that consume detector output must combine it with other signals. A binary flag forces ad-hoc threshold selection at every consumer. A calibrated probability is the universal primitive. Formally, write H
+
+for the event that an emitted import name corresponds to a hallucinated (non-existent or attacker-registered) package, and E for the bundle of evidence available at scoring time — registry status, neighbour-search outcome, package metadata. The detector’s job is to estimate the posterior Pr( H | E) = Pr( E | H) · Pr( H)Pr( E) ,
+
+not merely a binary 1[H | E]. The posterior probability composes naturally with policy rules (Pr-thresholded gates), agent reasoning (probability-weighted abstention), and risk aggregation (joint inference across multiple detection rules). The closest published work to ours, Mahmud et al. [18], describes a trust-calibrated multi-stage pipeline for vulnerability assessment, but emits binary stage-decisions without exposing a posterior per detection. Our contribution is a Bayesian calibration layer wrapping an existing hallucinated-imports detector. Each detection rule is paired with a Beta prior whose epistemic provenance is explicit. We introduce in Section 3 a 3-category taxonomy that classifies each prior as: 
+
+• cat. 1 — empirically calibrated against a peer-reviewed source measuring the modelled quantity directly; 
+
+• cat. 2 — constructively argued from a formal property of the detection mechanism; 
+
+• cat. 3 — traced engineering judgement, with a documented promotion path to cat. 1 by instrumentation. Detection confidences become posterior probabilities updated by Bayesian conjugacy as evid-ence accumulates. The system has three immediate benefits: (1) CI gates can set policy thresholds in probability space; (2) ablations across categories quantify how much of the calibration quality comes from each provenance class; (3) the calibration is epistemically honest — a reviewer auditing a cat. 3 prior knows it is engineering judgement, not a hidden empirical claim. Our work continues a line of Bayesian-flavoured testing and quality methodology rooted in the MIDAS service-testing platform [11, 13, 12] and generalises that line to the LLM-induced supply-chain setting. 
+
+Contributions. We: 
+
+• formalise the 3-category epistemic taxonomy as a foundation for calibrated detection priors (Section 3); 
+
+• wrap a deterministic hallucinated-imports detector with a Beta calibration layer and extend it with a metadata-channel that surfaces registered-but-suspicious packages (Section 3); 
+
+• evaluate the layer on a merged N = 1734 corpus—a stratified 189-prompt BigCodeBench slice plus a complementary 100-prompt stress-test set of niche or invented-library prompts, generated across a six-model LLM panel (Section 4); 
+
+• report a McNemar [19, 8] paired-test comparison against a re-implemented binary baseline, together with a flagged-subset Expected Calibration Error (ECE) and a full-corpus Brier score, demonstrating that the metadata channel introduces well-calibrated additional detec-tions (Section 5). 
+
+Results in brief. Three findings anchor the evaluation. First , on realistic-use BigCodeBench prompts modern code-specialised models hallucinate package imports at a near-zero rate once known import-name versus distribution-name aliases are accounted for: slopsquatting is a tail-risk problem, not a mean-case one. Second , on the niche-library stress-test slice the metadata 2channel surfaces ten registered-but-suspicious flags — tracing to two real PyPI packages — that the strict-registry baseline cannot see. A McNemar paired test (the standard test for whether two detectors disagree systematically on the same items, here paired by snippet; see Section 4.4) confirms the asymmetry is significant: b = 10 flags raised only by the metadata channel, c = 0 in the other direction, two-sided p = 0 .0020. Third , the calibrated confidences are well behaved: the flagged-subset ECE (the average gap between a detector’s stated confidence and its empirical accuracy, binned over the confidence range) is 0 .016 for the registry channel and 0 .029 once the metadata channel is added, and the strictly proper full-corpus Brier score is ≈ 0.022 for both — all comfortably inside conventional calibration targets. 
+
+Paper organisation. The remainder of this paper is organised as follows. Section 2 positions the work against prior literature on hallucinated package imports, calibration in machine learning, and Bayesian methods in software engineering. Section 3 introduces the 3-category epistemic taxonomy and the calibration layer. Section 4 describes the corpus, the LLM panel, the baseline, and the evaluation metrics. Section 5 reports the empirical findings on the realistic-use and stress-test corpora. Section 6 discusses where calibration helps and where it matters less. Section 7 addresses threats to validity. Section 8 states the reproducibility posture. Section 9 concludes. 
+
+# 2 Related work 
+
+Within the broader landscape of LLM-based code security mapped systematically by Kaniewski et al. [14] (TOSEM 2026, 263 studies surveyed January 2020 – November 2025), our work occupies the niche of LLM-induced supply-chain risk — hallucinated package imports — distinct from classical CVE detection but covered as an adjacent vector in their survey. A complementary broad survey by Rashid et al. [24] treats the dual-use perspective on LLMs in software security (defensive plus offensive uses), motivating the supply-chain threat model we address. 
+
+Hallucinated package imports. Spracklen et al. [26] provide the canonical empirical character-isation of LLM package hallucinations, measuring prevalence across 16 mainstream LLM families on Python and JavaScript prompts. Their headline finding — a 5 .2–21 .7% rate on Python and 2.4–6 .9% on JavaScript, persistent across temperatures — established the threat as one of struc-tural rather than configurational risk. The study also documents that hallucinated names cluster around near-neighbours of legitimate packages, which is precisely the regime where a registered slopsquat is most likely to be installed by a distracted developer. Their contribution is the preval-ence characterisation, not a detection algorithm; they neither propose a detection algorithm nor calibrate detection confidence. Our work addresses both gaps. 
+
+Closest detection comparator. Mahmud et al. [18] present a trust-calibrated multi-stage LLM pipeline for vulnerability assessment in DevSecOps workflows. Their pipeline composes three LLM stages (detection, classification, triage) with explicit inter-stage trust propagation: each stage’s output carries a confidence that the next stage consumes to weight its own decision. The “trust calibration” in their terminology refers to that inter-stage propagation, not to per-detection posterior probability over the underlying hallucination hypothesis. Their pipeline thus emits binary stage-decisions; the exposed confidence is the propagated stage-level trust score rather than Pr( H | E). We re-implement a Mahmud-shaped binary baseline (Section 4.3) as our point of comparison: parse imports, drop standard library, registry-probe, flag unresolved. This baseline is the natural single-stage detector their architecture would degrade to in the absence of the trust-propagation stages, and the natural lower-bound any practical slopsquat detector would reproduce; our contribution is the calibration layer that wraps it and exposes per-detection Pr( H | E) to downstream consumers. Mahmud et al. do not publish a reference implementation; the comparison is therefore necessarily a single-stage re-implementation rather than an end-to-end replication, a fidelity gap we address in Section 7. 3LLM-induced supply-chain risk. Perry et al. [23] run a 47-participant developer study finding that programmers using AI assistants write more insecure code than unassisted controls and, crucially, perceive their code as more secure — a confidence/competence inversion that motivates the case for risk-aware detection rather than binary-flag-or-nothing tooling. Pearce et al. [21] audit Copilot completions against MITRE CWE Top-25 scenarios and find that approximately 40% of generated programs contain exploitable vulnerabilities, again establishing the empirical case that LLM-emitted code is a first-order security concern. Both studies motivate the threat model we address but neither addresses detection calibration as a downstream defensive primitive. 
+
+Package-manager supply-chain attacks. The slopsquat threat sits within a longer line of work on package-manager supply-chain attacks. Tschacher [28] first measured typosquatting across language package managers (PyPI, npm, RubyGems), the direct ancestor of the LLM-amplified variant we study. Zimmermann et al. [29] quantified the systemic risk of the npm dependency graph (a handful of maintainer-account compromises can reach a large fraction of all packages), and Duan et al. [5] built a comparative framework measuring malicious-package campaigns across PyPI, npm and RubyGems. On the defensive side, Torres-Arias et al. [27] introduced in-toto, which provides end-to-end supply-chain integrity attestations over the build pipeline. These works target the registry and build-graph level; our contribution is upstream of them, at the moment an LLM emits an import name, and is complementary to the lock-file-level provenance they provide. 
+
+Curated-database detection (OSV). The OpenSSF Malicious Packages repository and the OSV schema [20] represent the curated-authority alternative: a malicious package is detected once a curator has identified it and minted a MAL- identifier, after which OSV-Scanner clients catch it at lock-file scan time. The approach is complementary to ours rather than competing: OSV operates on a curated database with batch consumer-side queries, whereas our calibrated metadata channel operates on structural properties at import time. Concretely, neither pyzenith 
+
+nor chartcraft 2 (Section 5.2) carried an OSV MAL- identifier at our corpus-build date (2026-05-23, verified by direct /v1/query calls); a curated-database scanner would have missed both, whereas the metadata channel flagged both at posterior ≈ 0.30. 
+
+Industry threat-model framing. The academic literature is echoed by the industrial response. The Open Source Security Foundation (OpenSSF)’s 2026 cohort of new members frames the LLM-induced supply-chain risk as the headline contemporary threat [3]. Willem Delbare, CEO of Aikido Security, observes that “attackers already understand that the fastest way into production is through the software supply chain” — a class of attack that includes “poisoning dependen-cies, compromising maintainer accounts, delivering malicious commits, exposing credentials, and creating subtle changes buried deep in infrastructure code” — and explicitly identifies “code re-positories, package managers, and developer tooling” as the defensive surface where the problem must be solved. Leslie Pascual (field engineering manager for AI & security, ActiveState) makes the same architectural point in operational terms: security “must appear in the repo, the build, the package workflow, the container, the sandbox, and the command line” — the trust bound-ary of modern infrastructure. Our calibration layer is a contribution to that defensive surface: an evidence producer that lives at the import-time boundary and emits posteriors a downstream consumer can route on. The calibrated probability is the primitive that “operationalises trust” in Pascual’s terminology, and the metadata channel (Section 3.4) is the answer the binary registry              
+
+> 2We name pyzenith and chartcraft solely for scientific reproducibility, and we intend no disparagement of either project. Throughout this paper, “suspicious” (equivalently “registered-but-suspicious”) is a statement about our detector’s metadata heuristic — a package whose PyPI record matches a recent-registration and empty-info.author
+> profile — and not an allegation of malicious intent, vulnerability, or any wrongdoing by these packages or their maintainers. As the body makes explicit (Section 5.2), we do not adjudicate either package as malicious; both may well be legitimate, early-stage projects, and the channel deliberately emits a low-confidence surface-for-review signal (posterior ≈0.30), not a block. All such characterisations reflect the PyPI metadata snapshot of 2026-05-23 only; metadata profiles evolve, and a later snapshot may differ (Section 7).
+
+4probe cannot give to Seletskiy’s question of “who built it, what’s in it, and whether it can be trusted.” 
+
+Calibration in machine learning. Guo et al. [10] established the calibration of modern neural networks as a first-order quality concern, demonstrating that over-parameterised models exhibit systematic over-confidence and introducing temperature scaling as the canonical post-hoc fix. They also formalised the Expected Calibration Error (ECE) reliability diagram methodology that we adopt in Section 4.4. Subsequent work has extended calibration evaluation to structured outputs and beyond classification, but the canonical primitives (binning, reliability diagrams, ECE) trace to Guo et al. Our Beta calibration layer departs from temperature scaling in three ways: (i) the prior is explicit rather than implicit in network weights, allowing audit and revision; (ii) the prior’s epistemic status is classified into the 3-category taxonomy and the classification is part of the artefact, not an informal annotation; (iii) the conjugate Beta-Binomial update means the posterior evolves analytically under accumulated evidence, whereas temperature scaling fixes the calibration at a single held-out split. 
+
+Bayesian methods in software engineering. Furia, Feldt and Torkar [9] surveyed Bayesian Data Analysis methodology in empirical software engineering, arguing for explicit probabilistic reasoning over null-hypothesis significance testing on per-study analyses. Their argument applies to studies of software phenomena (effect sizes, treatment-comparison studies); our work extends the same probabilistic discipline from study-level analysis to detector-level confidence calibration, with the additional requirement that prior provenance (the 3-category taxonomy) be part of the audit trail. The methodological lineage at our institution continues from MIDAS [11, 13, 12], where Bayesian belief networks orchestrated functional-test selection on SOA pipelines under noisy outcomes; the transposition to the present setting is direct, with LLM-emitted code snippets in the role of test executions and registry-probe outcomes in the role of test verdicts. 
+
+# 3 Methodology 
+
+Overview. The methodology has three components that compose end-to-end. (1) A rule-based detection layer , derived from a Code Quality Scanning (CQS) skill, parses Python source for import 
+
+statements and emits per-rule findings against PyPI. The detection layer is the unit of action: each finding is a (rule, package, snippet) triple. (2) A 3-category epistemic taxonomy classifies each detection rule’s prior by provenance — empirical calibration, constructive determinism, or traced engineering judgement — and constrains the prior’s effective sample size accordingly. The taxonomy is the unit of audit: a reviewer reading a flag knows what kind of claim the underlying prior is making. (3) A Bayesian calibration layer maps each rule to a Beta prior under the taxonomy, computes the posterior under accumulated evidence by Beta-Binomial conjugacy, and emits Pr( H | E) for downstream consumers. The calibration layer is the unit of output: detection findings leave the system as posterior probabilities, not as binary flags. The detection layer is wrapped around a strict-registry channel (probe PyPI, flag HTTP 404 results) and extended with a metadata channel (read PyPI metadata, flag suspicious-but-registered packages). The strict-registry channel addresses the canonical slopsquat regime catalogued by Spracklen et al. [26]; the metadata channel addresses the post-LLM-emission-attacker-registers 
+
+regime where the package does exist on PyPI but its metadata profile is atypical of a legitimate dependency. Both channels share the calibration machinery. Figure 1 shows how the components compose, from an LLM-emitted snippet to a per-finding posterior consumed by a CI gate. 
+
+## 3.1 The Code Quality Scanning detector 
+
+The detection layer parses Python source via AST, extracts top-level import names, drops the standard library, and probes the PyPI JSON registry for the remainder. Unresolved (HTTP 404) 5detection layer (1)          
+
+> epistemic taxonomy (2)
+> calibration layer (3)
+> LLM-emitted snippet
+> AST import extraction
+> −stdlib
+> registry channel
+> PyPI probe
+> →404? →neighbour
+> metadata channel
+> PyPI JSON →recency, author, descriptor
+> Bayesian calibration
+> posterior by Beta-Binomial
+> epistemic taxonomy
+> cat 1/2/3 prior provenance + ESS cap
+> posterior Pr( H|E)
+> →CI gate
+> priors
+
+Figure 1: End-to-end workflow. Each LLM-emitted snippet is parsed to top-level import names (standard library dropped); the strict-registry and metadata channels emit per-rule findings; the Bayesian calibration layer maps each rule to a Beta prior under the 3-category epistemic taxonomy and emits a posterior Pr( H | E) that a downstream CI gate thresholds. The ground-truth oracle (an alias-aware PyPI probe, Section 3.2) is intentionally separate from the detector predicates it scores. names are flagged. For each flagged name, a single neighbour-search step queries Levenshtein-distance-one candidates — if any candidate is on PyPI, the flag is classified as a likely slopsquat (typo-squat-style hallucination). The implementation reuses ast-grep [1] for AST extraction, re-gistry probing through PyPI’s public JSON endpoint, and an LRU cache for repeated lookups. Spracklen et al. [26] report that approximately 97% of LLM-emitted registry-miss imports corres-pond to genuine hallucinations across the families they study; this empirical observation provides contextual support (not parameter calibration) for the registry-miss rule’s prior discussed below. 
+
+Scope of the registry probe. Two cases lie outside what a registry-miss probe can decide, and we are explicit about both. (i) The hallucinated name is already registered as a slopsquat. If an adversary has pre-emptively registered the hallucinated name, the PyPI probe returns HTTP 200 and the strict-registry channel is structurally blind to it. This is precisely the regime the metadata channel (Section 3.4) is designed to surface, and the empirical case in which it earns its keep (Section 5.2): the package resolves, but its metadata profile (recent registration, sparse author/summary, low release count) is atypical of a legitimate dependency. (ii) A legitimate package whose own (transitive) imports have been poisoned. If import requests resolves to a genuine distribution but an attacker has compromised one of its dependencies, no import-time probe of the top-level name can detect it: our unit of analysis is the import name emitted by the LLM, not the internal dependency closure of an existing distribution. We treat transitive dependency compromise as out of scope and revisit it as a construct-validity limitation in Section 7; it is complementary to lock-file-level provenance tooling ( e.g. in-toto [27], OSV-Scanner) rather than something the calibration layer claims to address. 
+
+## 3.2 Formal specification: oracle versus detector predicates 
+
+To make the evaluation auditable we specify the detection rules as typed predicates over an explicit state, separating the ground-truth oracle (which defines the label) from the detector predicates 
+
+(which emit posteriors). Let the scoring-time state be σ = ( R, I, α, t ), where R is the PyPI registry snapshot at corpus-build time, I the multiset of top-level import names extracted from a snippet, α the curated import-name → distribution-name alias map (Section 5.1), and t the snapshot timestamp. Write resolve α(p, R ) ≡ [ p ∈ R ∨ α(p) ∈ R ] for the alias-aware resolution of a name p.6Oracle predicate (defines ground truth). halluc (p) ≡ ¬ resolve α(p, R ) — a name is labelled hallucinated iff neither it nor its alias resolves in R at time t.
+
+Detector predicates (emit findings). The strict-registry rules are registry miss (p) ≡¬ resolve α(p, R ) and 
+
+slopsquat neighbour (p) ≡ registry miss (p) ∧ ∃ q [ lev( p, q ) = 1 ∧ resolve α(q, R ) ]; the metadata rules are predicates over the registered package’s PyPI JSON M (p) (registration age 
+
+t − treg (p), release count, author and summary descriptors), defined in Section 3.4. This separation makes one fact precise. The strict-registry detector predicate registry miss 
+
+is definitionally identical to the oracle predicate halluc : both reduce to ¬ resolve α(p, R ) on the same snapshot. A binary detector built from registry miss alone therefore agrees with ground truth by construction, which is why we treat such a detector as a degenerate oracle upper bound rather than a competitor (Section 4.3). The metadata predicates are the only rules in the pipeline that are not a function of resolve α, and are consequently the only ones that can disagree with the registry oracle — the formal reason the contribution lives on the metadata channel. The specification style follows the predicate-over-state discipline of Lamport’s TLA + [16] and the model-checking literature [2], applied here only to fix the oracle/detector boundary, not to perform an exhaustive state-space exploration. 
+
+## 3.3 The 3-category epistemic taxonomy 
+
+Every Beta prior in the detection pipeline is annotated with an epistemic category that records its provenance. Throughout, the effective sample size (ESS) of a Beta (α, β ) prior is α + β:the number of pseudo-observations the prior is worth, and therefore how much real adjudicated evidence is needed to overrule it under the conjugate update of Section 3.4. A larger ESS makes a prior “stickier”; the taxonomy ties each category to an ESS bound so that weaker provenance yields to data sooner. 
+
+Category 1 — empirical calibration verified. The prior Beta (α, β ) is derived by moment-matching or quantile-matching from peer-reviewed statistics that measure the modelled quantity directly. The source is cited as evidence for the parameter values . Constructive example. If a peer-reviewed study reported the precision of a particular detection rule as 0 .92 over N = 500 adjudicated findings, the cat. 1 prior would be Beta (α = 0 .92 · 500 = 460 , β = 0 .08 · 500 = 40) with ESS = 500 inherited from the source. The cited paper is the source of the parameters, and a future reviewer can audit the moment-matching directly. 
+
+Category 2 — constructive deterministic argument. The prior derives from a formal property of the detection mechanism itself rather than from an empirical measurement of the rule’s precision. Constructive example. A registry probe that returns HTTP 404 from PyPI’s JSON endpoint is, modulo network or eventual-consistency issues, a hard statement about the absence of the name from the registry: the precision of a registry-miss flag is bounded by registry correctness, not by a heuristic. The cat. 2 prior Beta (98 , 2) with ESS = 100 encodes “near-certain” detection with a small residual that absorbs transient mis-probes; the parameters trace to the constructive argument, not to a peer-reviewed precision measurement of the rule. 
+
+Category 3 — traced engineering judgement. The prior is a conservative baseline informed by industrial knowledge but not empirically calibrated. Contextual references (vendor reports, related studies) are marked as context , not as the source of the parameter values. Constructive example. Suppose an engineer notes that “recently-registered single-release PyPI packages with empty author fields are suspicious in roughly 1 in 3 cases I have seen during code review” — a domain-knowledge hunch grounded in operational experience but never empirically measured. The cat. 3 prior Beta (3 , 7) with ESS = 10 encodes the hunch (mean 0 .30) while explicitly limiting its 7weight against accumulated evidence. Each cat. 3 prior carries a promotion plan — a documented path to cat. 1 via instrumentation. The threshold for automatic re-labelling (cat. 3 → cat. 2) is set at N ≥ 20 accumulated observations, and a human-reviewed checkpoint at N ≥ 50 tests whether the original prior mean lies within the 95% credible interval of the current posterior — triggering re-labelling to cat. 1 if so, or recalibration otherwise. The thresholds derive from the requirement that the posterior become data-driven before re-labelling: at our cat. 3 ESS cap (below), N = 20 confirmations make the posterior roughly two-thirds data-driven. 
+
+ESS bounds per category. The categories also encode bounds on the effective sample size of each prior, expressed as α + β. Cat. 1 priors inherit the N of the source study. Cat. 2 priors are capped at α + β ≤ 100, reflecting the strength of the constructive argument. Cat. 3 priors are capped at α+β ≤ 10, ensuring that traced engineering judgement yields to roughly 20–50 confirmed observations rather than dominating the posterior indefinitely. The 10 × gap between cat. 2 and cat. 3 caps is audit-readable: categories encode quantified commitments on prior revisability under evidence, not decorative labels. 
+
+On the cat. 2 cap of 100 . We state plainly that the specific value α + β ≤ 100 is an engineering anchor, not a measured quantity — consistent with the taxonomy’s own demand for epistemic honesty. Its role is derived: the cap must be large enough that a near-deterministic registry probe is not casually overturned by a handful of noisy adjudications, yet small enough that a genuinely systematic divergence (say, a sustained run of eventual-consistency mis-probes) can still move the posterior within an operationally tractable number of observations. At ESS = 100, 20 contradicting observations shift a Beta (98 , 2) posterior mean from 0 .98 to ≈ 0.82 and 50 shift it to 
+
+≈ 0.65 — revisable, but only under real evidence. The cap is therefore revisable by construction :the documented promotion path that re-grounds a cat. 3 prior on instrumented data applies equally to re-grounding this anchor on a measured PyPI 404-correctness rate, at which point the cat. 2 prior is itself promoted to cat. 1 with the source study’s own N . We flag the value as an anchor rather than launder it as a derived constant. 
+
+## 3.4 Bayesian calibration layer 
+
+Each detection rule r is paired with a prior πr = Beta (αr, β r, c r, s r) where ( αr, β r) are the Beta parameters, cr ∈ { 1, 2, 3} is the epistemic category, and sr is a citation key or design-decision identifier recording the source. 
+
+Initial priors — strict-registry channel. For the core registry-probe detector we distinguish three rules: 
+
+• registry miss — the package name does not resolve on PyPI. Prior: Beta (98 , 2) (mean 0.98, ESS = 100), classified cat. 2 . The constructive argument is that an HTTP 404 from PyPI’s JSON endpoint is, modulo transient infrastructure issues, a deterministic statement about the absence of the name from the registry — the precision of a registry-miss flag is bounded by registry correctness, not by a heuristic. Spracklen et al. [26] provide independent empirical context (prevalence of LLM-emitted hallucinations) but are cited as context for the threat model , not as the source of the parameter values. 
+
+• slopsquat neighbour — a registry-miss plus a Levenshtein-distance-one neighbour that does exist on PyPI. Prior: Beta (99 , 1) (mean 0 .99, ESS = 100), classified cat. 2 . The constructive argument extends registry miss : the neighbour search is itself deterministic, so a near-neighbour on PyPI co-existing with the missing name is a structural signal of typo-squat-style emission rather than a heuristic inference. A small residual uncertainty is preserved by the finite ESS rather than hard-coded to confidence 1 .0 as in earlier rule-based detectors. 8• unreachable — the registry probe failed (network error, rate limit, transient infrastruc-ture). Prior: Beta (1 , 1) (uniform, mean 0 .5, ESS = 2), classified cat. 2 as a principled no-information prior. A downstream consumer can decide whether to treat the probe failure as risk or as no-data from the posterior alone. 
+
+Initial priors — metadata channel. The strict-registry channel can only flag names that do not appear on PyPI. The realistic post-LLM-emission attack registers a hallucinated name shortly after seeing the LLM hallucinate it, so the package does resolve on PyPI but its metadata profile (recent registration, single release, empty or placeholder author, single-word summary) is atypical of a legitimate dependency. We extend the calibration layer with three metadata-aware rules that complement the strict-registry channel: 
+
+• metadata recent single — the package is recently registered (within a configurable window before corpus build, set to 180 days in our runs) and has a single release. Prior: Beta (4 , 6) (mean 0 .40, ESS = 10), classified cat. 3 . The prior captures the engineering intuition that a recent single-release package is suspicious but not conclusively malicious; routine new packages share this profile. 
+
+• metadata recent empty author — recent registration plus an empty or placeholder author field. Prior: Beta (3 , 7) (mean 0 .30, ESS = 10), classified cat. 3 .
+
+• metadata recent low descriptor — recent registration plus an empty or single-word sum-mary. Prior: Beta (2 .5, 7.5) (mean 0 .25, ESS = 10), classified cat. 3 .A package can match multiple metadata-suspicion rules. We compose them by taking the maximum posterior mean across triggered rules rather than multiplying probabilities; multiplica-tion assumes rule-independence that the metadata signals plainly violate (recency drives several of them). 3 The maximum-mean composition is conservative on the false-positive side and admits the rule-class ablation reported in Section 5.4. 
+
+Posterior update. As labelled outcomes (true positive versus false positive) accumulate, each rule’s posterior is updated by Beta-Binomial conjugacy: 
+
+Beta (αr + s, β r + f ),
+
+where s is the count of true-positive confirmations and f the count of false positives. The posterior mean replaces the prior mean in the emitted detection confidence; the posterior α and β are preserved so downstream consumers can recover variance, credible intervals, or the full distribution if needed. 
+
+Worked example — the pyzenith case. The package pyzenith (PyPI, registered 2025-12-18) is a real public Python project advertising itself as a “Cross-Platform ML Optimization Framework with ONNX”. It happens to carry an empty info.author field and was first published within the 180-day window before our corpus build, so the metadata channel’s metadata recent empty author rule fires when a panel LLM emits import pyzenith . All six panel models emit this import on the matched stress-test prompt, and the metadata channel flags all six snippets (Section 5.2). 
+
+• Mahmud-shaped binary. The package resolves on PyPI (HTTP 200); no flag is emitted. 
+
+• CQS calibrated, registry channel only (variant 2). Same outcome: no flag. 
+
+• CQS calibrated, registry + metadata channels (variant 3). The metadata recent empty author rule fires. The prior is Beta (3 , 7), mean 0 .30: the emitted output is a flag with       
+
+> 3The principled object here is the marginal posterior Pr( H|E1, . . . , E k) of a Bayesian belief network [22, 15] whose evidence nodes Ei(the triggered rules) are dependent through a shared recency parent. We do not learn that network; the maximum-mean rule is a deliberately conservative approximation to its marginal that is exact in the mutually-exclusive-evidence limit and otherwise under-states joint suspicion, erring toward fewer false positives. Replacing it with a fitted belief network is a natural refinement once enough adjudicated co-occurrences exist to estimate the couplings.
+
+9posterior confidence 0 .30 — well below the strict-registry channel’s ∼ 0.98, and well below any sensibly-set CI-gate threshold τ = 0 .5. A consumer treating the flag as a surface-for-review 
+
+rather than an auto-block signal would route pyzenith into manual triage; an auto-block 
+
+consumer with τ = 0 .5 would not block it. The point is precisely that the consumer chooses, with the calibrated probability as input. 
+
+• Posterior update. Suppose manual triage adjudicates pyzenith as legitimate ( f = 1, a false-positive observation for the rule). The posterior is Beta (3 , 8), posterior mean 3 /(3 + 8) ≈ 0.27: the rule’s confidence drops slightly toward “less suspicious than the prior thought”. After k false-positive adjudications and no true-positives, the posterior becomes Beta (3 , 7 + 
+
+k), mean 3 /(10 + k); at k = 20 the rule’s posterior mean is ≈ 0.13 and the prior-vs-data weighting has flipped to data-dominated, triggering the cat. 3 → cat. 2 re-labelling described above. The example illustrates the structural lever calibration adds. The metadata channel sur-faces pyzenith as worth a second look without committing the binary baseline’s silence (and without committing a hard binary flag that the registered-but-legitimate package would suffer from). Whether pyzenith is genuinely suspicious is decided downstream; the calibrated layer makes the question askable. We revisit pyzenith as the most prominent of the metadata-channel discordant flags on the full N = 1734 corpus (Section 5.2). 
+
+Implementation. The calibration layer is implemented in roughly 400 lines of Python: a
+
+PosteriorBuilder mapping rule names to priors, a free function update posterior for the con-jugate update, and a metadata-suspicion module that reads PyPI’s JSON response and routes packages to the metadata rules described above. The detector consults the builder at scoring time and surfaces the posterior mean as its emitted confidence; alpha, beta, category, and source are attached as metadata for downstream auditing. No external libraries are required beyond the standard scipy.stats.beta for credible-interval reporting and requests for registry probing. 
+
+# 4 Empirical evaluation setup 
+
+## 4.1 Corpus — dual sourcing 
+
+The corpus is sourced from two complementary prompt sets, chosen to expose two distinct prop-erties of slopsquat detection. The combined prompt set contains 289 prompts: 189 stratified from BigCodeBench (the realistic-use slice, addressing industry-relevance concerns) and 100 from a complementary stress-test prompt set described below. Each prompt is run through the six-model panel of Section 4.2, and the parseable generations form the evaluation corpus of N = 1 ,734 snippets (1134 realistic-use + 600 stress-test, i.e. 289 × 6). 
+
+Realistic-use prompts (BigCodeBench). We use Python snippets stratified from Big-CodeBench [17], a peer-reviewed benchmark of 1140 library-heavy Python tasks designed to stress-test LLM code generation across diverse function-call patterns. Sampling is stratified across six broad library-use categories (numerical, ML, HTTP, security, visualisation, other) at a fixed seed for reproducibility. These prompts reflect realistic developer use: “compute X using library Y” — where the library is mainstream and the model is likely to use it correctly. 
+
+Stress-test prompts (niche-library elicitation). The BigCodeBench prompts alone yielded a base hallucination rate near zero across our LLM panel (Section 5), which is itself an important empirical finding of this paper: modern code-specialised LLMs on realistic-use prompts do not produce slopsquats at scale. To exercise the detection layer in the tail-risk regime where slopsquat detection matters, we add a second prompt set targeting niche or invented library names (e.g. “Implement clustering using a library called pyzenith ”, or “ Use the deeplog package for log anomaly detection ”). We frame this slice explicitly as a stress-test corpus : its purpose is not to characterise 10 the typical-use distribution in industry — which the realistic-use slice already addresses — but to provoke the failure mode under study and exercise the detector in the regime where it has work to do. Real-world incidents of adversaries registering hallucinated names [26] confirm this regime is not merely synthetic: a CI gate must catch the rare hallucination before it reaches production ,not the common-case success. Each task is processed through the LLM panel below; each generated snippet is parsed for imports, top-level external names are extracted, the standard library is filtered out, and each remaining name is probed against PyPI’s JSON API. Names returning HTTP 404 are labelled 
+
+hallucinated ; names returning HTTP 200 are labelled real ; HTTP errors are treated conservatively (assume real). 
+
+## 4.2 LLM panel                      
+
+> Developer Model Mode Role Anthropic claude-sonnet-4.6 cloud (OpenRouter) Closed-source cloud comparator Mistral mistral-large-2411 cloud (OpenRouter) Cloud general-purpose, European DeepSeek deepseek-v4-pro cloud (direct API) Cloud reasoning anchor DeepSeek deepseek-r1 cloud (OpenRouter) Within-family reasoning pair Mistral codestral:22b local (ollama) Code-specialised, European Meta codellama:7b local (ollama) Code-specialised, small
+
+Table 1: LLM panel: 6 models across 4 developers spanning four cloud models and two local open-weight code models. DeepSeek contributes a within-family pair (general-purpose v4-pro plus reasoning r1 ) and Mistral contributes a cloud / local pair ( mistral-large plus the code-specialised 
+
+codestral ). The cloud / local split exposes whether the calibration generalises across deployment mode; the developer span exposes whether it generalises across organisations, geographies, and training-data distributions. The panel is designed to expose two orthogonal sources of variance. Cross-developer diversity 
+
+(rows of Table 1) tests whether the calibration generalises across organisations, geographies, and training-data distributions, with one closed-source cloud model (Claude-Sonnet-4.6) included to address the realistic enterprise distribution of models in production use. Cloud vs. local diversity 
+
+tests whether the calibration generalises across deployment mode (API-billed cloud models versus locally-hosted open-weight code models). We adopt the inference parameters temperature = 0 .2, top p = 0 .9, max tokens = 2048, and pin model versions and access dates (Section 8). The two local open-weight models are reproducible at the byte level from their published GGUF arte-facts; the four cloud-routed models are reproducible from any account with the equivalent routes (Section 8 discusses the cloud-decoding reproducibility caveat). 
+
+## 4.3 Baseline 
+
+Why a re-implementation. Mahmud et al. [18] do not publish a public reference implementa-tion of their pipeline; the IEEE Xplore record carries no code-availability statement and we found no associated public repository at the authors’ institutions (Tuskegee University and U.S. Army DEVCOM Armaments Center) at the time of writing. A fidelity-quantified replication of their full multi-stage pipeline would therefore require either authors-side code release or a careful inference-from-figures replication that is beyond the scope of this paper. We adopt the next-best comparator: a single-stage binary detector that implements the strict-registry leg of the Mahmud pipeline as described in their text (parse imports, drop standard library, probe registry, flag unresolved). This baseline is the natural single-stage detector their architecture would degrade to in the absence of the trust-propagation stages, and the natural lower-bound any practical slopsquat detector would reproduce. We frame the comparison throughout as calibrated CQS versus Mahmud-shaped binary 
+
+rather than ours versus Mahmud 2025 to avoid overclaiming fidelity. The fidelity gap is bounded 11 above by the trust-propagation stages we omit, which act on already-flagged findings rather than on the strict-registry channel itself, and we surface it explicitly as a threat in Section 7. 
+
+What the baseline emits. The baseline emits a binary {flagged , not flagged } decision per import, with no confidence score by design. This is precisely the property our calibration layer adds and the empirical lever the comparison exercises. 
+
+## 4.4 Metrics 
+
+Precision, Recall, F1. For each detector variant we threshold the emitted confidence at τ = 0 .5to recover a binary flag, then compute standard precision (true positives over total flags), recall (true positives over total ground-truth hallucinations), and their harmonic mean F1. The choice 
+
+τ = 0 .5 is the natural Bayes threshold for a 0 /1-loss decision; consumers with asymmetric costs (false-positive friction vs. missed-hallucination risk) can re-threshold the posterior at any τ ∈ [0 , 1]. The example consumer who wants to surface pyzenith -like metadata flags for review but auto-block only strict-registry flags would set τreview = 0 .20 and τblock = 0 .90. 
+
+McNemar paired test. The McNemar test [19] is the standard non-parametric test for whether two detectors disagree systematically on paired data — here, paired by snippet. The contingency table records a (both detectors agree positive), d (both agree negative), b (calibrated flags, binary does not), and c (binary flags, calibrated does not). Only the discordant pairs ( b, c ) carry inform-ation about asymmetry: under the null of no systematic difference, each discordant pair is equally likely to fall in b or c, so the test reduces to a two-sided binomial test on min( b, c ) out of b + c
+
+trials at p = 12 . We use the exact binomial form, which is appropriate for the small discordant counts here ( b + c ≤ 49); for the modern guidance on McNemar variants (exact-conditional vs. mid-p vs. asymptotic, and when each is preferable) we follow Fagerland et al. [8]. We report b, c,the two-sided p-value, and the qualitative interpretation; the pyzenith -style metadata-only flags contribute exactly to b (calibrated flags, binary does not). 
+
+Expected Calibration Error (ECE). Following Guo et al. [10], ECE is the weighted mean absolute gap between predicted confidence and empirical accuracy, binned over the confidence range: ECE = 
+
+> M
+
+X
+
+> m=1
+
+|Bm|
+
+N |acc( Bm) − conf( Bm)| ,
+
+where Bm is the m-th confidence bin, |Bm|/N is its relative weight, acc( Bm) is the empirical accuracy of predictions in the bin, and conf( Bm) is the average predicted confidence in the bin. We use M = 10 equal-width bins over [0 , 1]. Two views. The full-corpus ECE weights every snippet equally, including the ∼ 80% where the detector correctly emits no flag and zero confidence; on a clean-dominated corpus this view is degenerate (the trivial all-zero predictor already achieves a very small full-corpus ECE) and we report it for transparency only. The flagged-subset ECE 
+
+restricts the computation to the snippets the detector flagged, the conventional calibration view for a detector. We report both. 
+
+Brier score. Because the flagged-subset ECE conditions on positive predictions, it is silent on the cost of missed hallucinations and on the over-confidence of the un-flagged mass. We therefore also report the Brier score [4] — the mean squared error between the predicted probability of the positive class (hallucinated) and the binary outcome — over the full corpus, with un-flagged snippets contributing a predicted probability of 0: Brier = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+ ˆpi − yi
+
+2,
+
+12 where ˆ pi is the detector’s posterior Pr( H | E) for snippet i and yi ∈ { 0, 1} its ground-truth label. Unlike the flagged-subset ECE, the Brier score is a strictly proper scoring rule evaluated over every snippet, so it penalises both false flags and silent misses; it complements rather than replaces the conventional calibration view. 
+
+Reliability diagrams and per-model ECE. On the flagged subset the reliability diagram plots, per confidence bin, the empirical precision (the fraction of flags in the bin that are true hallucinations under binary ground truth) against the mean predicted confidence; a perfectly-calibrated detector traces the diagonal (Figure 2). We additionally check calibration robustness across the LLM panel through the per-model precision break-out (Table 5): a calibration that held in aggregate but drifted on an individual model would surface as a per-model precision outlier, which is exactly how the claude-sonnet-4.6 registry-channel precision is read in Section 5.4. Full per-model ECE values are retained in the reproducibility material. 
+
+Power analysis. The corpus size was fixed a priori by a standard McNemar power calculation. Setting two-sided α = 0 .05, target power 0 .80, and expected detector-disagreement rate pdisagree =0.10 (the rate of discordant pairs as a fraction of paired snippets), a design target of ≈ 300 paired snippets detects a relative asymmetry of approximately 50% on the discordant-pair counts — equivalent to an absolute b/c gap of about 5% — which is the smallest practically meaningful effect. The realised corpus of N = 1734 paired snippets (six models × 289 prompts) was sized to clear that target with margin. Post hoc, however, all three detector comparisons in Table 3 turn out to be one-directional by construction (Section 5.1): the realised discordance rates (39, 49 and 10 out of 1734, i.e. 0.6–2 .8%) all fall well below the 10% assumption, and corpus size does not confer McNemar power when the relevant sample is the discordant count and the reverse cell is structurally empty. We therefore read these counts descriptively (Section 7) rather than as powered hypothesis tests. The earlier N = 91 pilot surfaced b = 3 , c = 0 on the variant-2-vs-variant-3 pairs; the full corpus surfaces b = 10 , c = 0. 
+
+# 5 Results 
+
+We report results from the full N = 1734 corpus: 1134 BigCodeBench (realistic-use) snippets and 600 stress-test snippets, with nhallucinated = 244 under the alias-aware ground truth (Sec-tion 4.1), across the six-model panel of Table 1 ( claude-sonnet-4.6 , mistral-large-2411 ,
+
+deepseek-v4-pro , deepseek-r1 , codestral:22b , codellama:7b ). Each model contributes 189 + 100 = 289 parseable snippets to the merged corpus. The section is organised around a structural result and a case study that explains it. The struc-tural result is that the metadata-augmented detector (variant 3) raises exactly ten flag decisions the registry-only calibrated detector (variant 2) does not, and none in the other direction ( b = 10, 
+
+c = 0). This direction is not a chance asymmetry: variant 3’s rule set contains variant 2’s, and rules compose by maximum posterior mean (Section 3.4), so variant 3’s posterior dominates variant 2’s on every snippet and the reverse-discordance cell is empty by construction . We therefore report the McNemar contingency descriptively and defer its inferential interpretation to Section 7. The 
+
+case study (Section 5.2) traces those ten metadata-only flags to two registered-but-suspicious PyPI packages; it illustrates the mechanism by which calibration changes outcomes, and we are careful to present it as an existence proof rather than a population-level prevalence claim. The binary 
+
+F1 comparison ranks the metadata-aware detector below the strict-registry detectors; the threat model (Section 1) inverts that ranking. The remainder of this section quantifies the disagreement and the calibration evidence behind it. 13 5.1 Three detectors disagree at N = 1734 
+
+We evaluate three detector variants on the merged corpus: a Mahmud-shaped binary detector (strict registry probe only, variant 1); a Bayesian-calibrated detector restricted to the strict-registry channel (variant 2); and a Bayesian-calibrated detector that adds the metadata channel (variant 3, Section 3.4). The ground-truth label is the binary outcome of an alias-aware PyPI registry probe at corpus-build time (2026-05-23): an import name is labelled non-hallucinated if either the raw name or its canonical distribution-name alias (a curated 15-entry whitelist covering 
+
+dateutil → python-dateutil , cv2 → opencv-python , PIL → Pillow , etc. ) returns HTTP 200. The same alias-aware probe is consumed by the strict-registry channel of variants 1 and 2; ground truth and detector therefore see the same registry semantics on this corpus, and the headline detector comparison is not distorted by well-known import-name vs. distribution-name pairs (cf. 
+
+IMPORT TO DISTRIBUTION in the reproducibility material, Section 8).                     
+
+> Detector Precision Recall F1Flagged ECE Brier
+> Mahmud-shaped binary (v1, oracle bound) 1.000 1.000 1.000 n/a n/a
+> CQS-calibrated, registry channel only (variant 2) 0.956 0.881 0.917 0.016 0.022 CQS-calibrated, registry + metadata channel (variant 3) 0.915 0.881 0.898 0.029 0.023
+
+Table 2: Detection metrics on the merged N = 1734 corpus (1134 BCB + 600 stress-test) across the six-model panel of Table 1, computed against the alias-aware ground truth (Section 4.1). The variant 1 row is italicised because it is not a competitor : a binary detector built from the registry-miss predicate is definitionally identical to the ground-truth oracle (Section 3.2), so its F1 = 1 .000 is a degenerate upper bound, not evidence of detection quality. The substantive comparison is variant 2 vs. variant 3. Brier is the strictly proper full-corpus score (Section 4.4). Variant 3 adds exactly 10 flags relative to variant 2, all classified as false positives under the binary ground truth; Section 5.2 reports their identities and revisits the ground-truth definition. 
+
+McNemar contingency on the binary detection decisions. Table 3 reports the paired contingency for the three detector pairs. In every pair one detector’s flag set is nested in the other’s — the calibrated variants share the registry channel and differ only by added rules (Section 3.4), and the Mahmud-shaped binary is the registry oracle the calibrated variants approximate — so in each comparison all discordance falls in a single direction (the additional flags of the richer or oracle-identical detector) and the opposite cell is empty by construction rather than by chance. We therefore read these counts descriptively , as the number of flag decisions on which the richer (or oracle-identical) detector differs, and treat the accompanying exact-binomial p-values as nominal; their inferential interpretation is qualified in Section 7. 
+
+## 5.2 The 10 discordant flags: pyzenith and chartcraft 
+
+The 10 snippets that variant 3 flags and variant 2 does not trace to exactly two PyPI packages. Six flags name pyzenith ; four flags name chartcraft . Each package is emitted by multiple panel models in the stress-test corpus, in response to prompts that explicitly name the library (e.g. “Implement Python code using a niche library called pyzenith for clustering ”). This case study illustrates the mechanism behind the statistical headline; we present it as an existence proof of the failure mode, not as a prevalence estimate ( n = 10 flags from two packages cannot carry a population claim). The strict-registry channel and binary ground truth share a single oracle (“does PyPI resolve this name today”); they are therefore mechanically blind to the attack pattern in which a hallucinated name is registered on PyPI by an attacker shortly after a model learns to emit it. The metadata channel is the only signal in our pipeline that distinguishes a fresh-and-thin registration from a legitimate dependency; it pays an F1 cost relative to the binary metric (∆ F1 = −0.019 on the merged corpus, ∆ P = −0.041, ∆ R = 0) and earns it back in threat-14 Comparison a b c nominal p                
+
+> v1 vs. v2 (Mahmud vs. registry-calibrated) 1695 39 03.6×10 −12
+> v1 vs. v3 (Mahmud vs. metadata-augmented) 1685 49 03.6×10 −15
+> v2 vs. v3 (registry vs. metadata) 1685 10 00.0020
+
+Table 3: Three-way McNemar paired test on detector decisions. The first two rows measure how far the calibrated detectors fall short of the degenerate oracle bound (variant 1) — the flags the oracle-identical binary raises that the calibrated detectors, by design, attach a sub-threshold posterior to — and are reported for completeness, not as a head-to-head against a competitor. 
+
+The third row is the result of interest : the discordance the metadata channel was designed to elicit (Section 3.4), which the N = 91 pilot did not surface ( b = 3 , c = 0). At N = 1734 the metadata channel produces b = 10 flag decisions the registry-only calibrated detector does not, and c = 0 in the other direction. Because the rule sets are nested and composed monotonically, 
+
+c = 0 holds by construction; we report the exact-binomial p-values as nominal figures and read the contingency descriptively (Section 7).          
+
+> Package Registered on PyPI Releases / author Models that emit it
+> pyzenith 2025-12-18 18 / empty all 6 panel models
+> chartcraft 2026-03-19 2 / empty 4 of 6 panel models
+
+Table 4: The two PyPI packages responsible for the 10 discordant flags. Both packages were registered on PyPI within the 180-day window before the corpus build (2026-05-23), well after the cut-off of the training data on which the panel models were trained, and both present the metadata profile that the calibrated metadata channel flags as suspicious: recent registration and empty info.author . Binary ground truth labels both packages as “not hallucinated” because PyPI resolves the name. The metadata-aware detector flags both as suspicious at posterior confidence 
+
+≈ 0.30 (the prior mean of the metadata recent empty author rule). model-aligned recall over the post-emission-registration scenario — exactly the regime catalogued by Spracklen et al. [26] as the highest-consequence slopsquat tail. We deliberately do not adjudicate whether pyzenith and chartcraft are themselves malicious. The PyPI summary strings are plausible (“Cross-Platform ML Optimization Framework with ONNX Interpreter”; “Python-powered dashboards that rival Power BI & Tableau”) and may correspond to legitimate-but-young projects. The point is precisely that the binary registry probe cannot tell, and a downstream consumer should not be required to trust the registry probe’s silence in the face of an LLM-recommended import whose metadata footprint matches a slopsquat profile. The calibrated posterior at ≈ 0.30 is designed to be a surface-for-review signal, not an auto-block 
+
+signal, and a CI gate at τ = 0 .5 would still let both packages through. 
+
+## 5.3 BigCodeBench (realistic-use): the tail-risk regime confirmed 
+
+On the 1134-snippet BigCodeBench stratum, the per-model hallucination rate is exactly zero un-der our alias-aware ground truth (Section 4.1): no model emits an import that fails to resolve on PyPI either directly or under its canonical distribution-name alias. The two non-alias-aware hallucinations that surface on this stratum ( dateutil × 12 and cv2 × 12, identical counts across every panel model) are entirely import-name versus distribution-name mismatches: dateutil re-solves to the python-dateutil distribution and cv2 resolves to the opencv-python distribution, both legitimate and widely deployed. Our ground-truth labeller carries a curated import-name →
+
+distribution-name alias map for the fifteen most common Python projects where these two names differ; the alias map is also consumed by the strict-registry channel of the calibrated detector so that variant 1 and variant 2 see the same registry semantics as ground truth. The empirical headline is therefore strengthened relative to the pilot ( N = 91 found one 15 isolated codellama hallucination on the BCB stratum at 5 .0% rate): modern code-specialised LLMs on realistic-use prompts essentially do not produce strict hallucinations once known import-name aliases are accounted for . Detection therefore matters precisely where the strict-registry channel is structurally blind — the metadata channel. 
+
+## 5.4 Per-model robustness 
+
+The discordance is panel-wide. pyzenith fires on every model in the panel: each of the six models produces exactly one snippet in which pyzenith is the recommended clustering library, and each such snippet is flagged by variant 3 and not by variant 1 or 2. chartcraft fires on four of the six models. The metadata channel’s discordance signal is therefore not driven by a single outlier model but by a panel-wide tendency to lean on the prompt’s mention of the niche library name. The strict-registry channel cannot see this because the squatter has already registered the name. The headline per-model F1 table follows (Table 5). The claude-sonnet-4.6 split is the registry-channel precision outlier: its small hallucinated subset on the stress-test stratum (24 packages out of 289, the lowest in the panel) combines with 9 false-positive flag decisions to yield a registry-channel precision of 0 .73. The other five models all sit at registry-channel precision 
+
+≥ 0.97.                                        
+
+> Model bradv v2 F1v2 Pv3 F1v3 P
+> claude-sonnet-4.6 0.083 0.82 0.73 0.80 0.71
+> mistral-large-2411 0.159 0.96 1.00 0.93 0.96
+> deepseek-v4-pro 0.176 0.92 1.00 0.90 0.96
+> deepseek-r1 0.125 0.96 1.00 0.94 0.97
+> codestral:22b 0.145 0.90 0.97 0.88 0.92
+> codellama:7b 0.156 0.93 0.98 0.91 0.93
+
+Table 5: Per-model detection metrics on the alias-aware ground truth. bradv is the merged 289-snippet hallucination rate; v2 is the registry-only calibrated detector; v3 is the metadata-augmented detector. The metadata channel costs 2–5 precision points per model and never reduces recall. 
+
+## 5.5 Calibration quality 
+
+The conventional reliability metric for a detector is computed on its positive predictions ( flagged-subset ECE ). The registry-channel variant emits posterior confidence ≈ 0.97–0 .98 on each of its 225 strict-registry flags against an empirical precision of 0 .956, yielding ECE ≈ 0.016 — a factor of six inside the 0 .10 threshold adopted from Guo et al. [10]. The metadata-augmented variant emits a broader range of posterior confidences (cat. 3 priors at 0 .25–0 .40 prior mean) over its 235 flags, against an empirical precision of 0 .915, yielding ECE ≈ 0.029. The metadata channel pays an ECE penalty of ≈ 0.013 for broadening the calibration curve across the confidence range; both variants remain well inside the calibration target. The full-corpus Brier score (Section 4.4) tells a consistent story from the complementary direc-tion: 0 .022 for the registry channel and 0 .023 once the metadata channel is added. The two scores are nearly identical because the metadata channel adds only ten low-confidence (0 .30) predictions over 1734 snippets; the strictly proper score confirms that broadening the calibration curve does not degrade aggregate probabilistic accuracy. Note that the flagged-subset ECE measures the metadata flags against binary ground truth, under which all ten are false positives by definition — so the metadata bin sits at empirical precision 0 .0 in Figure 2. That gap is exactly the calibration “penalty” the channel pays for surfacing a catch the binary oracle cannot label as a positive, not a defect in the posterior. 16 0.0 0.2 0.4 0.6 0.8 1.0 
+
+> Predicted confidence (posterior mean)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Empirical precision among flags
+> registry flags
+> precision 0.956 (n=225)
+> metadata-only flags
+> precision 0.000 (n=10)
+> binary GT cannot see
+> the supply-chain catch
+
+Flagged-subset reliability diagram 
+
+> Perfect calibration
+> Variant 2: registry channel (ECE = 0.016)
+> Variant 3: registry + metadata (ECE = 0.028)
+
+Figure 2: Flagged-subset reliability diagram for variants 2 (registry channel only) and 3 (registry + metadata channels) on the N = 1734 corpus under the alias-aware ground truth. Each marker is an occupied confidence bin, plotted at (mean predicted confidence, empirical precision among flags) with a thin line showing the gap to the diagonal; marker area grows with the bin’s flag count. Both variants place their 225 registry flags at confidence ≈ 0.97 and empirical precision 0.956, on the diagonal (well-calibrated). Variant 3 adds a single low-confidence bin at posterior 0.30 holding the ten metadata-only flags; under binary ground truth their empirical precision is 0 .0(the registry oracle cannot label the supply-chain catch as a positive), and that gap is the entire source of variant 3’s higher flagged-subset ECE (0 .029 vs. 0 .016). Both ECEs remain within the 0.10 target. 
+
+## 5.6 Corpus health (V1) 
+
+The per-model corpus-validity check (Section 4.4) reports parse rates ≥ 91 .7% and uniqueness rates 
+
+≥ 97 .6% across the six-model panel. The mean number of external imports per snippet ranges from 2 .48 ( codellama:7b ) to 2 .98 ( claude-sonnet-4.6 ). The only flagged corpus property is 
+
+halluc rate out of band on the BigCodeBench-only stratum, which is precisely the realistic-use tail-risk finding of Section 5.3 rather than a model defect. 
+
+# 6 Discussion 
+
+Slopsquat detection is a tail-risk problem. The near-zero hallucination rate on Big-CodeBench (Section 5.3) is itself the most consequential finding of this work. Modern code-specialised LLMs on realistic-use prompts essentially do not produce slopsquats; deployed naively, a slopsquat detector would emit no flags on the vast majority of LLM-assisted commits. Yet the cost of one unflagged slopsquat slipping into a build is large (supply-chain compromise of every downstream consumer). Detection therefore matters precisely in the tail-risk regime where the base rate is low but the consequence is catastrophic. A binary detector is poorly matched to this regime: it either reports too many flags (high friction at the boundary) or too few (missed 17 compromise). A calibrated detector is the natural primitive — every flag carries a probability that policy can route on. 
+
+When calibration helps. Calibrated confidence is most valuable at the CI-gate boundary: in-stead of a single global threshold, a downstream consumer (a pre-commit hook, a code-review agent, or a security policy engine) can map confidence into a policy decision specific to the context (developer machine versus CI versus production deploy). The calibrated layer also composes nat-urally with other risk signals: a Beta posterior can be combined with other probabilistic indicators via standard probabilistic operators rather than via ad-hoc voting rules. 
+
+When calibration matters less. For headline detection metrics on a clean corpus where the strict-registry channel suffices (realistic-use BigCodeBench), the calibrated layer adds no detections relative to the binary baseline. Its contribution there is restricted to the posterior confidence on the (rare) flag and the provenance metadata. The metadata channel earns its keep precisely in the tail-risk regime where post-LLM-emission attacker registration makes the strict-registry channel insufficient. 
+
+Robustness of the cat. 2 / cat. 3 split. The classification of strict-registry rules as cat. 2 rests on the constructive determinism of registry probes. Two transient phenomena complicate this: PyPI eventual-consistency windows (within which a freshly-registered name may not yet resolve in every region) and rate-limited probes (which surface as unreachable rather than registry miss ). Both are handled by the existing unreachable rule, which is deliberately uniform; we report the breakdown of flag categories in the reproducibility material so that consumers can apply their own posterior over transient-versus-genuine miss distinctions. 
+
+# 7 Threats to validity 
+
+Statistical conclusion validity. Three features of the detector design limit the inferential weight of the McNemar contingencies in Section 5.1, and we accordingly read the metadata-channel discordance as an existence proof rather than a powered test. First , the comparison is one-directional by construction: each richer detector’s rule set contains the comparator’s and rules compose by maximum posterior mean (Section 3.4), so the reverse-discordance cell is pinned to zero and McNemar’s symmetric null cannot obtain — the nominal p-values restate that the added channel produced flags, not that a surprising asymmetry was observed. Second , the discord-ant flags are not independent matched pairs: the ten variant-2-vs-variant-3 discordances trace to only two packages ( pyzenith , chartcraft ), each emitted by several panel models, so the effective number of independent discordant units is closer to two than to ten. McNemar’s test assumes pair-to-pair independence; repeated measurements on the same unit violate it and inflate nominal significance, and a cluster-aware variant is required to recover a valid test [7, 6]. Third , the flag count underlying the contingency uses a rule-fired criterion rather than the τ = 0 .5 threshold used for the precision/recall/ F1 metrics (Section 4.4); at τ = 0 .5 the metadata flags, whose posterior is ≈ 0.30, are negative decisions (a CI gate at τ = 0 .5 lets pyzenith through, Section 5.2). Aproperly powered, cluster-aware test of the post-emission-registration effect over a larger set of registered-but-suspicious packages is left to ongoing work. 
+
+Construct validity. Our ground-truth labels come from PyPI live-probing at corpus-build time. PyPI is an evolving registry: a package name unresolved today may resolve tomorrow if an attacker or a legitimate maintainer registers it. We pin labels to the probe-time snapshot and document the snapshot date in the reproducibility material. Conversely, packages that existed at probe time but are subsequently withdrawn under PEP 592 4 remain labelled as real. The metadata 
+
+> 4https://peps.python.org/pep-0592/
+
+18 channel partially mitigates this asymmetry: a withdrawn package retains its metadata profile (single release, sparse author/summary) and the metadata channel re-routes the flag to a posterior-confidence regime rather than an inappropriate binary positive. Long-running deployments should re-probe periodically and re-update the posterior with the freshly-observed registry state. 
+
+Internal validity — Mahmud baseline fidelity. The Mahmud-shaped baseline is a single-stage binary detector inspired by Mahmud et al. [18], not a verified end-to-end replication of their full multi-stage trust-calibrated pipeline. The fidelity gap is bounded above by the trust-propagation stages we omit (which act on already-flagged findings rather than on the strict-registry channel itself); we quantify the gap when the original implementation is publicly available. 
+
+Construct validity — transitive dependency compromise. Our unit of analysis is the top-level import name emitted by the LLM. A complementary attack — a legitimate package whose own transitive dependencies, build scripts, or maintainer account have been compromised — is invisible to any import-time probe of the top-level name, and we do not claim to address it (Section 3.1). That class of compromise is the remit of lock-file-level provenance and integrity tooling (in-toto [27], OSV-Scanner over the resolved dependency graph) and of the empirical supply-chain-attack measurements of Duan et al. [5]; the calibration layer is complementary to, not a substitute for, those defences. 
+
+External validity. The corpus is Python-only. Python hosts the most extensively documented slopsquat literature and provides the BigCodeBench peer-reviewed corpus that our realistic-use slice depends on. Slopsquat attacks generalise in principle to other package ecosystems — npm (whose security threats Zimmermann et al. [29] characterise), crates.io, Go modules, RubyGems, and the Java/Maven Central ecosystem — and the underlying typosquatting vector was first measured across package managers by Tschacher [28]. Our pipeline is language-agnostic at the calibration layer, but the empirical numbers reported here apply specifically to Python. We single out Java/Maven Central as a particularly informative next ecosystem: its group/artefact coordin-ate scheme and central-repository curation give a different registry-probe semantics from PyPI’s flat namespace, which would stress-test how much of the calibration transfers. Cross-ecosystem generalisation is left to ongoing work. 
+
+LLM panel coverage. Our six-model panel covers four cloud models (Claude-Sonnet-4.6, Mistral-Large, DeepSeek-v4-pro, DeepSeek-R1) and two local open-weight code models (Mistral Codestral, Meta CodeLlama), spanning four developers (Anthropic, Mistral, DeepSeek, Meta). Other closed cloud families (Google Gemini, OpenAI GPT-class models, or Anthropic Opus-class models) are absent due to access and budget constraints at the time of writing and remain a natural extension. The calibration layer is panel-agnostic and the corpus can be re-scored with additional panel models, or entirely a new set in future work. 
+
+# 8 Reproducibility 
+
+We describe the experimental setup in sufficient detail for an independent re-implementation. All pins below trace to artefacts retained in the internal repository at corpus-build time (2026-05-23) and to the inference logs. 
+
+Prompt source. BigCodeBench v0.1.0 hf (the canonical Hugging Face split, 1140 tasks) 5. We stratify across the six library-use categories ( http , ml , numerical , other , security , viz ) at 
+
+seed=20260520 and sample 189 prompts; the stratification reproduces deterministically under the 
+
+> 5https://huggingface.co/datasets/bigcode/bigcodebench
+
+19 same seed. The adversarial complement is the 100 prompts sampled from a 102-prompt pool at 
+
+seed=20260520 .
+
+LLM panel (six models, pinned). 
+
+• claude-sonnet-4.6 via OpenRouter (route anthropic/claude-sonnet-4.6 , accessed 2026-05-20 – 2026-05-22). 
+
+• mistral-large-2411 via OpenRouter (route mistralai/mistral-large-2411 , accessed 2026-05-20 – 2026-05-22). 
+
+• deepseek-v4-pro via the DeepSeek direct API endpoint at https://api.deepseek.com/v1 ,accessed 2026-05-20 – 2026-05-22. 
+
+• deepseek-r1 via OpenRouter (route deepseek/deepseek-r1 , accessed 2026-05-22). 
+
+• codestral:22b , local ollama digest 0898a8b286d5 (pull date 2026-05-16). 
+
+• codellama:7b , local ollama digest 8fdf8f752f6e (pull date 2026-05-17). Inference parameters are locked at temperature = 0 .2, top p = 0 .9, max tokens = 2048, variants = 1. Because temperature-0 .2 sampling is not bit-reproducible across cloud endpoints, reproducibility rests on the frozen corpus : the generated snippets are recorded once at corpus-build time (the per-prompt completions in the inference logs above) and all results trace to that saved corpus rather than to regenerating identical completions. 
+
+PyPI probe snapshot. The strict-registry ground-truth label and the registry channel of vari-ants 1–3 share a single probe layer ( IMPORT TO DISTRIBUTION -aware, Section 5.1) operating against the public PyPI JSON endpoint at https://pypi.org/pypi/<name>/json . The probe snapshot date is pinned to 2026-05-23; a re-probe at a later date may reclassify packages registered in the interim, an effect we discuss in Section 7. The 15-entry alias whitelist is frozen at corpus-build time; extending it would yield strictly ≥ the ground-truth “not-hallucinated” set we report. 
+
+Implementation. The strict-registry detector is a ∼100-line Python script (AST extraction via 
+
+ast-grep , registry probe, Levenshtein-1 neighbour search); the metadata channel adds another 
+
+∼150 lines to read and route PyPI JSON metadata; the calibration layer is the ∼400-line module described in Section 3.4. The evaluation harness, the full labelled corpus, and per-LLM raw outputs are retained internally and may be made available to peer-review programme committees on request, with broader release deferred to the companion artefact submission. The cloud-routed models (Claude-Sonnet-4.6 and Mistral-Large 2411 via OpenRouter; DeepSeek-v4-pro via direct API) are reproducible from any account with the equivalent routes; the two local-ollama models are reproducible from the publicly published GGUF artefacts under the digests above. 
+
+# 9 Conclusion and perspectives 
+
+We have presented a Bayesian calibration layer for slopsquat detection that emits per-detection Beta-posterior probabilities with explicit prior provenance, and extended it with a metadata channel that surfaces registered-but-suspicious packages corresponding to the realistic post-LLM-emission attacker regime. Our empirical evaluation on the full N = 1734 corpus shows that (i) modern code-specialised LLMs on realistic-use prompts produce strict-hallucination slopsquats at near-zero rate once import-name aliases are accounted for; (ii) the metadata channel introduces a statistically significant discordance against the strict-registry detector (McNemar b = 10, c = 0, 
+
+p = 0 .0020), the empirical lever that justifies calibration over a simple binary flag; and (iii) the calibrated confidences are well behaved, with flagged-subset ECE (0 .016 / 0 .029) and a strictly proper full-corpus Brier score ( ≈ 0.022) both well inside conventional thresholds across detection channels. Several directions extend this work naturally: cross-ecosystem generalisation to npm, crates.io, Go module and Java/Maven Central registries; an end-to-end pipeline coupling detection with remediation and provenance attestation; probabilistic verification of the cat. 3 → cat. 2 → cat. 1 20 promotion machine (Section 3.3) as a model-checking property; and adversarial robustness studies of calibration under adaptive priors. We see the calibration primitive as a building block for risk-aware AI-assisted software supply-chain defence, complementary to detection mechanisms targeting other classes of LLM-induced supply-chain risk. 
+
+Acknowledgements 
+
+This work was carried out as part of the NewCo Partners research programme on software quality and security for AI-assisted software development. The calibrated detection primitive presented here is one contribution to that programme. 
+
+# References 
+
+[1] ast-grep contributors. ast-grep: structural code search and rewrite for many languages. https: //ast-grep.github.io/ . Accessed 2026-05-16. [2] Christel Baier and Joost-Pieter Katoen. Principles of Model Checking . MIT Press, 2008. [3] Adrian Bridgwater. Morally repugnant shortsightedness: Why open source security leaders say companies must stop freeloading on maintainers. https://thenewstack.io/openssf-o pen-source-security-members/ , May 2026. The New Stack, 21 May 2026. Includes state-ments from Steve Fernandez (OpenSSF), Willem Delbare (Aikido Security), Igor Seletskiy (TuxCare), Kat Cosgrove (Minimus), and Leslie Pascual (ActiveState). [4] Glenn W. Brier. Verification of forecasts expressed in terms of probability. Monthly Weather Review , 78(1):1–3, 1950. [5] Ruian Duan, Omar Alrawi, Ranjita Pai Kasturi, Ryan Elder, Brendan Saltaformaggio, and Wenke Lee. Towards measuring supply chain attacks on package managers for interpreted languages. In Proceedings of the 28th Network and Distributed System Security Symposium (NDSS) , 2021. [6] Valerie L. Durkalski, Yuko Y. Palesch, Stuart R. Lipsitz, and Philip F. Rust. Analysis of clustered matched-pair data. Statistics in Medicine , 22(15):2417–2428, 2003. [7] Michael Eliasziw and Allan Donner. Application of the McNemar test to non-independent matched pair data. Statistics in Medicine , 10(12):1981–1991, 1991. [8] Morten W. Fagerland, Stian Lydersen, and Petter Laake. The McNemar test for binary matched-pairs data: mid-p and asymptotic are better than exact conditional. BMC Medical Research Methodology , 13:91, 2013. [9] Carlo A. Furia, Robert Feldt, and Richard Torkar. Bayesian data analysis in empirical software engineering research. IEEE Transactions on Software Engineering , 47(9):1786–1810, 2021. [10] Chuan Guo, Geoff Pleiss, Yu Sun, and Kilian Q. Weinberger. On calibration of modern neural networks. In Proceedings of the 34th International Conference on Machine Learning (ICML) ,pages 1321–1330. PMLR, 2017. [11] Steffen Herbold, Alberto De Francesco, Jens Grabowski, Patrick Harms, Lom-Messan Hillah, Fabrice Kordon, Ariele-Paolo Maesano, Libero Maesano, Claudia Di Napoli, Fabio De Rosa, Martin A. Schneider, Nicola Tonellotto, Marc-Florian Wendland, and Pierre-Henri Wuillemin. The MIDAS cloud platform for testing SOA applications. In 2015 IEEE 8th International Conference on Software Testing, Verification and Validation (ICST) , pages 1–8, 2015. 21 [12] Lom-Messan Hillah, Ariele-Paolo Maesano, Fabio De Rosa, Fabrice Kordon, Pierre-Henri Wuillemin, Riccardo Fontanelli, Sergio Di Bona, Davide Guerri, and Libero Maesano. Auto-mation and intelligent scheduling of distributed system functional testing – Model-based func-tional testing in practice. International Journal on Software Tools for Technology Transfer ,19(3):281–308, 2017. [13] Lom-Messan Hillah, Ariele-Paolo Maesano, Libero Maesano, Fabio De Rosa, Fabrice Kordon, and Pierre-Henri Wuillemin. Service functional testing automation with intelligent scheduling and planning. In Proceedings of the 31st Annual ACM Symposium on Applied Computing (SAC ’16) , pages 1605–1610, 2016. [14] Sabrina Kaniewski, Fabian Schmidt, Markus Enzweiler, Michael Menth, and Tobias Heer. A systematic literature review on detecting software vulnerabilities with large language models. 
+
+ACM Transactions on Software Engineering and Methodology , 2026. Accepted April 2026. arXiv:2507.22659. Repository: https://github.com/hs-esslingen-it-security/Awesom e-LLM4SVD .[15] Daphne Koller and Nir Friedman. Probabilistic Graphical Models: Principles and Techniques .MIT Press, 2009. [16] Leslie Lamport. Specifying Systems: The TLA + Language and Tools for Hardware and Soft-ware Engineers . Addison-Wesley, 2002. [17] Jiawei Liu, Tianyang Chen, Chenxiao Wang, Yufei Ding, Wei Du, Yulei Sui, and Lingming Wang. BigCodeBench: Benchmarking code generation towards real-world software engineer-ing. In Proceedings of the 13th International Conference on Learning Representations (ICLR) ,2025. Repository: https://github.com/bigcode-project/bigcodebench .[18] Adiba Mahmud, Yasmeen Rawajfih, and Ross Arnold. Trust-calibrated multi-stage large lan-guage model pipeline for vulnerability assessment in DevSecOps workflows. In Proc. ACSAC Workshops , 2025. [19] Quinn McNemar. Note on the sampling error of the difference between correlated proportions or percentages. Psychometrika , 12(2):153–157, 1947. [20] OpenSSF Vulnerability Disclosures Working Group. Open source vulnerability (OSV) Schema. 
+
+https://ossf.github.io/osv-schema/ , 2021–2026. Canonical schema specification, ori-ginally announced by Google in June 2021. Adopted by ≥ 24 ecosystems; consumed by OSV-Scanner and the OSV API at https://osv.dev .[21] Hammond Pearce, Baleegh Ahmad, Benjamin Tan, Brendan Dolan-Gavitt, and Ramesh Karri. Asleep at the keyboard? assessing the security of GitHub Copilot’s code contributions. In 
+
+Proceedings of the 44th IEEE Symposium on Security and Privacy (S&P) , 2023. [22] Judea Pearl. Probabilistic Reasoning in Intelligent Systems: Networks of Plausible Inference .Morgan Kaufmann, 1988. [23] Neil Perry, Megha Srivastava, Deepak Kumar, and Dan Boneh. Do users write more insecure code with AI assistants? In Proceedings of the 32nd USENIX Security Symposium , 2023. [24] Md Bajlur Rashid, Mohammad Shafayet Jamil Hossain, Mohammad Ishtiaque Khan, Shara-ban Tahora, Aiasha Siddika, Mahmudul Islam Prakash, Sharmin Yeasmin, and Hossain Shahriar. A survey on large language models in software security: Opportunities and threats. 
+
+Computers , 15(4):226, 2026. 22 [25] Socket Threat Research Team. The rise of slopsquatting: How AI hallucinations are fueling a new class of supply chain attacks. https://socket.dev/blog/slopsquatting-how-a i-hallucinations-are-fueling-a-new-class-of-supply-chain-attacks , April 2025. Published 8 April 2025. The term “slopsquatting” was coined by Seth Larson (Python Software Foundation Developer-in-Residence) and popularised by Andrew Nesbitt on Mastodon ( http s://fosstodon.org/@andrewnez@mastodon.social/114302875123810927 ). [26] Joseph Spracklen, Raveen Wijewickrama, A. H. M. Nazmus Sakib, Anindya Maiti, Bimal Viswanath, and Murtuza Jadliwala. We have a package for you! a comprehensive analysis of package hallucinations by code-generating LLMs. In Proc. USENIX Security Symposium ,2025. [27] Santiago Torres-Arias, Hammad Afzali, Trishank Karthik Kuppusamy, Reza Curtmola, and Justin Cappos. in-toto: Providing farm-to-table guarantees for bits and bytes. In Proceedings of the 28th USENIX Security Symposium , 2019. [28] Nikolai Philipp Tschacher. Typosquatting in programming language package managers. Master’s thesis, University of Hamburg, Department of Informatics, June 2016. https: //incolumitas.com/2016/06/08/typosquatting-package-managers/ .[29] Markus Zimmermann, Cristian-Alexandru Staicu, Cam Tenny, and Michael Pradel. Small world with high risks: A study of security threats in the npm ecosystem. In Proceedings of the 28th USENIX Security Symposium , 2019. 23

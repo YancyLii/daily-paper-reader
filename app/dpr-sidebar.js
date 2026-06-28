@@ -259,7 +259,7 @@
   }
   function rerenderOptionsForStatusClick() {
     return {
-      syncActive: true,
+      syncActive: false,
       centerActive: false,
       autoMark: false,
       preserveScroll: true,

@@ -322,7 +322,7 @@ function testSidebarUtilityHelpers() {
   });
   assert.equal(typeof tools.rerenderOptionsForStatusClick, 'function');
   assert.deepEqual(tools.rerenderOptionsForStatusClick(), {
-    syncActive: true,
+    syncActive: false,
     centerActive: false,
     autoMark: false,
     preserveScroll: true,

@@ -179,6 +179,7 @@
 - **Gist 分享**：`gist-share-utils.js`，一键发 GitHub Gist
 - **入口**：`index.html` 两阶段资源加载（CDN/本地），splash + secret gate
 - **侧边栏未读提示约定**：未读红点只标在单篇论文行右上角；二级/三级标签只显示未读/总数数字，不额外打红点。
+- **资源加载约定**：默认只允许 `app/vendor/` 第三方资源走 CDN；项目自有 `app/*.js` / `app/*.css` 必须走当前站点本地文件，避免 CDN 旧缓存掩盖前端改动。
 
 ### 13. CI/CD + 本地调试
 

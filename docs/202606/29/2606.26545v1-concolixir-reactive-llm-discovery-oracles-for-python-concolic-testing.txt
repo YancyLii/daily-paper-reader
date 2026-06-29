@@ -1,0 +1,517 @@
+Title: ConcoLixir: Reactive LLM Discovery Oracles for Python Concolic Testing
+
+URL Source: https://arxiv.org/pdf/2606.26545v1
+
+Published Time: Fri, 26 Jun 2026 00:25:14 GMT
+
+Number of Pages: 21
+
+Markdown Content:
+# ConcoLixir : Reactive LLM Discovery Oracles for Python Concolic Testing ⋆
+
+Dong Chen, Chih-Duo Hong, and Fang Yu 
+
+Department of Management Information Systems National Chengchi University Taipei, Taiwan 
+
+Abstract. Concolic testing combines concrete execution with symbolic constraint solving, but Python programs expose recurring limits. Library calls can cause symbolic variables to downgrade to concrete values. Reg-ular expressions, checksums, parsers, and other semantic operations can be hard to solve, and exploration can plateau on already covered paths. We present ConcoLixir , a reactive LLM extension for Python concolic execution. The LLM acts as a discovery oracle, not a replacement for the solver or a correctness oracle. It generates initial seeds, proposes concrete inputs after solver failures, and targets uncovered code when coverage stalls. Each candidate is executed concolically, and only ob-served coverage and collected path constraints guide later exploration. Across synthetic, real-world, and library targets, ConcoLixir improves mean line coverage over the baseline concolic tester without an LLM ora-cle by 8.6, 15.1, and 17.0 percentage points. The gains are strongest near semantic barriers and library boundaries, and the full evaluation costs $1.63 in API charges. These results show that bounded LLM discovery can complement symbolic reasoning without replacing it. 
+
+Keywords: Concolic testing · LLM · Test generation · Code coverage 
+
+## 1 Introduction 
+
+Concolic testing [26] generates tests by running a program on a concrete input, tracking symbolic path constraints at each branch, and asking a Satisfiability Modulo Theories (SMT) solver to create new inputs by negating selected con-straints. This coverage-driven loop repeats until all reachable paths are explored or the budget runs out, as summarized in Figure 1. Concolic testing has found defects in systems ranging from operating sys-tems [3] to network protocols [13], and it is also used in modern test genera-tion pipelines [28,33]. Python concolic tools, including PyCT , CrossHair , and  
+
+> ⋆
+
+This work was partially supported by the National Science and Technology Coun-cil (NSTC), Taiwan, under grant numbers 113-2221-E-004-010-MY2, 112-2222-E-004-001-MY3, and 114-2634-F-004-002-MBK. Chih-Duo Hong and Fang Yu are the corresponding authors. 
+
+> arXiv:2606.26545v1 [cs.SE] 25 Jun 2026
+
+2 D. Chen et al. Target Function 
+
+> Current Input
+> Exploration Budget
+> Campaign Setup
+> Execute program; add path constraints to a pool
+> Select and negate next path constraint
+> SMT solver
+> Concolic Engine
+> Yes
+> Full coverage reached?
+> Update test input
+> Terminate
+> Stop if constraint pool is empty or budget is exhausted
+> No
+> No satisfiable new input
+
+Fig. 1. Baseline concolic testing loop driven by coverage. Starting from a current in-put, the engine executes the target and collects path constraints, selects and negates an unexplored path constraint, invokes the SMT solver to generate a new input when satisfiable, and repeats until full coverage is reached or the constraint pool or explo-ration budget is exhausted. 
+
+PyExZ3 [2,6,25], adapt this technique through object-oriented concolic substitu-tion [2], where each primitive argument is replaced by a proxy object that carries both a concrete value and a symbolic expression over the input variables. On Python programs from real projects, however, this approach faces three recurring challenges: 
+
+C1: Symbolic Downgrading. Python programs often call external functions, including standard library routines and external packages, that may accept con-colic arguments but return plain Python values. At these call boundaries, the symbolic expression is discarded and replaced by a concrete value, leaving later branches that depend on the return value without symbolic annotations for the SMT solver. For example, when a username validation function calls an unsup-ported string function, the operations run concretely inside the external function, and the symbolic expression for the string argument is lost. 
+
+C2: Constraints the Solver Cannot Handle Well. Even when symbolic infor-mation is preserved, many paths in real code contain operations that the solver cannot handle well, leading to Unknown results, timeouts, or inaccurate mod-els of library behavior. Modern solvers support integers, bitvectors, and basic string operations, but regex matching, JSON parsing, base64 decoding, and hash computations often fall outside that model, so the corresponding path remains unexplored. 
+
+C3: Coverage Plateaus. Even when the solver succeeds, its new inputs may follow paths whose branches are already covered, so the constraint pool keeps ConcoLixir 3Constraints          
+
+> Y
+> Y
+> Stage 1: Static Analysis & Seed Generation
+> Target
+> Function
+> Source, Types, CFG Call Graph, Boundaries
+> AST-based
+> Analysis
+> Seed
+> Input
+> LLM Seed
+> Generation
+> Stage 2: Enhanced Concolic Loop
+> Seed Input Pool
+> Exit
+> Seed Input Execution (PyCT) Constraint Pool Seed Input Pool Constraints
+> UNKNOWN
+> Result
+> UNSAT
+> LLM Solver Discovery
+> Constraints
+> Concolic
+> Execution
+> (PyCT)
+> no improvement for τ iterations LLM Plateau Discovery Improved
+> Clear Pool
+> Post-Loop Discovery Improved N
+> SMT Solver
+> Coverage SAT
+
+Fig. 2. ConcoLixir exploration flow. The SMT solver is consulted first. ConcoLixir 
+
+uses three LLM roles (shaded boxes): seed generation, discovery after solver failure, and plateau discovery. The plateau role has two dispatch sites, one in the loop and one after the loop. 
+
+shrinking without coverage growth and exploration stalls before reaching the iteration budget. These obstacles compound because symbolic downgrading removes branch predicates from the solver, while unsupported operations prevent the remain-ing predicates from being solved. Together, they make stale iterations more likely, since the search can keep revisiting already covered paths. Prior work addresses these problems separately. PyCT [6] reduces downgrading through runtime function profiling but does not help when the solver times out or cov-erage stalls. Driller [28] and QSYM [33] break plateaus through mutation but target binary programs. LLM test generation [8, 17] treats the LLM as a standalone generator rather than integrating it into the concolic loop. This combination raises whether an LLM can be integrated into the inner loop of a concolic engine to mitigate recurring instances of all three challenges without replacing symbolic execution. The answer is not obvious because LLMs are not guaranteed to be correct, their outputs vary across calls, and API latency adds time to an already time critical loop. If the LLM produces unhelpful inputs, it consumes budget that the solver could have used. The key insight is that the LLM can be useful without solving symbolic con-straints, as long as it discovers concrete inputs that cross semantic barriers such as regular expressions, parsers, checksum checks, and opaque library calls. Once such an input reaches new code, ordinary concolic execution can resume system-atic path exploration. Figure 2 shows how this discovery role is integrated into the concolic loop. We therefore call the LLM a discovery oracle , using oracle in the narrow sense of a generator of candidate concrete inputs rather than a 4 D. Chen et al. 
+
+trusted solver for path constraints. The LLM does not decide path feasibility, program correctness, or coverage. Those decisions remain with execution, cover-age measurement, and the solver, and only candidates that improve coverage or add useful constraints affect later exploration. We present ConcoLixir , which uses a reactive integration strategy that keeps the SMT solver as the main reasoning engine during exploration. Before exploration begins, the LLM generates seed inputs to populate the constraint pool and help cross opaque library boundaries the solver cannot observe (C1). During exploration, the LLM is called only after Unknown /Error solver re-sults (C2) or coverage plateaus (C3). Each suggested input is executed concol-ically, producing new path constraints that the solver can use later. Plateau calls and calls after the loop stop as soon as they fail to improve coverage, and discovery after solver failure remains bounded by the global concolic iteration budget. We evaluate ConcoLixir on 22 designed benchmarks, 22 library functions from real projects, and 75 automatically selected library entry points. Compared with Concolic-Only , ConcoLixir improves mean coverage by 8.6, 15.1, and 17.0 pp on these groups, with smaller gains where the solver already suffices and larger gains on code from real projects and on library code. A few regressions (B03, B15, B16 in Section 4.5) come from changes in exploration order caused by seeds under the fixed iteration budget, not from solver unsoundness. Across all target groups, the evaluation over 1,190 target runs costs $1.63 in API charges with gpt-4o-mini-2024-07-18 .In summary, we make the following contributions: 1. We introduce ConcoLixir , a reactive architecture for Python concolic test-ing with LLM support, where the LLM proposes concrete candidate inputs while PyCT remains responsible for execution, validation, constraint collec-tion, and exploration driven by the solver. 2. We design an oracle escalation hierarchy that invokes the LLM only for seeds before the loop, solver failures, and coverage plateaus. Plateau calls and calls after the loop stop after a round that does not improve coverage. Discovery after solver failure is bounded by the main loop, and mini exploration after the loop is bounded separately. 3. We evaluate the design on 22 designed benchmarks, 22 library functions from real projects, and 75 automatically selected library entry points from  
+
+> sympy.ntheory
+
+and PyYAML. The results show where the integration helps most: targets with parsers, regular expressions, checksums, structured inputs, and opaque library boundaries. The rest of the paper is organized as follows. Section 2 reviews related work. Section 3 presents the system design. Section 4 summarizes the evaluation, in-cluding the experimental architecture and results, and Section 5 discusses limi-tations and concluding remarks. ConcoLixir 5
+
+## 2 Related Work 
+
+Symbolic and Concolic Execution. Symbolic execution is a standard way to explore program paths systematically [5]. DART [12] and CUTE [27] intro-duced concolic testing. EXE [4], KLEE [3], and SAGE [13] scaled it to large C programs, and Mayhem [1] showed its value at competition scale. Modern compiler-based engines such as SymCC [24] achieve high throughput by adding symbolic tracking directly to compiled code. SMT solvers including Z3 [7] and 
+
+CVC5 are central to these systems. Python tools including PyCT , CrossHair ,and PyExZ3 [2, 6, 25] adapt concolic testing through object-oriented substitu-tion [2], but symbolic downgrading at external function boundaries still limits them. 
+
+Model Robustness Testing and Verification. A related line of work ap-plies formal or concolic methods to properties of learned models rather than coverage of ordinary Python functions. Recent systems use concolic testing to search for individual fairness violations in neural networks [16] and adversarial examples in Transformer classifiers [15]. Other robustness work verifies recur-rent neural networks through abstraction refinement [19] or symbolic surrogate extraction [14]. These studies share the broader goal of combining concrete obser-vations with symbolic reasoning, but their targets and properties differ from our setting: ConcoLixir explores Python function inputs to improve line coverage, not neural-network robustness specifications. 
+
+Fuzzing and Search Based Testing. Driller [28] and QSYM [33] combine concolic engines with greybox fuzzers such as AFL++ [10] for binary programs. Search based and property based tools such as Pynguin [20], EvoSuite [11], and Hypothesis [22] generate tests through genetic algorithms or random ex-ploration. Pynguin also won the SBFT Python competition [9]. These tools generate complete test suites with assertions. They work at the test suite level rather than the single function input level. Their coverage metrics measure test suite adequacy, not path exploration completeness. For this reason, these tools are related systems rather than direct baselines for our single function concolic setting. The hybrid fuzzing tools ( Driller , QSYM ) target compiled code and share constraints between fuzzer and solver. They do not address the inter-preted language challenges that arise in Python, such as symbolic downgrading and opaque library boundaries. 
+
+LLM Test Generation. TitanFuzz [8] uses LLMs to generate seed programs for fuzzing deep learning libraries. CodaMOSA [17] interleaves LLM generated tests with search based generation when coverage plateaus, but the LLM and the search engine operate independently. Each produces test cases without shar-ing symbolic constraints or path information. CoverUp [23] drives LLM test generation with iterative coverage feedback. LLM-Sym [31] translates Python path constraints into Z3 code, extending symbolic execution to list operations. These approaches treat the LLM as a standalone generator or translator. The LLM does not participate in the concolic loop or share state with the solver. 
+
+Concolic Execution with LLM Integration. Recent work integrates LLMs into concolic testing in different ways. ConcoLLMic [21] replaces the symbolic 6 D. Chen et al. 
+
+Table 1. Comparison with approaches that use LLMs in test generation.                              
+
+> Tool LLM role Target Invocation and control
+> LLM as primary test generator
+> TitanFuzz [8] seed gen. Python/DL pre-run; primary generation
+> CodaMOSA [17] test gen. Python plateau; primary generation
+> CoverUp [23] test gen. Python coverage feedback; primary generation
+> LLM replaces or translates for the solver
+> LLM-Sym [31] translator Python per translation; no coverage gate
+> ConcoLLMic [21] agent loop multi-lang. per iteration; no coverage gate
+> CottonTail [29] prot. solver binary per constraint; no coverage gate
+> LLM assists the solver (this work)
+> ConcoLixir reactive oracle Python seed; solver failure; coverage-gated plateau
+
+“gen.” = generator. “prot.” = proactive. Calls gated by coverage stop after no improvement. Discovery after solver failure is limited by the iteration budget. 
+
+engine with LLM agents. One agent summarizes execution traces into natural language or source level path constraints. Another agent generates test inputs that satisfy those constraints. This design is agnostic to programming language because the LLM can reason about any language without a dedicated symbolic backend. However, it uses the LLM heavily. Each test input iteration calls mul-tiple agents to summarize a path constraint and synthesize a satisfying input, leading to 48 h per subject with claude-3.7-sonnet. AutoBug [18] similarly re-places the solver by breaking path analysis into subtasks for the LLM. 
+
+CottonTail [29] takes a proactive approach. Its LLM-driven constraint solver uses a Solve-Complete paradigm to generate valid structured inputs for parsers (XML, SQL, JavaScript, JSON). It queries the LLM for every constraint and also for seed acquisition when coverage saturates. Both ConcoLLMic and 
+
+CottonTail operate on compiled programs. In that setting, library functions are compiled into the analysis, so symbolic downgrading at external function boundaries does not arise. Their instrumentation and pipelines for extracting constraints target compiled binaries. A direct empirical comparison is outside the scope of this study because their published pipelines target compiled settings and would require a different front end for interpreted Python functions. Table 1 summarizes the comparison. ConcoLixir takes a different approach for Python. It does not ask the LLM to formulate or solve constraints. Instead, it uses the LLM to find inputs that cross code regions the SMT solver cannot reach, such as opaque library calls, constraints the solver cannot handle well, and coverage plateaus. PyCT then executes these inputs concolically. This execution walks the newly reachable paths and collects path constraints that the solver can 
+
+handle. The LLM does not replace the solver. It moves the engine past barriers so that the solver can resume useful exploration on the other side. 
+
+## 3 System Design 
+
+Figure 2 shows the complete exploration flow. The shaded boxes mark three LLM roles: seed generation before the main loop, discovery after solver failure during ConcoLixir 7
+
+the loop, and plateau discovery. The plateau role has two dispatch sites. It is triggered in the loop when coverage stalls and after the loop for any remaining gaps. 
+
+3.1 System Overview 
+
+ConcoLixir extends PyCT [6], a Python concolic testing engine that imple-ments object-oriented concolic substitution [2]. Each primitive argument is re-placed by a proxy object (e.g., ConcolicInt , ConcolicStr ). The proxy carries both a concrete value and a symbolic expression. At every branch point, the proxy’s  
+
+> __bool__
+
+method records the branch predicate as a path constraint. The engine keeps a constraint pool. It explores the pool in breadth first order by negating a constraint, calling the SMT solver ( CVC5 ), and executing the resulting input. 
+
+ConcoLixir extends this engine through a plugin interface. The kernel sends each LLM role to the plugin as a named event. The plateau role is split into two dispatch sites: one trigger in the loop and one push after the loop. As shown in Figure 2, the system has two stages. Stage 1 performs static analysis and one LLM seed generation call before exploration begins. Stage 2 runs the enhanced concolic loop. It routes solver failures and coverage plateaus to the LLM, then runs a plateau discovery push after the loop to close any remaining gaps. The key design principle is the oracle escalation hierarchy . During exploration, the SMT solver is tried first. LLM discovery is used only when solver progress fails or coverage stalls. LLM calls for plateaus stop as soon as they fail to improve coverage. 
+
+3.2 Stage 1: Static Analysis and Seed Generation 
+
+Before any execution begins, an AST based static analysis extracts three kinds of information from the target function and its reachable callees up to a configurable depth. The analysis results are formatted into structured text for inclusion in LLM prompts. 
+
+– Call graph. The analysis resolves function calls within the project boundary. It collects each callee’s source code, signature, and call depth. Calls that can-not be resolved, such as external libraries and builtins, are recorded but not followed. 
+
+– Branch conditions and boundary values. For every reachable function, the AST visitor extracts all if /while /assert conditions as source text. It also collects numeric and string literals from comparison operators. These boundary values, such as threshold constants and enum strings, are aggregated across the entire call graph. 
+
+– Control flow graph. A CFG is extracted with nodes for each statement type, including if , while , for , return , and assignments. Its edges are labeled true ,
+
+false , or unconditional . The CFG enumerates up to 50 acyclic execution paths. When coverage data is available, the CFG can be filtered to show only paths that reach specific uncovered lines. 8 D. Chen et al.                                                                        
+
+> #Task : Generate test inputs for maximum coverage . ## Source Code : 1| def func ( param1 : str , param2 : int ): 2| if check ( param1 ): #branch A... ## Type Context : -param1 : str -param2 : int ( range : 0..100) ## Control Flow Graph : Path 1: entry -> line 2( true ) -> line 3Path 2: entry -> line 2( false ) -> line 5## Call Graph ( branch conditions ): check (): contains " param1 in valid_set " Boundary values : 0, 50 , 100 , " admin " ## Output : Return aPython list of dicts : [{" param1 ": ... , " param2 ": ...} , ...]
+
+Fig. 3. Abstract structure of a seed generation prompt. Live prompts include the full source code, complete CFG, and extracted boundary values. 
+
+Once the static analysis completes, the LLM generates seed inputs that target all reachable lines. The prompt uses five context elements from the static analysis output. These are the function’s source code with line numbers, type context with parameter types and custom type definitions, the CFG with execution paths, the call graph with branch conditions and boundary values from reachable callees, and instructions to cover all branches and boundary values. The engine assembles these five elements into a prompt and sends it to the LLM (Figure 3). The prompt asks the model to return a Python list of dictio-naries inside a fenced code block. The response is parsed with ast.literal_eval .A restricted eval fallback handles literals such as "a" * 5 that ast.literal_eval 
+
+rejects. Any unparseable response is discarded. Unlike random seed generation, the model receives the full call graph context and tries to construct a small covering set. Algorithm 1 summarizes the complete campaign. Static analysis feeds seed generation. LLM seeds populate the constraint pool. The main loop tries the solver first and calls the LLM only on solver failure or coverage plateau. A final phase after the loop targets any remaining uncovered code. 
+
+TryCandidates executes each syntactically valid LLM candidate that is absent from T . Each candidate runs concolically, updates W and T , and returns true iff at least one execution increases line coverage. Coverage (f ) is the same line coverage measure used in the evaluation. It is only a progress signal, not a correctness oracle. UpdateStale returns 0 after coverage growth and stale + 1 
+
+otherwise. In our configuration, C.τ = 5 , C.r = 3 , C.m = 20 , and C. maxIter =50 .LLM candidates are ordinary concrete inputs. They are checked by concolic execution, added to T only when valid and new, and may add path constraints to W . The LLM never marks a path feasible or infeasible. Plateau discovery ConcoLixir 9
+
+Algorithm 1 ConcoLixir Exploration Campaign 
+
+Require: target function f , default argument map a0, configuration C
+
+Ensure: final line coverage for f after the bounded exploration campaign 1: {Pre-loop seed discovery uses static context to cross early barriers.} 2: G ← StaticAnalysis (f )
+
+3: S ← LlmSeedGeneration (f, G )
+
+4: W ← ∅ ; T ← { a0}; stale ← 0
+
+5: for each s ∈ S do 
+
+6: ConcolicExec (f, s, W ); T ← T ∪ { s}
+
+7: end for 
+
+8: {Main loop keeps the SMT solver first and escalates only on stalls.} 9: for iter = 1 to C. maxIter do 
+
+10: if W = ∅ or FullCoverage (f ) then break 
+
+11: if stale ≥ C.τ then 
+
+12: W ← ∅ ; M ← UncoveredLines (f )
+
+13: X ← LlmPlateau (f, M, T )
+
+14: if ¬TryCandidates (X, f, W, T ) then break 
+
+15: stale ← 0; continue 
+
+16: end if 
+
+17: ϕ ← Pop (W ); (σ, ρ ) ← SmtSolve (ϕ)
+
+18: if ρ ∈ { Unknown , Error } then 
+
+19: X ← LlmSolverDiscovery (f, UncoveredLines (f ), T )
+
+20: if TryCandidates (X, f, W, T ) then stale ← 0
+
+21: continue {iteration-bound oracle} 22: end if 
+
+23: if ρ = Unsat then continue {infeasible path} 24: a ← Merge (a0, σ ); if a ∈ T then continue 
+
+25: cov ← Coverage (f ); ConcolicExec (f, a, W ); T ← T ∪ { a}
+
+26: stale ← UpdateStale (f, cov , stale )
+
+27: end for 
+
+28: {Post-loop discovery spends a small solver budget on remaining gaps.} 29: for round = 1 to C.r do 
+
+30: M ← UncoveredLines (f ); if M = ∅ then break 
+
+31: X ← LlmPlateau (f, M, T ) {post-loop discovery} 32: if ¬TryCandidates (X, f, W, T ) then break 
+
+33: MiniExplore (f, W, T, C.m )
+
+34: end for 
+
+35: return Coverage (f )
+
+and discovery after the loop require a coverage increase to continue. Discovery after solver failure may collect constraints even from a candidate that does not improve coverage, but the stale counter resets only on coverage growth. 
+
+3.3 Stage 2: Enhanced Concolic Loop 
+
+The main loop receives the constraint pool W , already populated by seeds, and the set of tried inputs T . Each iteration exits if W is empty or full coverage is reached. If the stale counter reaches τ , the engine flushes W and enters plateau discovery . The LLM receives annotated source, CFG paths toward uncovered 10 D. Chen et al. 
+
+lines, and recent tried inputs. TryCandidates then checks whether any re-turned candidate improves coverage. A successful batch resets the stale counter. A batch with no coverage gain stops the loop. Otherwise, the engine pops a path constraint ϕ and calls the SMT solver. 
+
+Unknown or Error triggers discovery after solver failure : the LLM sees the source and current coverage gaps, proposes a concrete input, and concolic ex-ecution may add new constraints to W . The LLM is not asked to solve the failed formula. Unsat paths are skipped. For Sat , the model is merged with a0,executed if new, and used to update the stale counter by observed line coverage. After the main loop, a discovery push after the loop targets remaining uncov-ered lines for up to r rounds. An LLM round that improves coverage is followed by MiniExplore , which spends at most C.m solver iterations on constraints collected from those candidates. A round with no improvement stops the push. Thus, the LLM call budget has three parts: one seed call, plateau calls and calls after the loop that require coverage improvement, and calls after solver failure bounded by C. maxIter (50). The mini exploration runs after the main loop for up to C.r rounds only when the last LLM candidate batch improves coverage. 
+
+## 4 Evaluation 
+
+We evaluate ConcoLixir along three research questions: 
+
+– RQ1 : How does ConcoLixir compare to Concolic-Only , LLM seed exe-cution without symbolic follow up, and CrossHair in terms of line coverage? 
+
+– RQ2 : On which categories of functions does LLM integration provide gains, and where is the solver alone sufficient? 
+
+– RQ3 : What is the wall clock time and API cost overhead of LLM integration? Across evaluation tables, CL and CO denote ConcoLixir and Concolic-Only , respectively. LO and CH denote LLM-Seeds-Only and CrossHair ,respectively. All experiments ran on an AMD Ryzen 7700 CPU with 32 GB RAM. Each run uses max_iterations=50 and a 90 second watchdog for each tar-get subprocess. The SMT backend is CVC5 1.1.2 with a 15 second timeout per constraint. The LLM backend is gpt-4o-mini-2024-07-18 at temperature 0.7. Re-ported time is total campaign time, including controller overhead, LLM latency, subprocess management, and checkpoint recovery, so some means can exceed 90 seconds. ConcoLixir also includes bounded candidate executions triggered by the LLM and up to three discovery rounds after the loop, each followed by at most 20 mini exploration solver iterations only after an LLM round that im-proves coverage. Results are averaged over N = 10 trials. The artifact, including benchmarks and scripts, will be made public upon acceptance. 
+
+4.1 Architecture 
+
+ConcoLixir is implemented as an LLM plugin on top of the PyCT [6] concolic engine. PyCT still handles symbolic execution, constraint solving, and coverage ConcoLixir 11 
+
+Table 2. Benchmark suite. Each function accepts primitive or structured inputs and returns a string classification. LoC counts the function body only. 
+
+Category ID Function LoC Functionality 
+
+Pure Numeric B01 triangle_classification 39 Classify triangle by shape and angle type B02 tax_bracket_calculator 37 Determine marginal tax bracket by income and filing status B03 bmi_risk_classifier 38 Compute BMI and map to WHO risk category String Constr. B04 email_validation 90 Validate email format, TLD classification, disposable detection B05 url_routing 104 Route URL by protocol, host, path segments, and query params B06 semver_parsing 86 Parse semantic version with prerelease and build metadata B07 log_level_routing 88 Detect log format (JSON/syslog/CSV/plain) and route by severity Library Black Box B08 json_config_validation 91 Parse JSON and validate keys, types, nested settings B09 regex_data_extraction 80 Detect phone/email/date/IP/UUID via regex in free text B10 datetime_classification 92 Parse dates across ISO/US/EU formats, classify by calendar Hash/Encoding B11 credit_card_validation 92 Validate card number by prefix, length, and Luhn checksum B12 base64_payload_classif. 74 Decode base64 and classify content (JSON/XML/CSV/binary) Mixed Synergy B13 http_request_classif. 62 Classify HTTP request by method, path, and content length B14 discount_engine 69 Apply coupon codes and quantity-based bulk discounts B15 access_control_checker 56 Decide role/resource/trust-level access permissions B16 shipping_rate_calculator 56 Classify shipment by weight, zone, and speed into rate tiers Complex Struct. B17 nested_config_validator 78 Validate multi-level config dict with cross-field dependencies B18 transaction_ledger_analysis 72 Analyze transaction list with running balance and anomaly detection Deep Path Dep. B19 state_machine_validator 52 Validate event sequence against order lifecycle state machine B20 multi_stage_form_valid. 82 Validate pipe-delimited form data through 4 sequential stages Solver-Hard B21 string_similarity_classif. 59 Compare strings by sorting, reversal, prefix, and edit distance B22 pattern_matching_disp. 74 Match glob-style patterns with wildcards and character classes 
+
+22 functions, 37–104 LoC (avg. 70). Categories reflect common failure modes in concolic testing [3, 6, 28]. 
+
+tracking. The plugin exposes three LLM roles: seed generation, discovery after solver failure, and plateau discovery, with plateau discovery dispatched both in the loop and after the loop. 12 D. Chen et al. 
+
+Table 3. Real-world benchmark results.                                                                                                                            
+
+> Library Function LoC CL CO LO CH
+> werkzeug options_hdr 94 95.2 50.0 81.9 59.6 range_hdr 50 93.1 82.7 81.7 0.0 content_range 44 90.0 61.3 86.1 19.4 dict_hdr 45 96.5 74.2 94.8 83.9 list_hdr 44 100 85.7 100 100
+> cookie 28 72.1 69.0 71.7 0.0 validators url 84 62.2 52.4 55.1 0.0 email 77 56.1 37.9 48.6 34.5 hostname 76 60.5 53.5 54.2 0.0 domain 49 54.2 41.8 51.6 0.0 ru_inn 50 53.2 41.9 51.6 53.2
+> fr_ssn 40 47.7 35.4 47.7 0.0 ipv4 49 48.9 41.0 48.0 42.6 country_code 43 48.8 49.2 43.1 0.0 phonenumbers parse 130 78.5 64.1 52.9 0.0 possible_num 25 76.4 47.6 54.4 0.0 urllib.parse urlsplit 49 75.9 72.9 20.7 0.0 quote 44 80.3 71.1 61.3 17.4 urlencode 60 79.4 52.2 60.8 14.1 parse_qs 32 73.8 62.1 73.1 0.0 simplejson loads 65 80.7 55.2 64.2 25.4 dateutil parse 79 64.1 53.2 57.4 0.0
+> Average 72.2 57.0 61.9 20.5
+
+Coverage is mean line coverage (%) over N = 10 trials for 22 functions from six libraries. Function names omit repeated package prefixes. CH=0 means budget exhaustion, which occurred on 55 % of target runs. 
+
+Prompts include the target source, parameter types, relevant callees, CFG paths toward uncovered code, coverage gaps, and recent tried inputs when avail-able. The model must return a Python list of input dictionaries. Invalid outputs are discarded. Seed lists are generated once and reused by both ConcoLixir 
+
+and LLM-Seeds-Only . Measurement is separated from instrumentation: each target is executed once under concolic proxies to collect constraints and once under primitive inputs to measure line coverage. A parent watchdog preserves the latest completed checkpoint if a target exceeds the execution budget. 
+
+4.2 Benchmarks 
+
+Table 2 lists our controlled suite of 22 designed functions. They are grouped by their main challenge. The suite includes numeric logic that is friendly to the solver, string and format constraints, library calls, structured inputs, and path dependent behavior. In addition to the controlled suite, we evaluate 22 functions from six open source Python libraries (Table 3). These targets exercise similar challenges in production code and were not designed around any tool. To evaluate at library scale, we use 75 automatically selected entry points from sympy.ntheory and PyYAML’s yaml package. A target is included if it is defined in the package, accepts at most five parameters, and its parameters can be mapped to primitive values or primitive containers. This mapping uses anno-tations, defaults, local literal comparisons, or a neutral fallback. Class construc-ConcoLixir 13 
+
+Table 4. Library-suite results.                                 
+
+> Package nCL CO LO CH ∆pˆA12
+> sympy.ntheory 37 79.9 55.6 78.6 36.6 +24 .38.8×10 −60.71 PyYAML ( yaml )38 77.4 67.6 75.9 35.8 +9 .82.4×10 −20.53
+> Overall 75 78.7 61.7 77.3 36.2 +17 .04.1×10 −70.63
+
+Coverage is mean line coverage (%) by package. ∆ = CL - CO in percentage points. p
+
+and ˆA12 summarize CL vs. CO. 
+
+tors are included through their __init__ signatures. APIs that require arbitrary user-defined objects are excluded. The suite contains every callable in the two packages that satisfies these criteria. This gives a less curated test of whether the architecture transfers beyond hand picked challenges. Table 4 reports coverage at the package level for this suite. 
+
+4.3 Comparison Tools 
+
+We compare ConcoLixir with three baselines on the same target set and ex-ternal time budget. Its bounded candidate executions triggered by the LLM and mini exploration after the loop are part of the proposed policy and are analyzed as overhead in RQ3: 1. Concolic-Only [6], the base PyCT engine with no extensions. This isolates the SMT solver’s contribution. 2. LLM-Seeds-Only , which executes the same generated seed inputs con-cretely, with no concolic replay, constraint collection, or solver follow up. It isolates the shared seed generator and is not a full iterative LLM test generator. 3. CrossHair [25], an independent Python symbolic execution tool using Z3 .
+
+4.4 Statistical Analysis 
+
+For each target and runner, we average line coverage over N = 10 trials. Pairwise significance tests use one paired observation per target: the mean at the target level for ConcoLixir and the corresponding comparator mean. We use the one-sided Wilcoxon signed-rank test [32]. Table 6 reports wins, ties, and losses across target runs only descriptively. Those counts are not independent samples for significance testing. We also report the Vargha-Delaney ˆA12 effect size [30], which summarizes how often ConcoLixir obtains higher coverage than the comparator under the table’s paired aggregation. We use it because coverage is bounded and non-normal. 
+
+4.5 RQ1: Coverage Improvement 
+
+Table 5 summarizes line coverage across the three evaluation suites. It includes distributional statistics and pairwise significance tests. Table 6 breaks down the 14 D. Chen et al. 
+
+Table 5. Coverage across evaluation suites.                                
+
+> Suite nCL CO LO pˆA12
+> Standard 22 93.2 84.6 81.7 6.5×10 −20.60 Realworld 22 72.2 57.0 61.9 4.9×10 −50.75 Library 75 78.7 61.7 77.3 4.1×10 −70.63
+> Pooled 119 78.5 64.0 74.1 <10 −10 0.66
+
+Values are mean line coverage (%) over N = 10 trials. p and ˆA12 summarize CL vs. CO. CrossHair is omitted for space. 
+
+Table 6. Pairwise outcomes by target run.                                     
+
+> Suite nCL vs. CO CL vs. LO WTLWTL
+> Standard 220 61 % 29 % 10 % 60 % 40 % 0 % Realworld 220 96 % 1 % 3 % 69 % 31 % 0 % Library 750 52 % 44 % 4 % 18 % 82 % 0 %
+> Pooled 1190 62 % 33 % 5 % 35 % 65 % 0 %
+
+W/T/L compares each target run under the stated budget. Counts are descriptive and are not independent samples for signed-rank tests. 
+
+comparison at the level of target runs. Table 7 reports line coverage for each function in the standard suite. Across the three suites (Table 5), ConcoLixir improves mean coverage over 
+
+Concolic-Only by +8 .6, +15 .1, and +17 .0 pp. The evidence is strongest on real-world and library targets. The gain on the controlled suite is positive but below the 0.05 threshold, partly because many functions already let the solver reach saturation. Table 6 shows that wins dominate losses against Concolic-Only . The visi-ble regressions, B03, B15, and B16, come from seed replay changing exploration order under a fixed iteration budget. Against LLM-Seeds-Only , the pattern matches the intended division of labor: generated inputs open useful states, and concolic replay explores variants from those states. The library suite shows the same mechanism at scale. Concolic-Only is bimodal: some targets saturate, while others stall behind semantic or library barriers. ConcoLixir moves many stalled cases upward. The PyYAML result is statistically detectable but practically small by ˆA12 , so the stronger evidence at the package level comes from sympy.ntheory and from the library suite overall. Gains on real code follow the same explanation on regex, tokenizer, parser, and deep library gates. To distinguish integration gains from whichever single baseline happens to be stronger on a target, we performed a post hoc dominance check on the 44 individually reported functions using the mean coverage values already reported for each target. ConcoLixir exceeds Concolic-Only on 35/44 targets and exceeds LLM-Seeds-Only on 37/44. More importantly, it exceeds the better of the two single baselines on 32/44 targets, ties on 8/44, and trails on only 4/44. The losses are confined to the already discussed cases where the solver ConcoLixir 15 
+
+Table 7. Standard-suite per-benchmark results. 
+
+Coverage (%) ∆ Time (s) ID CL CO LO CH CL CO LO CH 
+
+Pure Numeric 
+
+B01 100 100 100 100 0 5.0 0.5 4.7 31.6 B02 100 100 100 100 0 6.7 0.4 6.4 3.0 B03 86.7 100 78.9 100 −13 .3 10.7 0.5 3.6 45.2 
+
+String Constraints 
+
+B04 92.3 88.5 82.7 — +3 .8 112.8 101.9 2.8 —B05 100 96.0 90.4 — +4 .0 3.7 92.1 3.1 —B06 98.1 87.5 80.0 46.9 +10 .6 15.1 0.9 2.3 11.1 B07 89.3 86.7 82.7 — +2 .7 95.5 13.9 2.7 —
+
+Library Black Box 
+
+B08 86.7 79.2 52.1 10.8 +7 .5 14.6 0.6 4.0 95.4 B09 100 31.6 100 — +68 .4 3.4 0.3 3.1 —B10 97.0 90.0 95.0 55.0 +7 .0 8.6 0.4 2.3 13.8 
+
+Hash/Encoding 
+
+B11 100 100 91.1 — 0 12.9 2.5 3.5 —B12 84.5 54.5 75.5 31.8 +30 .0 15.3 0.4 7.0 8.0 
+
+Mixed Type Synergy 
+
+B13 100 100 100 33.3 0 4.2 0.6 3.9 6.7 B14 100 100 100 100 0 4.6 0.6 4.3 17.6 B15 77.0 100 36.0 30.0 −23 .0 16.5 0.6 6.3 4.7 B16 87.5 100 56.7 58.3 −12 .5 10.8 0.6 5.0 4.2 
+
+Complex Structures 
+
+B17 72.9 61.9 39.0 — +11 .0 10.4 0.3 4.8 —B18 91.5 46.2 70.8 46.2 +45 .4 10.4 0.3 4.8 12.3 
+
+Deep Path Dependency 
+
+B19 91.7 83.3 84.2 58.3 +8 .3 9.0 0.8 1.8 5.7 B20 100 89.5 95.3 78.9 +10 .5 9.3 2.8 4.2 18.8 
+
+Solver-Hard 
+
+B21 98.8 81.2 91.9 — +17 .5 23.3 103.5 2.5 —B22 96.9 84.6 95.4 100 +12 .3 31.1 17.6 3.1 34.5 
+
+Avg 93.2 84.6 81.7 44.0 +8 .6 19.7 15.5 3.9 45.8 
+
+Coverage and time are means over N = 10 trials. Bold marks best coverage. “—” means timeout. IDs map to Table 2. 
+
+Table 8. Post hoc dominance on individually reported targets. 
+
+Suite n vs. CO vs. LO vs. max(CO, LO) 
+
+Standard 22 14 / 5 / 3 17 / 5 / 0 13 / 6 / 3 Real-world 22 21 / 0 / 1 20 / 2 / 0 19 / 2 / 1 Total 44 35 / 5 / 4 37 / 7 / 0 32 / 8 / 4 
+
+Entries show CL > / = / < counts computed from the mean coverage values already reported for each target in Tables 7 and 3. max(CO , LO) denotes the better single baseline on that target. The library suite is omitted because the manuscript reports means at the package level there. 
+
+already suffices or to cases where seeds reordered exploration (B03, B15, B16), plus one near tie on the real-world validator ( country_code ). This is still a coarse integration comparison rather than an ablation of individual components, but it strengthens the interpretation that the main benefit usually comes from combin-16 D. Chen et al. 
+
+Table 9. Coverage by controlled suite category.                                                   
+
+> Category CL CO LO pˆA12
+> Pure Numeric 95.6 100.0 93.0 —0.33 String Constr. 94.9 89.7 83.9 0.10 0.88 Library B.B. 94.6 66.9 82.4 0.18 0.89 Hash/Encoding 92.3 77.3 83.3 —0.62 Mixed Synergy 91.1 100.0 73.2 —0.25 Complex Struct. 82.2 54.0 54.9 —1.00 Deep Path Dep. 95.8 86.4 89.7 —1.00 Solver-Hard 97.8 82.9 93.6 —1.00
+> Overall 93.2 84.6 81.7 6.5×10 −20.60
+
+Values are category mean coverage (%). Library B.B. = Library Black Box. p and 
+
+ˆA12 summarize CL vs. CO. “—” means too few targets. 
+
+ing concrete inputs that match the domain with concolic replay, not from either component alone. 
+
+RQ1 verdict. ConcoLixir improves mean line coverage over Concolic-Only in all three evaluation suites, with the strongest statistical and practical evidence on real-world and library targets. The controlled suite shows a positive but weaker mean gain because many functions already let the solver reach sat-uration. The comparison with LLM-Seeds-Only , together with the post hoc dominance check at the target level, shows that generated concrete examples alone do not explain the full result. Their value is greatest when concolic replay can collect constraints and explore variants from the states they reach. 
+
+4.6 RQ2: When Does the LLM Help? 
+
+Table 9 reports average coverage by failure mode category. The category break-down shows two regimes. When the solver is already sufficient, as in Pure Nu-meric and Mixed Synergy targets, LLM seed replay can hurt. It spends early budget on concrete examples before the solver reaches its usual saturation path. The reproducible regressions appear in three controlled targets. There, plausible but incomplete LLM seeds stop validation at the first branch and delay later path discovery. When the solver is limited, as in library black boxes, complex structures, hash/encoding checks, and constraints the solver cannot handle well, the pattern reverses. Concrete LLM seeds cross barriers that pure constraint reasoning cannot model. The three runners provide a coarse integration comparison. Concolic-Only 
+
+isolates search by the solver. LLM-Seeds-Only measures how much coverage the shared generated seeds achieve without symbolic exploration. ConcoLixir 
+
+measures the complete proposed policy: seed generation, concolic replay, discov-ery after solver failure, plateau discovery, and discovery after the loop. They show that the full integration is strongest when concrete inputs generated by the LLM open states from which concolic execution can collect constraints and explore variants. Table 10 adds a component-level view. Seed generation and plateau discovery both give large standalone gains over Concolic-Only , while the full system ConcoLixir 17 
+
+Table 10. Follow-up additive ablation of selected LLM roles.                
+
+> Comparison Standard Library Real-world
+> + Seeds vs. CO +6 .6+14 .9+9 .3
+> + Plateau vs. CO +10 .6+14 .5+9 .2
+> Full system vs. CO +9 .5+16 .6+13 .0
+> Full system vs. LO +10 .5+8 .3+13 .6
+
+Values are line coverage deltas in percentage points from a separate N = 10 follow-up rerun, not replacements for the main coverage numbers. The first three rows compare with Concolic-Only in that rerun. The last row compares the full system with LO. 
+
+Table 11. Coverage by real-world challenge category.                                      
+
+> Category (n)CL CO LO ∆pˆA12
+> Format/Regex (12) 70.0 54.3 65.8 +15 .7—0.90 Opaque Lib. Disp. (4) 67.2 53.5 54.8 +13 .7—1.00 Mostly Solver-Tr. (4) 76.6 63.4 52.4 +13 .2—0.65 Non-Primitive (2) 86.2 67.5 71.3 +18 .8—0.60
+> Overall (22) 72.2 57.0 61.9 +15 .14.9×10 −50.75
+
+Values are category mean coverage (%). ∆ = CL - CO in percentage points. p and 
+
+ˆA12 summarize CL vs. CO. “—” means too few targets. 
+
+remains clearly above LLM-Seeds-Only . This supports the intended division of labor: the LLM is useful for reaching concrete regions that the solver misses, but concolic replay is still needed to turn those regions into systematic exploration. The ablation is additive rather than leave-one-out, and the plateau row combines the in-loop trigger and the push after the loop, so it should be read as evidence about dominant roles rather than exact marginal contributions. Table 11 reports average coverage by real-world challenge category. The pat-tern mirrors the standard suite but with sharper contrasts. Descriptively, Con-coLixir exceeds both CO and LO in 10 of the 12 category means across the controlled and real-world breakdowns. The two exceptions are Pure Numeric and Mixed Synergy, which are precisely the regime where the solver already suffices. Format/regex and opaque dispatch targets show the clearest division of labor. The LLM supplies strings shaped to the domain, JSON structures, phone number formats, and parser inputs that pass gates outside the solver’s model. Concolic replay then explores the Python level branches exposed by those examples. The common pattern is CL > LO > CO: seed generation opens the region, and solver negation inside that region adds coverage. The limits appear on mostly solver tractable and non primitive targets. If 
+
+Concolic-Only would saturate quickly, the early seed phase can reorder explo-ration and consume part of the fixed budget, as in B03, B15, and B16. If an API requires dictionaries or structured objects that PyCT cannot proxy symboli-cally, coverage depends heavily on concrete input quality. Table 12 summarizes the trend: gains are largest below 60 % CO coverage and mostly disappear above 
+
+85 %, unless a late semantic gate remains. This pattern suggests a practical rule of thumb. ConcoLixir is most useful when the current frontier is blocked by semantic checks that are easy for de-velopers to recognize but hard for the SMT solver to model, such as parsers, 18 D. Chen et al. 
+
+Table 12. Coverage gains grouped by Concolic-Only baseline coverage.                           
+
+> Suite CO ∈[0 ,30) [30 ,60) [60 ,85) [85 ,100] Overall
+> Standard —+47 .9+11 .3−0.7+8 .6
+> Realworld —+16 .6+12 .9+14 .3+15 .1
+> Library +29 .7+40 .6+18 .2+0 .6+17 .0
+
+Cells show the mean CL - CO coverage gap (pp) for target trials in each CO bucket. “—” means none. 
+
+Table 13. LLM cost and runtime per target trial.                          
+
+> Suite LLM cost Time (s) Tokens USD Tok/pp CL CO LO
+> Standard 1,548 0.0004 180 19.7 15.5 3.9 Realworld 11,310 0.0021 750 35.0 1.9 5.9 Library 7,868 0.0014 460 24.2 1.8 4.6
+
+Tokens, USD, and time are averages per target trial. Tok/pp = tokens per coverage point over CO. Time is total wall clock time, including LLM calls and controller overhead. Dollar costs use gpt-4o-mini-2024-07-18 rates. 
+
+regular expressions, checksums, and structured input formats. In these cases, an LLM candidate can cross the gate, and concolic replay can recover systematic exploration on the newly reached Python code. The method is less useful when the remaining branches are already solver tractable or when the API requires ob-jects outside the current concolic input model. Then LLM seeds mainly change exploration order or depend on concrete input quality rather than opening a new symbolic frontier. 
+
+RQ2 verdict. The LLM helps when coverage is blocked by formats, parsers, library dispatch, or structured inputs, not ordinary arithmetic constraints. Its main role is to reach useful concrete regions. The solver still performs systematic exploration inside those regions. The follow-up ablation suggests that seeds and plateau discovery carry most of the observed gain, although finer leave-one-out ablations are still needed to measure interactions among the roles. 
+
+4.7 RQ3: Cost and Runtime Efficiency Token cost. LLM use scales with target complexity. Controlled targets av-erage 1,548 tokens per trial, while real-world targets average 11,310 because prompts are longer and plateau calls and calls after the loop are more frequent. The full evaluation over 1,190 target runs costs $1.63 in API charges at the 
+
+gpt-4o-mini-2024-07-18 rates used during the experiment. 
+
+Wall clock time. ConcoLixir is modestly slower on the controlled suite, where Concolic-Only also spends time in solver calls (19.7 s vs. 15.5 s). On real-world and library suites, ConcoLixir is roughly 13–18 × slower because total time includes LLM calls, controller overhead, subprocess management, and checkpoint recovery. The main overheads are seed generation, subprocess forks, plateau calls in the loop, and discovery calls after the loop. ConcoLixir remains faster than CrossHair on many real-world targets where CrossHair often ConcoLixir 19 
+
+times out, but CrossHair ’s timeout behavior makes mean runtime comparisons difficult. 
+
+Cost scaling. The LLM call budget has three parts: one seed call, plateau calls and calls after the loop that stop when coverage no longer improves, and calls after solver failure bounded by the main concolic iteration budget. Plateau use and use after the loop stop after a round with no improvement. Use after solver failure scales with Unknown /Error results within max_iterations . Thus, incremental cost grows with the number of hard functions, while targets that the solver already saturates usually incur only seed generation cost. 
+
+RQ3 verdict. Under the model and prices used in the experiment, dollar cost is small, but latency is material. This makes bounded triggering essential. 
+
+ConcoLixir should be used as a targeted escape hatch for solver stalls and semantic barriers, not as a replacement for ordinary concolic search. 
+
+## 5 Limitations and Concluding Remarks 
+
+ConcoLixir shows that an LLM need not replace symbolic execution to help Python concolic testing. Its useful role is narrower: propose concrete inputs that cross semantic barriers, let execution validate them, and let the concolic engine resume systematic exploration from newly reached states. Across the three benchmark groups, the complete policy improves mean line coverage over 
+
+Concolic-Only , with the strongest gains on regexes, parsers, checksums, struc-tured inputs, and opaque library boundaries. The weakest gains appear when the solver already saturates the target, where seed replay can reorder exploration under a fixed budget. The results should be read as evidence about input generation, not fault de-tection. Line coverage is a standard proxy in concolic-testing evaluations [3, 13, 28], but it does not measure assertion quality, mutation score, real bug detection, or branches that share a line. Future work should test whether the added cov-erage improves mutation scores, seeded bug detection, real fault detection, and robustness or fairness analyses for learned components [15, 16]. LLM-Seeds-Only isolates the shared seed generator, but it is not a substitute for iterative LLM test-suite generators. The evaluation compares complete policies under fixed budgets. The follow-up ablation identifies dominant roles, but it does not provide leave-one-out marginal effects from the full system. The plateau also combines an in-loop trigger and a push after the loop, and discovery after the loop may add bounded mini exploration after the main loop. CrossHair uses the same external time-out, although treating timeouts as zero can understate its capability on slow tar-gets. The watchdog checkpoint protocol affects measurement preservation only: it returns the latest completed exploration state if a child process is killed. Finally, LLM output is stochastic, and the benchmark set is broad but not universal. We fix the model snapshot, temperature, budgets, and hardware, and report N = 10 means, but results may shift with other models, prompts, rate limits, or hardware. APIs with deep types and callable or object values can leave 20 D. Chen et al. 
+
+ConcoLixir dominated by concrete input quality, while Python code over prim-itive values benefits most from concolic follow up. Future work should improve input modeling, run cleaner leave-one-out ablations, test sensitivity to model and provider, and evaluate fault-oriented metrics beyond line coverage. 
+
+## References 
+
+1. Avgerinos, T., Brumley, D., Davis, J., Goulden, R., Nighswander, T., Rebert, A., Williamson, N.: The Mayhem cyber reasoning system. IEEE Security & Privacy 
+
+16 (2), 52–60 (2018). https://doi .org/10 .1109/MSP .2018 .1870873 
+
+2. Ball, T., Daniel, J.: Deconstructing dynamic symbolic execution. In: Dependable Software Systems Engineering, NATO Science for Peace and Security Series D, vol. 40, pp. 26–41. IOS Press (2015). https://doi .org/10 .3233/978-1-61499-495-4-26 
+
+3. Cadar, C., Dunbar, D., Engler, D.: KLEE: Unassisted and automatic generation of high-coverage tests for complex systems programs. In: OSDI. USENIX Association (2008) 4. Cadar, C., Ganesh, V., Pawlowski, P.M., Dill, D.L., Engler, D.R.: EXE: Au-tomatically generating inputs of death. In: CCS. pp. 322–335 (2006). https: //doi .org/10 .1145/1180405 .1180445 
+
+5. Cadar, C., Sen, K.: Symbolic execution for software testing: three decades later. Communications of the ACM 56 (2), 82–90 (2013). https://doi .org/10 .1145/ 2408776 .2408795 
+
+6. Chen, Y.F., Tsai, W.L., Wu, W.C., Yen, D.D., Yu, F.: PyCT: A Python concolic tester. In: APLAS. pp. 38–46 (2021). https://doi .org/10 .1007/978-3-030-89051-3_3 
+
+7. De Moura, L., Bjørner, N.: Z3: An efficient SMT solver. In: TACAS. pp. 337–340. Springer (2008) 8. Deng, Y., Xia, C.S., Peng, H., Yang, C., Zhang, L.: Large language models are zero-shot fuzzers: Fuzzing deep-learning libraries via large language models. arXiv preprint arXiv:2212.14834 (2023). https://doi .org/10 .48550/arXiv .2212 .14834 ,accepted at ISSTA 2023 9. Erni, N., Al-Ameen, M., Birchler, C., Derakhshanfar, P., Lukasczyk, S., Panichella, S.: SBFT tool competition 2024 – Python test case generation track. In: SBFT. pp. 37–40 (2024). https://doi .org/10 .1145/3643659 .3643930 
+
+10. Fioraldi, A., Maier, D., Eißfeldt, H., Heuse, M.: AFL++: Combining incremental steps of fuzzing research. In: WOOT. USENIX Association (2020) 11. Fraser, G., Arcuri, A.: EvoSuite: Automatic test suite generation for object-oriented software. In: ESEC/FSE. pp. 416–419 (2011). https://doi .org/10 .1145/ 2025113 .2025179 
+
+12. Godefroid, P., Klarlund, N., Sen, K.: DART: Directed automated random testing. In: PLDI. pp. 213–223 (2005) 13. Godefroid, P., Levin, M.Y., Molnar, D.A.: Automated whitebox fuzz testing. In: NDSS. The Internet Society (2008) 14. Hong, C.D., Jiang, H., Lin, A.W., Markgraf, O., Parsert, J., Tan, T.: Extracting robust register automata from neural networks over data sequences (2025). https: //doi .org/10 .48550/arXiv .2511 .19100 
+
+15. Hong, C.D., Yang, C.C., Wang, Y., Yu, F.: Influence-guided concolic testing of transformer robustness (2025). https://doi .org/10 .48550/arXiv .2509 .23806 , accepted at the International Conference on Software Quality, Reliability, and Security ConcoLixir 21 16. Huang, M.I., Hong, C.D., Yu, F.: Concolic testing on individual fairness of neural network models (2025). https://doi .org/10 .48550/arXiv .2509 .06864 
+
+17. Lemieux, C., Inala, J.P., Lahiri, S., Sen, S.: CodaMOSA: Escaping coverage plateaus in test generation with pre-trained large language models. In: Proceedings of the 45th IEEE/ACM International Conference on Software Engineering (2023) 18. Li, Y., Meng, R., Duck, G.J.: Large language model powered symbolic execu-tion. Proc. ACM Program. Lang. 9(OOPSLA2), 3148–3176 (2025). https://doi .org/ 10 .1145/3763163 
+
+19. Lin, L.J., Hong, C.D.: Robustness verification of recurrent neural networks with abstraction refinement (2026). https://doi .org/10 .48550/arXiv .2606 .12490 
+
+20. Lukasczyk, S., Fraser, G.: Pynguin: Automated unit test generation for Python. In: ICSE Companion. pp. 168–172 (2022). https://doi .org/10 .1145/3510454 .3516829 
+
+21. Luo, Z., Zhao, H., Wolff, D., Cadar, C., Roychoudhury, A.: Agentic concolic exe-cution. In: IEEE S&P. pp. 1–19. IEEE Computer Society (2026) 22. MacIver, D.R., Hatfield-Dodds, Z., Contributors, M.O.: Hypothesis: A new ap-proach to property-based testing. Journal of Open Source Software 4(43), 1891 (2019). https://doi .org/10 .21105/joss .01891 
+
+23. Pizzorno, J.A., Berger, E.D.: CoverUp: Effective high coverage test generation for Python (2025). https://doi .org/10 .1145/3729398 , to appear at FSE 2025 24. Poeplau, S., Francillon, A.: Symbolic execution with SymCC: Don’t interpret, com-pile! In: USENIX Security. pp. 181–198. USENIX Association (2020) 25. Schanely, P.: CrossHair: An analysis tool for Python. https://github .com/pschanely/ CrossHair (2017) 26. Sen, K.: Concolic testing. In: Proceedings of the 22nd IEEE/ACM Interna-tional Conference on Automated Software Engineering. pp. 571–572 (2007). https: //doi .org/10 .1145/1321631 .1321746 
+
+27. Sen, K., Marinov, D., Agha, G.: CUTE: A concolic unit testing engine for C. In: ESEC/FSE. pp. 263–272 (2005). https://doi .org/10 .1145/1081706 .1081750 
+
+28. Stephens, N., Grosen, J., Salls, C., Dutcher, A., Wang, R., Corbetta, J., Shoshi-taishvili, Y., Krügel, C., Vigna, G.: Driller: Augmenting fuzzing through selective symbolic execution. In: NDSS (2016) 29. Tu, H., Lee, S., Li, Y., Chen, P., Jiang, L., Böhme, M.: COTTONTAIL: Large lan-guage model-driven concolic execution for highly structured test input generation. arXiv preprint arXiv:2504.17542 (2025). https://doi .org/10 .48550/arXiv .2504 .17542 ,to appear at the 2026 IEEE Symposium on Security and Privacy 30. Vargha, A., Delaney, H.D.: A critique and improvement of the CL common lan-guage effect size statistics of McGraw and Wong. Journal of Educational and Be-havioral Statistics 25 (2), 101–132 (2000). https://doi .org/10 .3102/10769986025002101 
+
+31. Wang, W., Liu, K., Chen, A.R., Li, G., Jin, Z., Huang, G., Ma, L.: Python symbolic execution with LLM-powered code generation. arXiv preprint arXiv:2409.09271 (2024). https://doi .org/10 .48550/arXiv .2409 .09271 
+
+32. Wilcoxon, F.: Individual comparisons by ranking methods. Biometrics Bulletin 
+
+1(6), 80–83 (1945). https://doi .org/10 .2307/3001968 
+
+33. Yun, I., Lee, S., Xu, M., Jang, Y., Kim, T.: QSYM: A practical concolic execution engine tailored for hybrid fuzzing. In: USENIX Security. pp. 745–761. USENIX Association (2018)

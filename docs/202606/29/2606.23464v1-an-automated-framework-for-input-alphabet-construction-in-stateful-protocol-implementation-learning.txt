@@ -1,0 +1,591 @@
+Title: An Automated Framework for Input Alphabet Construction in Stateful Protocol Implementation Learning
+
+URL Source: https://arxiv.org/pdf/2606.23464v1
+
+Published Time: Tue, 23 Jun 2026 03:42:34 GMT
+
+Number of Pages: 11
+
+Markdown Content:
+# An Automated Framework for Input Alphabet Construction in Stateful Protocol Implementation Learning 
+
+## JiongHan Wang 
+
+wangjh1@mail.ustc.edu.cn University of Science and Technology of China He Fei, China 
+
+## WenChao Huang 
+
+huangwc@mail.ustc.edu.cn University of Science and Technology of China He Fei, China 
+
+## Abstract 
+
+As a prevalent analytical technique for stateful protocol implemen-tations, state machine learning suffers from a core bottleneck stem-ming from handcrafted input alphabets. Manual alphabet defini-tion inherently limits the completeness of input exploration, mak-ing it difficult to capture anomalous non-conformant messages and consequently missing latent semantic defects. In this paper, we target automatic input alphabet generation to break the above limitation for state machine learning. We adopt large language models to parse protocol message layouts and pro-duce candidate input symbols following structured mutation rules, which automatically covers valid and invalid message spaces and eliminates reliance on manual protocol expertise. Considering the rising overhead brought by continuously grow-ing alphabets, we introduce a mini-batch incremental learning strat-egy to reuse existing learned automata when incorporating new alphabet entries. Comprehensive experiments on practical proto-col stacks indicate our approach can reproduce existing security vulnerabilities and identify novel semantic bugs. A subset of these newly discovered issues has been confirmed and patched by devel-opers, proving the practicability and effectiveness of our proposed method. 
+
+## CCS Concepts 
+
+• Software and its engineering → Software testing and debug-ging ; • Networks → Network security ; • Security and privacy 
+
+→ Software and application security ; • Theory of computa-tion → Automata theory .
+
+## Keywords 
+
+Protocol testing, Semantic bug detection, State machine learning 
+
+## 1 Introduction 
+
+Stateful protocol implementations are an important component of computer systems, and the correctness of their execution seman-tics is critical for the stable operation of real-world systems. For many important protocols, the behavior of protocol deployments is specified by protocol specification documents, and their seman-tic correctness means that the externally observable behavior at runtime is fully consistent with the request-response semantics defined by the protocol specification (RFC documents). If a proto-col implementation contains semantic bugs, it can severely impact their functionality and security. For example, the TLS protocol and its deployment guarantee information security in most network communications [16]. Vulnerabilities such as EarlyCCS [7] found in TLS deployments can severely compromise its security. Semantic bugs in stateful protocol implementations continue to emerge as protocols and their deployments grow in scale [19]. Ex-isting approaches for detecting such bugs include formal verifica-tion, model checking, fuzzing, and state machine learning. Formal verification can validate protocol specifications but typically only scales to relatively simple protocols and requires substantial expert effort [3, 4], while model checking similarly involves significant manual intervention [9]. Fuzzing has been widely applied to pro-tocol testing (e.g., AFLNet [20]), but most approaches primarily tar-get memory corruption vulnerabilities rather than semantic bugs, and recent tools such as DYFuzzing [1] still require complex in-strumentation and expert-defined properties. By comparison, state machine learning provides a relatively convenient way to analyze protocol behaviors and has been applied to many critical proto-cols [10, 16, 28]. Despite its advantages in ease of deployment and its natural suitability for semantic bug analysis, state machine learning suf-fers from a major limitation: existing algorithms operate only on a manually defined input alphabet. The input alphabet is a collection of input symbols, where each input symbol serves as an abstraction of concrete messages transmitted to the system under test. As a re-sult, if the messages corresponding to the defined alphabet cannot cover those required to trigger vulnerabilities, any learning strat-egy will inevitably fail to expose such bugs. From a technical per-spective, this gap introduces two key challenges. 
+
+Challenge 1: Automatically obtaining useful input sym-bols. Existing state machine learning approaches rely heavily on expert knowledge to manually define input symbols [6, 16, 22, 27]. This process requires prior knowledge of both the protocol speci-fication and its implementation. Moreover, for complex protocols designing specialized symbols and ensuring that they can be trans-lated into valid, and executable messages is itself a labor-intensive task. 
+
+Challenge 2: Balancing the trade-off between alphabet size and learning overhead. When facing an extended input symbol set with dozens or even hundreds of elements, constructing a com-pact and effective alphabet from it remains a non-trivial challenge. On the one hand, the effectiveness of state machine learning de-pends on the alphabet: semantic bugs can only be detected if the alphabet contains symbols capable of triggering them, which en-courages using a larger alphabet. On the other hand, state machine learning is computationally expensive [2], and excessive alphabet expansion can significantly increase the learning cost or even pre-vent the learning process from terminating. To address the challenges of existing state machine learning methods, this paper designs and implements a novel framework that can automatically construct an extended input symbol set and  
+
+> arXiv:2606.23464v1 [cs.SE] 22 Jun 2026 ASE 2026, October 12–16, 2026, Munich, Germany Trovato et al.
+
+extract alphabets capable of supporting efficient protocol semantic vulnerability detection. Specifically, it is developed based on two key observations: First, recent advances in pre-trained large lan-guage models (LLMs) have shown that LLMs can understand the structure of protocol messages and convert them into a unified, machine-parsable standard format [18]. We leverage this capabil-ity to generate protocol message configurations for constructing basic symbols. Combined with a structured mutation strategy, it can automatically generate richer and more diverse candidate in-put symbols for state machine learning. Second, we observe that protocol state machines usually exhibit stable operating character-istics: except for a small number of critical inputs, most input sym-bols only perform state-local operations and do not trigger cross-state transitions. Taking advantage of this property, we propose and implement Mini-Batch Learning, a method that extracts a set of extended alphabets from the expanded input symbol set, com-bined with a state machine learning algorithm equipped with a built-in basic state machine. Experimental results demonstrate that our method can automat-ically construct extended input sets and derive alphabets for var-ious protocols, and further complete state machine learning on these alphabets to detect semantic bugs. In comparison, the origi-nal unextended input symbol sets fail to cover the message types required to trigger multiple real-world semantic bugs. Moreover, naive state machine learning directly adopting the extended input set as the overall alphabet cannot terminate within a reasonable time budget when evaluated on several protocol implementations. As a result, Our approach successfully reproduces two classic high-severity historical semantic vulnerabilities and discovers ten novel semantic bugs in total. Among these newly identified defects, three have been confirmed and patched by official developers, and one has been assigned an CVE identifier. In summary, this paper makes the following contributions: 
+
+1. Mutation-driven state machine learning for semantic bug detection: We propose a mutation-driven methodology that integrates message mutation with state machine learning. By lever-aging large language models to protocol message configurations, our approach enables protocol-agnostic and systematic exploration of protocol behaviors. 
+
+2. Efficient learning over the set of extended alphabets: 
+
+We propose and deploy a mini-batch learning strategy. By parti-tioning the input symbol set into a collection of extended alphabets and integrating it with a learning algorithm equipped with a base-line state machine, we reduce the number of membership queries required during learning, thereby ensuring practical termination even with large input symbol sets. 
+
+3. Practical evaluation and bug discovery: We evaluate our approach on multiple implementations of widely deployed state-ful protocols. Our method discovers previously unknown seman-tic bugs, three of which have been fixed by developers and one assigned a CVE identifier. 
+
+## 2 Background 
+
+State Machine Learning: Active automata learning has been widely used to infer behavioral models of protocol implementations. This line of work is rooted in Angluin’s 𝐿 ∗ algorithm [2], which learns 2
+
+3
+
+5
+
+4
+
+> ServerHello /-
+> Encrypted
+> Extension
+> s/ -
+> */EOF
+
+6 
+
+> */EOF
+> Finish/Finish
+> +AppDate
+> Certificate
+> /-
+> EmptyCertificate /
+> -
+> CertificateVerify /
+> -*/EOF
+> */EOF
+> */EOF
+
+1
+
+Figure 1: CVE-2022-25638, Vulnerable State Machine 
+
+automata through membership and equivalence queries. In this work, we adopt state machine learning techniques to synthesize the input–output behavior of a protocol implementation into a Mealy machine. A Mealy machine models the protocol as a tuple 
+
+𝑆𝑀 = (𝑄, 𝑞 0, Σ, 𝑂, 𝛿, 𝜆) , where 𝑄 denotes the set of states, 𝑞 0 is the initial state, Σ is the input alphabet, 𝑂 is the output alphabet, and 𝛿 and 𝜆 represent the transition and output functions, respec-tively [2]. An alphabet is a set of symbols, where each symbol rep-resents an abstraction of a specific sent or received message. 
+
+From Learned State Machines to Semantic Bug Detection: 
+
+The learned state machine provides an abstract representation of the protocol implementation’s behavior and can reveal deviations from the intended protocol logic. However, identifying implemen-tation flaws from the learned model remains a challenging task. While formal verification techniques can in principle analyze prop-erties of finite-state models, exhaustive verification often suffers from the state explosion problem, making fully automated analy-sis computationally expensive in practice. Consequently, prior work on protocol state machine learning has typically relied on manual inspection of the inferred models to identify unexpected transitions or states [8, 17, 22]. Other ap-proaches design protocol-specific analysis techniques that detect particular classes of implementation flaws based on domain knowl-edge [9, 27]. While effective in certain scenarios, these approaches often require significant expert effort and are difficult to generalize across different protocols. 
+
+## 3 Motivating Example 
+
+We adopt CVE-2022-25638 [22], a critical semantic bug in the TLS 1.3 stack of WolfSSL, as our motivating example throughout this work. As shown in Figure 1, an attacker can first send an empty certificate message when a certificate and verification message are An Automated Framework for Input Alphabet Construction in Stateful Protocol Implementation Learning ASE 2026, October 12–16, 2026, Munich, Germany {X,  X_Payload_null ,     
+
+> X_Payload_replace ,
+> Y, Y_Header_replace ,
+> Y_Payload_replace , …}
+> Extended Input Symbol Set
+> Protocol Message
+> Configuration Files
+> generated by LLMs
+> Using predefined
+> mutation rules
+> 1={X, Y,
+> X_..., …}
+> 1={X, Y,
+> Z_..., …}
+
+# …
+
+> Set of Extended Alphabets
+> 2
+> 1
+> 3
+> X
+> Y
+> Y
+> 2
+> 3
+> 1
+> 4
+> X
+> Y
+> Z_...
+> Y
+> Y
+> Learned state machine
+> used for semantic bug
+> detection
+> Learning algorithm
+> with built -in
+> basic state machine
+> Input Symbol Set
+> Segmentation
+> Automated Construction of
+> Extended Input Symbol Set
+> Mini -Batch Learning
+
+Figure 2: Framework Overview 
+
+expected, and then follow it with an invalid certificate verifica-tion message (containing an unknown signature algorithm and arbitrary payload), thereby bypassing server authentication. The core condition for triggering this vulnerability is to introduce an Empty Certificate message (EmptyCert) into the message flow to-gether with a carefully crafted invalid CertificateVerify message (CV_invalid). However, acquiring the two key messages to trigger the vulner-ability is non-trivial. The EmptyCert message does not exist in the standard message specification of TLS 1.3 servers [23]. Injecting such a message into a state machine learning or testing workflow therefore requires additional expert knowledge. Constructing the invalid CertificateVerify message is even more challenging for gen-eral testers. This message contains eight subfields in total. To trig-ger the vulnerability, the signature algorithm field must contain a value that violates the specification, while all other fields must remain valid. Meanwhile, the constraints of both the record layer and the handshake layer headers must still be satisfied. Such a pro-cess demands deep protocol expertise and careful manual crafting. Consequently, vulnerability discovery methods that rely heavily on expert knowledge are difficult to generalize across different pro-tocols or even across different implementations of the same proto-col. This observation motivates us to explore methods that can au-tomatically construct non-compliant messages for state machine learning and testing. These challenges motivate the core research objective of this work: automatically constructing an alphabet that covers non-standard and non-compliant protocol messages. By leveraging the knowl-edge and automated reasoning capabilities of Large Language Mod-els, our system aims to operate across different protocols and im-plementations. 
+
+## 4 Methodology 4.1 Overview 
+
+Our method aims to automatically construct input alphabets for state machine learning of the system under test, thereby achiev-ing efficient semantic vulnerability detection. As shown in Figure 2, this method involves two key steps: obtaining the extended in-put symbol set and performing mini-batch learning. The first step involves acquiring the extended input symbol set, which requires using a large language model to extract protocol message format configurations. Based on mutation rules, new mutated input sym-bols are then generated to form the extended input symbol set. The second step is to perform mini-batch learning on the extended in-put symbol set to obtain a state machine that describes the sys-tem’s input-output behavior. This process requires organizing the extended input symbol set into a collection of extended alphabets, which is then used with the newly designed state machine learning method. 
+
+## 4.2 Automated Construction of the Extended Input Symbol Set 
+
+We first need to construct abstract symbols and define how they can be translated into concrete messages for transmission. Tradi-tionally, defining a finite input alphabet for state machine learning relies heavily on expert knowledge, where protocol-specific alpha-bets are manually constructed based on a deep understanding of the target protocol [16]. This process is labor-intensive and lacks generalizability across different protocols. To address this limita-tion, we propose an LLM-augmented approach inspired by fuzzing strategies, which constructs the input space through finite muta-tions of valid messages derived from protocol specifications. Specifically, we decompose the alphabet construction problem into three steps: (1) extracting structural information of protocol messages; (2) generating an extended set of symbols by mutating messages based on their structural properties; and (3) construct-ing a message suite that maps abstract symbols to the concrete messages sent during protocol interactions. 
+
+4.2.1 LLM-assisted protocol message configuration acquisition: We leverage the capabilities of LLMs in aggregating and parsing proto-col information to generate machine-readable configuration files. First, we abstract protocol messages into a Header-Payload struc-ture to establish a foundation for subsequent instruction descrip-tion generation. The header generally represents the command op-code; for instance, in the FTP command ”USER ubuntu”, ”USER” serves as the header and ”ubuntu” as the payload. Additionally, we introduce a comment field to encapsulate supplementary informa-tion. Specifically, we provide two types of metadata: Enumeration values for the payload (e.g., the TYPE command in FTP may accept values such as A, I, E, or L) and Relationships with data connec-tions. In protocols like FTP and RTSP, where communication in-volves both control and data channels, certain commands require explicit specification of their interaction with the data connection. Based on these abstract data types, we propose an LLM-augmented solution that synthesizes protocol specifications to construct stan-dardized JSON descriptions. These JSON files encapsulate message ASE 2026, October 12–16, 2026, Munich, Germany Trovato et al. 
+
+types, field constraints, valid value ranges, and mappings to ab-stract data types. The prompt design employs a few-shot learning approach, utilizing curated examples to guide the LLM in generat-ing structurally consistent JSON content, thereby minimizing hu-man intervention during the message generation process. Subsequent experiments demonstrate that large language mod-els are fully capable of handling the task of constructing message configurations. The message configurations generated by the large language model comply with established grammatical specifica-tions. These configurations can be parsed by pre-designed programs and have been verified manually to conform to protocol specifica-tions. The program-readable configuration files they provide for different protocols lay the foundation for the cross-protocol exe-cution of our method. 
+
+Listing 1: JSON Definition of FTP TYPE Command                        
+
+> 1{
+> 2" command_code ": " TYPE ",
+> 3" description ": {
+> 4" header ": " TYPE ",
+> 5" payload ": "A ",
+> 6" comment ": " enumerable valid values : [\" I \" , \" E \" , \" L \"]; connection status : no connection required "
+> 7}
+> 8}
+
+For example, for the TYPE message in the FTP protocol as shown above, our approach can generate the following entry in the mes-sage structure configuration file which covers all information of the message, from the command code and possible parameters to state requirements for the data connection. The subsequent mes-sage sending program can automatically construct and send the TYPE message and its mutated response messages based on this configuration. 
+
+4.2.2 Fault Classification-Guided Mutation: Based on different fault types, we design three mutation strategies to extend specification-compliant messages, thereby constructing the extended input sym-bol set. We use the abstract data types (Header-Payload structures) and their corresponding JSON instruction files generated in the previous step as the basis for mutation operations to construct cus-tomized mutation strategies for subsequent state machine learning. We propose three mechanically implementable mutation strategies as follows: 
+
+• 1, Payload Nullification : delete the payload portion of the message; this mutation rule is not applicable to mes-sages that originally have an empty payload. 
+
+• 2, Payload Error Content Replacement : replace pay-load fields with error content or non-message-based config-urations. 
+
+• 3, Header Error Content Replacement : replace header fields with error content. It should be noted that for mutation methods 3 and 4, there is actually considerable room for manipulation. For example, we can delete part of the compliant message fields, add new content to them, duplicate the entire message, or directly generate a random value for substitution. All four of these mutation modes are sup-ported in our code, yet they are categorized as a single type during classification. For instance, with the support of the aforementioned mutation methods, all types of TYPE commands we can obtain in-clude: {TYPE A, TYPE, TYPE I, TYPE E, TYPE AA, TYPE df, TYE A, TYPED A, TYPETYPE A} In this study, we define the input space as comprising the basic messages derived from RFC documents and the mutated messages generated by our defined strategies; the abstract symbols corre-sponding to these messages constitutethe extended input symbol set: 
+
+Definition 4.1. Let the extended input symbol set be 𝑈 , the orig-inal symbols set be 𝑃 , and the mutated symbols set be 𝑀 . Then the full symbols set can be expressed as 𝑈 = 𝑃 ∪ 𝑀 . Among them, the mutated symbols set 𝑀 satisfies: for any 𝑚 ∈ 𝑀 , there exists a unique 𝑝 ∈ 𝑃 and a mutation operation 𝑓 such that 𝑚 = 𝑓 (𝑝) .Based on this definition, all subsequent symbols are contained in the set 𝑈 , and the distinction between mutated and non-mutated symbols benefits our mini-batch learning. 
+
+4.2.3 Construct the mapping from symbols to transmitted messages: 
+
+To enable interaction between the learning algorithm and a real protocol implementation, a test harness is constructed. The test harness translates abstract input symbols used by the learner into concrete protocol messages and converts the responses from the implementation back into abstract outputs. For simple protocols, this process mainly involves mapping abstract messages to con-crete message formats. For more complex protocols, additional func-tionality may be necessary, such as maintaining session states, man-aging transport connections, or handling cryptographic operations. When mature open-source implementations or libraries are avail-able (e.g., scapy [25] for TLS), constructing such a test harness can be significantly simplified. Building upon the client, we develop a general message con-struction mechanism capable of handling symbols that include mu-tation operations. For cryptographic protocols such as TLS, we im-plement a mechanism in which the client first parses the previ-ously generated message structure configuration file to construct standard messages, and then dynamically applies mutation opera-tions during message generation. For text-based protocols such as FTP, although the above approach remains applicable, their sim-pler message structures allow for a more lightweight solution. Specif-ically, based on the previously generated message structure config-uration file, we construct message-sending configuration files for all symbols, including those with mutation operations. During ex-ecution, the client only needs the message-sending configuration file to handle mutated symbols in the same way as regular symbols when sending messages. 
+
+## 4.3 Mini-Batch Learning 
+
+We propose a mini-batch learning strategy as shown in Figure 3 to address the issue that the mutation-based approach may produce an excessively large input symbol set that exceeds the practical capability of state machine learning algorithms. Starting from a basic alphabet, we incrementally construct a sequence of extended An Automated Framework for Input Alphabet Construction in Stateful Protocol Implementation Learning ASE 2026, October 12–16, 2026, Munich, Germany 
+
+alphabets. Instead of learning over the entire input symbol set at once, we perform learning on each of these extended alphabets in sequence, thereby reducing the complexity of the learning process. According to the complexity theory of state machine learning, the theoretical lower bound on the number of membership queries for any active learning algorithm is Θ(𝑘 2), where 𝑘 denotes the size of the alphabet [12].This bound is established with respect to the alphabet size, and does not account for other influencing factors in overall query complexity. With our mini-batch learning approach, this complexity is reduced to Θ(∑ 𝑘 2𝑖 ), where ∑ 𝑘 𝑖 ≈ 𝑘 . This formu-lation provides an advantage when 𝑘 is large. Furthermore, based on this learning strategy, we design a method that incorporates the basic state machine directly into the learning process, which further reduces the overall time overhead. 
+
+4.3.1 Construction of the Set of Extended Alphabets. We transform the large input symbol set into a collection of extended alphabets suitable for state machine learning by defining the basic alphabet and designing two methods for addition. To ensure that each alphabet covers all states of the protocol under conforming conditions, we first need to identify the basic alphabet of the protocol. Based on observations of state machines in stateful protocols, we find that many protocol state machines can be viewed as extensions of a core state machine with addi-tional functionalities layered on top. In practice, a protocol often consists of a core state machine augmented with various auxiliary operations or features. Taking the FTP protocol as an example, a core state machine can be established using commands such as USER, PASS, PASV, PORT, LIST, and QUIT. Most other commands are executed on top of this core state machine to provide specific functionalities, with-out increasing the number of states in the underlying machine. The alphabet corresponding to this core state machine is defined as the basic alphabet. Under normal circumstances, we can take the set of all ordinary symbols without mutation as the basic alphabet. From a practical perspective, the basic alphabet can be inferred from pro-tocol specification documents as well as prior testing practices. Once the basic alphabet is established, we can expand other al-phabets from it using two heuristic strategies, each motivated by a different idea, as follows. 
+
+Single-Symbol Mutation Priority: For the target alphabet, se-lect one symbol and add all its possible mutations to the original U0 U1 U2 
+
+> U5U4U3
+> U6U7
+
+…  
+
+> Time complexity: Θ(| U| 2)
+> U0U1
+> U0
+> U0
+> U2
+> U3
+
+…        
+
+> Time complexity: Θ(i|s i|2)< Θ(| U| 2)
+> Extended Input Symbol Set U
+> Mini -Batch
+> s1
+> s2
+> s3
+> Set of Extended Alphabets S
+> =
+> =
+> =
+
+Figure 3: Mini-Batch Learning Strategy      
+
+> {TYPE,TYPE_Payload_null ,TYPE_Payload_eunm ,…}
+> {USER, USER_Payload_null ,USER_Payload_replace ,…}
+> {PASS, PASS_Payload_null ,PASS_Payload _ replace,…}
+
+… …      
+
+> Basic Alphabet Extended Input Symbol Set
+> divided by message type Set of Extended Alphabets
+> 1=
+> {USER,PASS,PASV,LIST,QUIT
+> TYPE,TYPE_Payload_null ,
+> TYPE_Payload_eunm ,…}
+> 0=
+> {USER,PASS,
+> PASV,LIST,QUIT}
+> 2=
+> {USER,PASS,PASV,LIST, ,QUI
+> TUSER_Payload_null ,
+> USER_Payload_replace ,…}}
+
+Figure 4: Single-Symbol Mutation Priority 
+
+alphabet, thereby forming a new alphabet. Then, iterate through all the remaining symbols in the alphabet that have not yet been mu-tated and repeat the process. Implementation details are provided in Algorithm 1 in the appendix. Taking the FTP protocol as an example, as shown in Figure 4, we partition the set of candidate symbols into multiple subsets accord-ing to message types on the basis of our selected basic alphabet. By adding each subset to the basic alphabet separately, we obtain a se-ries of extended alphabets for testing. 
+
+Diverse-Symbol Mutation Priority: For the target alphabet, prioritize selecting the symbol with the fewest mutations applied, and randomly choose one of its mutations to add to the original alphabet. During the mutation process, a First-In-First-Out (FIFO) active window mechanism is maintained. If the duration of a state machine learning iteration exceeds a predefined threshold or the window size exceeds the maximum limit, the oldest element in the window is discarded. The detailed execution procedure is provided in Algorithm 2 in the appendix. As shown in Figure 5, in this scheme, several elements are se-lected from the input symbol set and added to a queue each time, while a certain number of elements are removed from the queue. The queue is then treated as a set and combined with the basic alphabet to form the extended alphabet. The two strategies described above correspond to two typical triggering scenarios of semantic bugs: Single-message-type seman-tic bugs and multi-message-type collaborative semantic bugs. This heuristic prioritization allows us to explore the input space while 0=
+
+> {USER,PASS,
+> PASV,LIST,QUIT}
+
+
+
+## …       
+
+> TYPE_Payload_null
+> USER_Payload_null
+> PASS_Payload_replace
+> When learning time or queue symbol count
+> exceeds a predefined threshold, the earliest
+> enqueued element is dequeued.
+> Weighted Random
+> Enqueuing
+> Set of Extended Alphabets
+> Extended Input Symbol Set
+> Basic Alphabet Symbol Queue
+> {TYPE,TYPE_Payload_null ,TYPE_Payload_eunm ,
+> USER, USER_Payload_null ,USER_Payload_replace ,
+> PASS, PASS_Payload_null ,PASS_Payload_replace ,…}
+> 1
+
+=
+
+> {USER,PASS,PASV,LIST, ,QUIT
+> TYPE_Payload_null ,
+> PASS_Payload_replace,RNTO_Pay
+> load_null }
+
+Figure 5: Diverse-Symbol Mutation Priority ASE 2026, October 12–16, 2026, Munich, Germany Trovato et al. 
+
+maintaining the computational tractability of the learning algo-rithm. Furthermore, this design facilitates subsequent efficiency optimizations and helps us mitigate the time-consuming nature of state machine learning. We define the alphabet set obtained by the above two algorithms as the set of extended alphabets: 
+
+Definition 4.2. Let the set of extended alphabets be 𝑆 = { Σ𝑖 ,i=1,2,…,n }, and Σ𝑖 = Σ0 ∪ Δ 𝑖 
+
+By defining such a structure, we can clearly observe that the extended alphabets we study exhibit a distinct characteristic: they all contain a subset of the basic alphabet. This observation provides a foundation for our subsequent design of a learning algorithm with a built-in basic state machine. 
+
+4.3.2 Performing State Machine Learning: To leverage the fact that each alphabet in the set of extended alphabetss contains the basic alphabet, we propose a method that integrates the known state ma-chine into the learning algorithm, thereby eliminating redundant learning of the basic state machine. Leveraging the structural prop-erty defined in Definition 4.2, we incorporate the state machine corresponding to Σ0 into the learning algorithm, thereby eliminat-ing redundant overhead across multiple learning iterations. The formal algorithm is presented in Algorithm 3 in the appendix. Intuitively, given an basic alphabet Σ0 and the corresponding state machine learning result 𝑆𝑀 0, when faced with an expanded alphabet Σ𝑖 derived from Σ0, we exploit the dependencies between observation tables. By reusing the information of the observation table constructed during the learning of Σ0, we only need to sup-plement and verify the table entries corresponding to the expanded portion to complete the state machine learning based on Σ0.The subsequent learning process is consistent with the standard 
+
+𝐿 ∗ algorithm [2]. The algorithm maintains an observation table consisting of a set of prefixes, a set of suffixes, and a membership function that records the outputs observed from the SUT. By en-forcing the closedness and consistency properties of the observa-tion table, the learner constructs a hypothesis Mealy machine that explains the observed input–output behavior. The learning process alternates between membership queries, which obtain outputs for specific input sequences, and equivalence queries, which check whether the current hypothesis is behaviorally equivalent to the SUT. If the hypothesis is incorrect, a counterexample is returned and used to refine the model. In practical black-box settings where a perfect equivalence oracle is unavailable, counterexamples are typically approximated using testing techniques such as random testing or conformance testing methods. The detailed execution procedure is provided in Algorithm 3 in the appendix. 
+
+## 5 Experimental Design 
+
+To thoroughly evaluate the effectiveness of our method, we con-ducted a series of experiments to address the following research questions: 
+
+RQ1: With the guidance of large language models, can our method automatically generate and generalize protocol-specific input sym-bols with high coverage across diverse real-world protocols? 
+
+RQ2: Can our designed mini-batch learning strategy significantly reduce time overhead and query complexity while maintaining inference accuracy during state machine learning on real-world 
+
+Table 1: Comprehensive Statistics of Tested Subjects                           
+
+> Protocol Subject #Stars Version
+> FTP LightFTP 277 5980ea1 ProFTPD 581 61e621e Pure-FTPD 887 c21b45f SMTP Exim 781 38903fb RTSP Live555 851 2023.05.10 TLS1.3-Server wolfSSL 2784 v4.6.0 OpenSSL 29847 3.0.1 TLS1.3-Client wolfSSL 2784 v4.6.0 OpenSSL 29847 3.0.1
+
+protocol implementations, compared with conventional learning paradigms? 
+
+RQ3: Can our proposed approach effectively detect protocol im-plementation inconsistency semantic bugs in state machines when evaluated on real-world protocol implementations? 
+
+## 5.1 Benchmark 
+
+Table 2 presents the subject programs used in our experiments. Our benchmark contains 9 network protocol implementations, cover-ing 5 widely used network protocols, namely RTSP, FTP, SMTP, and the server and client implementations of TLS 1.3. These subject programs cover both cryptographic and non-cryptographic proto-cols, in the PROFUZZBENCH benchmark [19] which is a popular benchmark for evaluating stateful protocol fuzzers. The above pro-tocols cover a variety of application scenarios, including stream-ing media, messaging, file transfer, and encrypted communication. Their implementations are mature and widely adopted by both en-terprises and individual users. Semantic bugs in these projects can have far-reaching impacts. 
+
+## 5.2 Test Experiment 
+
+All experiments were conducted on a server equipped with an In-tel Xeon Platinum 8468V CPU. The machine is configured with 12 logical cores clocked at 2.50 GHz, 16 GB of main memory, and runs on the Windows 10 operating system. In addition, Docker 28.1.1 is deployed to achieve environment isolation and containerized exe-cution of the subject under test. 
+
+## 5.3 Runtime Configuration 
+
+We standardize key runtime parameters for state machine learning and mutation across all experiments. During the symbol construc-tion phase, we use ChatGPT 5.3 model to generate message format configuration files. Since no existing work has studied the prob-lem of state machine learning over the set of extended alphabets and existing work [1, 17, 27] cannot automatically switch among the protocols under test, we compare our approach with the basic state machine learning algorithm to demonstrate the effectiveness of our mini-batch learning strategy. An Automated Framework for Input Alphabet Construction in Stateful Protocol Implementation Learning ASE 2026, October 12–16, 2026, Munich, Germany 
+
+Table 2: Comprehensive Statistics of Tested Protocols Proto. Msg# Cfg-Spec Msg# Sym# AlphSz 
+
+FTP 34 34 207 6SMTP 12 12 60 12 RTSP 10 10 88 10 TLS1.3-Server 3 3 68 3TLS1.3-Client 6 6 113 6
+
+> Notes : Msg# = Total number of message types; Cfg-Spec Msg# = Number of message types defined in configuration files that comply with protocol specifications; Sym# = Total number of symbols; AlphSz = Basic alphabet size.
+
+## 6 Evaluation 6.1 RQ1: Automated Symbol Construction 
+
+Table 2 summarizes the basic characteristics of the LLM-generated configuration files and the constructed input symbol sets. To eval-uate the usability of the generated message configuration files, we adopt manual inspection to verify whether the description of each message type in the files conforms to the protocol specifications. As shown in Table 2, all generated configuration files for evaluated protocols comply with the official protocol standards after manual verification, which guarantees the correctness of protocol message processing in the subsequent workflow of our framework. Based on these configurations, we construct the extended input alphabet by applying the mutation rules described in Section 4.2.2. Table 2 presents the final number of symbols obtained for each protocol. Regarding the selection of the basic alphabet, all protocols ex-cept FTP use the complete set of non-mutated symbols as the basic alphabet. For FTP, however, preliminary experiments and analysis of the specification indicate that fewer than 20% of message types are relevant to state machine construction. Therefore, we manually select six representative symbols based on the protocol documen-tation to form the basic alphabet, improving the overall efficiency of the learning process. 
+
+## 6.2 RQ2: Effectiveness of Mini-Batch Learning 
+
+Table 3 demonstrates the efficiency of our approach compared to performing state machine learning over the full input symbol set. In experiments on protocols such as LightFTP, directly applying state machine learning to the full input symbol set fails to termi-nate within 12 hours; for other protocols, the learning process still requires several hours to complete. This high computational cost makes the naive approach impractical for semantic vulnerability detection when the alphabet size is large. In contrast, both learning strategies based on extended alphabet sets are able to derive mean-ingful state machines within a bounded time, making them suitable for semantic vulnerability detection. Furthermore, the built-in ba-sic state machine designed in our approach can further improve learning efficiency. 
+
+6.2.1 Single-Symbol Mutation Priority Strategy. As shown in Ta-ble 3, the proposed single-symbol mutation–bounded strategy is able to complete state machine learning within hours—or even minutes in some cases. Compared to learning over the full input symbol set, the computational overhead is significantly reduced. Although this approach may theoretically lose the ability to detect bugs that require the interaction of multiple message types, its low cost makes it well-suited for preliminary analysis of mutated sym-bols. 
+
+6.2.2 Diverse-Symbol Mutation Priority. As shown in Table 3, our diverse-symbol mutation–prioritized strategy is able to learn dozens to hundreds of state machines within a 12-hour time budget. In con-trast, for some protocol implementations such as LightFTP, state machine learning over the full input symbol set fails to complete within the same time limit. Our approach, however, produces a series of usable state machines under identical constraints, which can be directly leveraged for subsequent vulnerability detection. Moreover, by controlling the window size, this strategy facilitates easier identification of the specific symbols responsible for anoma-lous behaviors when irregularities are observed in the learned state machines. 
+
+6.2.3 Learning algorithm with the built-in basic state machine. Ta-ble 3 also demonstrates the effectiveness of our built-in basic state machine strategy. For learning on the extended alphabet generated under the single-symbol mutation strategy, our method reduces the time cost by 32.5% on average compared with the baseline method. For the diverse-symbol mutation scenario, our method learns 16.4% additional state machines on average within 2 hours compared with the baseline. 
+
+## 6.3 RQ3: Semantic bug detection 
+
+6.3.1 Authentication Bypass. Our method successfully detects mul-tiple authentication bypass vulnerabilities present in wolfSSL. 
+
+CVE-2021-3336: Our method reproduces a critical authentica-tion bypass vulnerability (CVE-2021-3336) in the wolfSSL client. As shown in Figure 6, an attacker can bypass server authentication and impersonate a server by sending an Empty Certificate message followed by a CertificateVerify message signed with an arbitrary RSA key. In our approach, this vulnerability is triggered by mutat-ing a Certificate message using the Payload Nullification rule to generate an empty certificate, which is then added to the alphabet for state machine learning. The successful reproduction of this vulnerability is primarily attributed to two factors. First, while formal certificate message specifications do not define an empty certificate as a valid type, our mutation operates at the structural level, resulting in a struc-turally valid empty certificate that is not recognized as an error by the client. Second, unlike manually injecting the empty certifi-cate as a specific entry into the alphabet, our method generates this message through generic mutation. This represents a funda-mental distinction from the approach used by Rasoamanana et al. to discover this vulnerability [22]. 
+
+CVE-2022-25638: Our method also successfully reproduces the authentication bypass vulnerability CVE-2022-25638 presented in Section 3. As illustrated in Section 3, triggering this vulnerabil-ity requires the construction of two specifically crafted messages, ASE 2026, October 12–16, 2026, Munich, Germany Trovato et al. 
+
+Table 3: Learning Overhead and State Machine Count Statistics 
+
+Protocol Implementation with set of extended alphabets with built-in basic state machine Full. SP. DP. SP+. Improvement.1 (%) DP+. Improvement.2 (%) 
+
+FTP LightFTP × 2225.5 636 1203.0 45.9 724 13.8 ProFTPD × 35250.1 18 21098.0 40.1 24 33.3 Pure-FTPD × 1601.2 815 1581.1 1.3 867 6.3 SMTP Exim 22294.0 13733.0 35 4527.0 67.0 48 37.1 RTSP Live555 × 7058.0 180 2241.1 68.2 198 10.0 TLS1.3-Server wolfSSL 23478.2 497.4 527 387.0 22.2 585 11.0 OpenSSL 13449.0 234.8 878 167.3 28.7 993 13.1 TLS1.3-Client wolfSSL × 884.5 757 768.1 13.1 823 8.7 OpenSSL × 754.8 857 708.5 6.1 974 13.6       
+
+> Note: Full.= Full input symbol set(Time required for learning); ×=Learning non-terminated within 12 hours; SP. = Single-symbol Mutation Priority(Time required for learning); SP+. = SP combined with Learning algorithm with the built-in basic state machine; DP. = Diverse-Symbol Mutation Priority(Number of state machines); DP+. = DP combined with Learning algorithm with the built-in basic state machine; Improvement.1 = (SP - SP+ )/ SP ×100%; Improvement.2 = (DP+ - DP) / DP ×100%; membership query timeout: 1s; FIFO window size: 10 symbols; alphabet expansion iteration limit: 600s (10min); runtime budget: 12h (non-terminating if exceeded), 12h for diverse-symbol-priority setting.
+
+2
+
+3
+
+6
+
+4
+
+> ServerHello /-
+> Encrypted
+> Extension
+> s/ -
+> */EOF
+
+7
+
+> */EOF
+> Finish/Finish
+> +AppDate
+> Certificate
+> /-
+> EmptyCertificate /
+> -
+> CertificateVerify /
+> -
+> */EOF
+
+5 
+
+> Certificate
+> Verify_inva
+> lid /-*/EOF
+> */EOF
+> */EOF
+
+1
+
+Figure 6: CVE-2021-3336, Vulnerable State Machine 
+
+namely EmptyCert and CV_invalid. Both messages can be auto-matically generated through mutation under the proposed frame-work. Equipped with the designed Diverse-Symbol Mutation Prior-ity strategy, our approach reliably detects the vulnerability within 12 hours across all five repeated experiments. From a probabilistic perspective, even adopting a purely random mutation configura-tion under identical experimental settings yields a detection prob-ability exceeding 90% within the same 12-hour duration. 
+
+6.3.2 Specification Violation. Our method has identified 10 unre-ported protocol non-compliance instances in LightFTP, ProFTPD, PureFTPD, and Live555. These semantic anomalies may lead to potential security risks, functional abnormalities, and information leakage in the protocol stack. Among the detected issues, three bugs have been fixed by the developers, and one has been assigned a CVE identifier. 
+
+Duplicate and inappropriate return values: Our experiments reveal that certain commands in LightFTP and ProFTPD exhibit anomalous duplicate reply codes. Specifically, this issue occurs for the SITE command in LightFTP, as well as the STOR and LIST commands when the data connection has not been established. In ProFTPD, this issue affects the RNTO and SITE commands. Compared to traditional state machine learning approaches, we attribute these findings to two key features of our tool. First, mu-tated symbols enable the discovery of special command scenarios, such as issuing LIST and STOR without establishing a data con-nection. Second, even for symbols that do not require mutation, the FTP specification defines 34 commands, making state machine learning over the entire alphabet inherently time-consuming. In contrast, our mini-batch learning strategy, combined with a single-symbol–prioritized approach, allows for the rapid identification of symbols that exhibit semantic bugs. This behavior constitutes a class of specification violations that can disrupt the normal operation of protocol implementations. First, these duplicate reply codes exhibit implementation-specific char-acteristics across different FTP servers. This property can be ex-ploited by attackers to quickly identify the underlying implementa-tion, thereby enabling further targeted attacks—i.e., forming a form of state machine fingerprinting. Moreover, this issue may lead to functional inconsistencies when interacting with different clients. Since clients are typically unaware of such bugs, they may misin-terpret an extra reply code from a previous command as the re-sponse to a subsequent command, potentially rendering the entire connection unusable. Notably, the incorrect handling of the RNTO command in Pure-FTPD has been assigned a CVE identifier. 
+
+Non-compliant compatibility: In our experiments, we dis-covered protocol specification violations in three libraries: LightFTP, ProFTPD, Pure-FTPD, and Live555. Specifically, all three imple-mentations failed to strictly adhere to protocol specifications when processing certain erroneous messages. These issues can only be triggered by mutated symbols. An Automated Framework for Input Alphabet Construction in Stateful Protocol Implementation Learning ASE 2026, October 12–16, 2026, Munich, Germany 
+
+Table 4: Statistics of Newly Discovered Semantic Bugs                                     
+
+> Implementation Bug Description Mutation Rule of Triggering Symbol Status
+> LightFTP Duplicate and inappropriate return values Payload Error Content Replacement (LIST) Fixed LightFTP Duplicate and inappropriate return values Payload Error Content Replacement (STOR) Reported LightFTP Duplicate and inappropriate return values ×(SITE) Reported LightFTP Non-compliant compatibility Payload Error Content Replacement (TYPE) Reported ProFTPD Duplicate and inappropriate return values ×(RNTO) Fixed with CVE Assigned ProFTPD Duplicate and inappropriate return values ×(SITE) Reported ProFTPD Non-compliant compatibility Header Error Content Replacement (USER) Reported Pure-FTPD Non-compliant empty response Header Error Content Replacement (CWD) Reported Pure-FTPD Non-compliant compatibility Payload Error Content Replacement (PORT) Fixed Live555 Non-compliant compatibility Payload Error Content Replacement (PLAY) Reported
+
+The specific bugs include: LightFTP handles the argument of the TYPE command loosely. It only validates the first character of the argument, ignoring any subsequent characters. For instance, the command ”TYPE AW” is entirely invalid according to the proto-col specification, yet LightFTP processes it identically to ”TYPE A”. ProFTPD treats the newline character following the command code of the USER command as a space, which does not comply with the FTP protocol standard. Pure-FTPD withholds all response codes when a quotation mark is appended to the end of the CWD command code, whereas the FTP specification mandates the return of a 500 error code for invalid commands in such cases. The Pure-FTPD server also handles the port specified in the PORT command in a permissive manner: when the given port exceeds the valid range, the server automatically applies a modulo operation to the port number. Live555, when processing the resource address in a PLAY command, disregards address validity and directly processes the content following a slash /. As a result, malformed commands such as ”PLAY incorrect/ ” are executed as valid instructions. Although these errors do not disrupt the execution of normal functionality, extending behavior to accommodate undefined or even non-conforming inputs without explicit documentation is still considered a semantic bug. Such deviations may lead to unexpected behavior for users of the protocol implementation. 
+
+Non‑compliant empty response: We also observed undesired empty responses in Pure-FTPD during the processing of several commands. For the CWD command, when specific characters are injected into the command payload, the server returns a silent empty response. This issue also requires mutated symbols to be triggered. Although this behavior does not introduce functional failures, it may trigger unexpected runtime behaviors for upstream consumers of the protocol implementation. 
+
+## 7 Limition and Future work 
+
+Although automated mutation is adopted, hand-crafted mutation strategies exhibit inherent limitations: they fail to adequately cover bug-relevant input spaces and introduce redundant runtime over-head. Future work may integrate fuzzing techniques to generate more diversified and targeted mutation primitives. Direct client-server interaction in our experiments incurs sig-nificant network I/O overhead and synchronous waiting, slowing the learning process. Future work should minimize this overhead or use multi-threading to mitigate synchronous waiting latency. 
+
+## 8 RELATED WORK 
+
+Testing stateful network protocols is a fundamental challenge in software testing and security analysis [15]. Existing research has mainly explored two complementary directions: protocol fuzzing and state machine learning. While both approaches have achieved substantial advances in exploring protocol implementations and discovering vulnerabilities, there are still some issues in efficiently identifying semantic bugs. 
+
+Protocol Fuzzing: Existing approaches can generally be cate-gorized into mutation-based and grammar-based fuzzing. Mutation-based protocol fuzzers extend traditional coverage-guided fuzzing to network protocols by generating test cases through input muta-tions and leveraging runtime feedback to guide exploration. Rep-resentative examples include AFLNet [20] and its extensions such as NSFuzz [21] and Nyx-Net [24], which introduce various mecha-nisms to improve state exploration efficiency and fuzzing through-put. Another line of work explores grammar-based or structure-aware fuzzing, which leverages input grammars to generate valid structured inputs (e.g., Superion [29] and NAUTILUS [5]). Despite these advances, most protocol fuzzers primarily target memory-safety vulnerabilities such as buffer overflows and use-after-free errors, which are typically detected using runtime instru-mentation tools like ASAN [26]. In contrast, detecting semantic bugs , i.e., violations of protocol logic or state-machine behavior, often relies on manual inspection of abnormal interactions [11]. Despite the existence of tools like DyFuzzing [1], which aim to detect memory-corruption and semantic vulnerabilities in adver-sarial protocol environments, applying such tools to new protocol implementations requires substantial customization of the source program and testing harness, including protocol-specific instru-mentation, which increases the deployment overhead for previ-ously unseen protocols. Moreover, mutation-based fuzzing usually operates at the byte level, which may produce syntactically in-valid messages that fail to exercise deeper protocol logic [1]. Con-sequently, fuzzing provides extensive input exploration capability but lacks mechanisms for systematically identifying semantic in-consistencies in complex protocol state machines. 
+
+State Machine Learning for Protocol Analysis: Another re-search direction is active automata learning , which aims to infer ASE 2026, October 12–16, 2026, Munich, Germany Trovato et al. 
+
+protocol state machines by systematically interacting with proto-col implementations, and has been widely adopted in practical frame-works such as LearnLib [14]. Prior studies have successfully ap-plied automata learning to analyze security protocols and recon-struct behavioral models of protocol implementations [6, 8, 27]. These inferred models have proven instrumental for detecting se-mantic inconsistencies and vulnerabilities in widely deployed pro-tocols such as TLS [22].Some studies have improved state machine learning from different perspectives, such as improving the space efficiency [13], extending it to grey-box learning [17] and enhanc-ing its ability to handle non-determinism [16]. However, a fundamental bottleneck of many learning-based ap-proaches lies in the construction of the input alphabet, which de-fines the set of protocol messages used during learning. In prac-tice, alphabets are typically manually designed based on domain knowledge, restricting the explored input space and making large alphabets computationally expensive due to the large number of required queries. Recent work explores incremental alphabet con-struction for specific protocols such as TLS [16], but these methods still rely on manually specified candidate messages. 
+
+## 9 Conclusion 
+
+Ensuring the semantic correctness of stateful protocol implementa-tions is crucial for system stability and security, yet existing detec-tion approaches face limitations such as poor scalability and heavy reliance on expert effort. Addressing the core challenge of state ma-chine learning in this domain—automated construction of input alphabets—this paper proposes a mutation-driven building para-digm. The framework integrates three key modules: LLM-assisted protocol configuration extraction, structured mutation, and mini-batch learning. Experimental results show that our approach effec-tively reproduces known semantic vulnerabilities, discovers previ-ously unknown bugs (with three fixed and one assigned a CVE), and achieves efficient learning termination even for large candi-date alphabets. This work provides a practical, extensible solution for semantic bug detection in stateful protocols, advancing the state of the art in protocol testing. 
+
+## Data Availability Statement 
+
+All source code supporting the findings of this paper are publicly and anonymously available in a long-term archive with a DOI: https://doi.org/10.5281/zenodo.19246632. 
+
+## AI Generative Tool Statement 
+
+Generative AI tools were used to assist with language polishing and drafting of this paper. 
+
+## Appendix 
+
+Algorithm 1 Single-Symbol Mutation Priority Algorithm 
+
+Require: basic Alphabet Σ0 (Σ0 ⊆ 𝑃 )
+
+Ensure: set of Expanded alphabets 𝑆 = {Σ 𝑖 } 
+
+> 1:
+
+Initialization : 𝑆 ← ∅ ; 𝑃 pending ← 𝑃 − Σ 0; 𝑖 = 1  
+
+> 2:
+
+while 𝑃 pending ≠ ∅ do  
+
+> 3:
+
+Select an arbitrary letter 𝑝 ∈ 𝑃 pending  
+
+> 4:
+
+Compute all mutated forms of 𝑝 : Mut (𝑝) = {𝑓 (𝑝) ∣ 𝑓 ∈ 𝐹 (𝑝)} and Σ𝑖 = Mut (𝑝) ∪ Σ 0 
+
+> 5:
+
+Expand the alphabet Set: 𝑆 ← 𝑆 ∪ {Σ 𝑖 } 
+
+> 6:
+
+Remove 𝑝 from pending set: 𝑃 pending ← 𝑃 pending ∖ {𝑝}  
+
+> 7:
+
+𝑖 = 𝑖 + 1  
+
+> 8:
+
+end while Algorithm 2 Diverse-Symbol Mutation Priority Algorithm 
+
+Require: basic Alphabet Σ0 (Σ0 ⊆ 𝑃 ), Time threshold 𝑇 th , Max window size 𝑊 max 
+
+Ensure: set of Expanded alphabets 𝑆  
+
+> 1:
+
+Initialization : Σ ← Σ 0; 𝑊 ← ∅ ; MutCount (𝑝) ← 0, ∀𝑝 ∈ Σ0; 𝑃 pending ← 𝑃 ∖ Σ 0; 
+
+> 2:
+
+loop  
+
+> 3:
+
+Step 1: Select symbol with least mutations  
+
+> 4:
+
+𝑝 ∗ ← arg min  
+
+> 𝑝∈(Σ 0∪𝑃 pending )
+
+MutCount (𝑝) ; 
+
+> 5:
+
+Step 2: Randomly generate one mutation  
+
+> 6:
+
+Randomly select 𝑓 ∈ 𝐹 (𝑝 ∗); 𝑞 ← 𝑓 (𝑝 ∗); Σ ← Σ ∪ {𝑞} ; 
+
+> 7:
+
+MutCount (𝑝 ∗) ← MutCount (𝑝 ∗) + 1 ; 𝑊 ← 𝑊 ∪ {𝑞} ; 
+
+> 8:
+
+Step 3: Check thresholds  
+
+> 9:
+
+𝑇 learn ← TimeConsumption (Σ) ; 
+
+> 10:
+
+if 𝑇 learn > 𝑇 th ∨ |𝑊 | > 𝑊 max then  
+
+> 11:
+
+𝑤 old ← head (𝑊 ) ; 𝑊 ← 𝑊 ∖ {𝑤 old }; Σ ← Σ ∖ {𝑤 old }; 
+
+> 12:
+
+end if  
+
+> 13:
+
+Step 4: Update pending set  
+
+> 14:
+
+𝑃 pending ← 𝑃 pending ∖ {𝑝 ∗}; 
+
+> 15:
+
+end loop An Automated Framework for Input Alphabet Construction in Stateful Protocol Implementation Learning ASE 2026, October 12–16, 2026, Munich, Germany 
+
+Algorithm 3 State Machine Learning with built-in state machine 
+
+Require: Basic Alphabet Σ0, Expanded Alphabet Σ, Delta Alpha-bet Δ = Σ − Σ 0
+
+Ensure: Expanded State Machine 𝑆𝑀 
+
+1: Pre-Learning : Perform 𝐿 ∗ algorithm on Σ0, obtaining the base observation table 𝑜𝑡 0 = (𝐷 0, 𝑆 0, 𝑆𝐴 0, 𝐹 0 = {(𝑑, 𝑠) → 𝑙 ∣ 𝑑 ∈ 𝐷 0, 𝑠 ∈ 𝑆 0 ∪ 𝑆𝐴 0}) 
+
+2: Initialization : Initialize new observation table 𝑜𝑡 =(𝐷, 𝑆, 𝑆𝐴, 𝐹 ) , assign 𝑜𝑡 0 to 𝑜𝑡 
+
+3: Expanding the Prefix Set: add Δ to 𝐷 
+
+4: Expanding the Precomputed Suffix Set: add Δ𝑆𝐴 = {𝑠 + 𝛿 ∣ 𝛿 ∈ Δ, 𝑠 ∈ 𝑆} to 𝑆𝐴 
+
+5: Query the SUT and complete all missing observation table en-tries, add Δ𝐹 = {(𝑑, 𝑠) → 𝑙 ∣ (𝑑, 𝑠) ∈ (𝐷 × (𝑆 ∪ 𝑆𝐴)) − (𝐷 0 ×(𝑆 0 ∪ 𝑆𝐴 0))} to 𝐹 
+
+6: Check the closedness of 𝑜𝑡 
+
+7: Check the Consistency of 𝑜𝑡 
+
+8: Constructing the hypothesized automaton 
+
+9: Query the Minimally Adequate Teacher (MAT) for a coun-terexample 
+
+10: if Counterexample 𝑐𝑒 exists then 
+
+11: Add 𝑐𝑒 to the observation table 
+
+12: Goto Line 6 ▷ Return to check 
+
+13: else 
+
+14: Convert 𝑜𝑡 to 𝑆𝑀 
+
+15: Return 𝑆𝑀 ▷ Output automaton 
+
+16: end if 
+
+## References 
+
+[1] Max Ammann, Lucca Hirschi, and Steve Kremer. 2024. DY fuzzing: formal Dolev-Yao models meet cryptographic protocol fuzz testing. In 2024 IEEE Symposium on Security and Privacy (SP) . IEEE, 1481–1499. [2] Dana Angluin. 1987. Learning regular sets from queries and counterexamples. 
+
+Information and computation 75, 2 (1987), 87–106. [3] Linard Arquint, Malte Schwerhoff, Vaibhav Mehta, and Peter Müller. 2023. Ageneric methodology for the modular verification of security protocol imple-mentations. In Proceedings of the 2023 ACM SIGSAC Conference on Computer and Communications Security . 1377–1391. [4] Linard Arquint, Felix A Wolf, Joseph Lallemand, Ralf Sasse, Christoph Sprenger, Sven N Wiesner, David Basin, and Peter Müller. 2023. Sound verification of security protocols: From design to interoperable implementations. In 2023 IEEE Symposium on Security and Privacy (SP) . IEEE, 1077–1093. [5] Cornelius Aschermann, Tommaso Frassetto, Thorsten Holz, Patrick Jauernig, Ahmad-Reza Sadeghi, and Daniel Teuchert. 2019. NAUTILUS: Fishing for deep bugs with grammars.. In NDSS , Vol. 19. 337. [6] Fabian Bäumer, Marcel Maehren, Marcus Brinkmann, and Jörg Schwenk. 2025. Finding ssh strict key exchange violations by state learning. In Proceedings of the 2025 ACM SIGSAC Conference on Computer and Communications Security . 246– 260. [7] Benjamin Beurdouche, Karthikeyan Bhargavan, Antoine Delignat-Lavaud, Cé-dric Fournet, Markulf Kohlweiss, Alfredo Pironti, Pierre-Yves Strub, and Jean Karim Zinzindohoue. 2017. A messy state of the union: Taming the com-posite state machines of TLS. Commun. ACM 60, 2 (2017), 99–107. [8] Joeri De Ruiter and Erik Poll. 2015. Protocol state fuzzing of {TLS } implementa-tions. In 24th USENIX Security Symposium (USENIX Security 15) . 193–206. [9] Tiago Ferreira, Harrison Brewton, Loris D’Antoni, and Alexandra Silva. 2021. Prognosis: closed-box analysis of network protocol implementations. In Proceed-ings of the 2021 ACM SIGCOMM 2021 Conference . 762–774. [10] Paul Fiterau-Brostean, Bengt Jonsson, Robert Merget, Joeri De Ruiter, Konstanti-nos Sagonas, and Juraj Somorovsky. 2020. Analysis of {DTLS } implementations using protocol state fuzzing. In 29th USENIX Security Symposium (USENIX Secu-rity 20) . 2523–2540. [11] Paul Fiterau-Brostean, Bengt Jonsson, Konstantinos Sagonas, and Fredrik Tåquist. 2023. Automata-Based Automated Detection of State Machine Bugs in Protocol Implementations.. In NDSS .[12] Falk M Howar. 2012. Active learning of interface programs. (2012). [13] Malte Isberner, Falk Howar, and Bernhard Steffen. 2014. The TTT algorithm: a redundancy-free approach to active automata learning. In International Confer-ence on Runtime Verification . Springer, 307–322. [14] Malte Isberner, Falk Howar, and Bernhard Steffen. 2015. The open-source learn-lib: a framework for active automata learning. In International Conference on Computer Aided Verification . Springer, 487–495. [15] Kunpeng Jian, Yanyan Zou, Yeting Li, Jialun Cao, Menghao Li, Jian Sun, Jingyi Shi, and Wei Huo. 2024. Fuzzing for Stateful Protocol Implementations: Are We There Yet?. In International Symposium on Theoretical Aspects of Software Engineering . Springer, 186–204. [16] Marcel Maehren, Nurullah Erinola, Robert Merget, Jörg Schwenk, and Juraj So-morovsky. 2025. Towards {Internet-Based } State Learning of {TLS } State Ma-chines. In 34th USENIX Security Symposium (USENIX Security 25) . 7097–7116. [17] Chris McMahon Stone, Sam L Thomas, Mathy Vanhoef, James Henderson, Nico-las Bailluet, and Tom Chothia. 2022. The closer you look, the more you learn: A grey-box approach to protocol state machine learning. In Proceedings of the 2022 ACM SIGSAC Conference on Computer and Communications Security . 2265–2278. [18] Ruijie Meng, Martin Mirchev, Marcel Böhme, and Abhik Roychoudhury. 2024. Large Language Model guided Protocol Fuzzing.. In NDSS .[19] Roberto Natella and Van-Thuan Pham. 2021. Profuzzbench: A benchmark for stateful protocol fuzzing. In Proceedings of the 30th ACM SIGSOFT international symposium on software testing and analysis . 662–665. [20] Van-Thuan Pham, Marcel Böhme, and Abhik Roychoudhury. 2020. Aflnet: A greybox fuzzer for network protocols. In 2020 IEEE 13th international conference on software testing, validation and verification (ICST) . IEEE, 460–465. [21] Shisong Qin, Fan Hu, Zheyu Ma, Bodong Zhao, Tingting Yin, and Chao Zhang. 2023. Nsfuzz: Towards efficient and state-aware network service fuzzing. ACM Transactions on Software Engineering and Methodology 32, 6 (2023), 1–26. [22] Aina Toky Rasoamanana, Olivier Levillain, and Hervé Debar. 2022. Towards a systematic and automatic use of state machine inference to uncover security flaws and fingerprint TLS stacks. In European symposium on research in computer security . Springer, 637–657. [23] Eric Rescorla. 2018. The Transport Layer Security (TLS) Protocol Version 1.3. RFC 8446. https://www.rfc-editor.org/rfc/rfc8446 [24] Sergej Schumilo, Cornelius Aschermann, Andrea Jemmett, Ali Abbasi, and Thorsten Holz. 2022. Nyx-net: network fuzzing with incremental snapshots. In 
+
+Proceedings of the seventeenth european conference on computer systems . 166–180. [25] secdev, Guillaume Potter, and the Scapy Contributors. 2026. Scapy . https:// github.com/secdev/scapy [26] Konstantin Serebryany, Derek Bruening, Alexander Potapenko, and Dmitriy Vyukov. 2012. {AddressSanitizer }: A fast address sanity checker. In 2012 USENIX annual technical conference (USENIX ATC 12) . 309–318. [27] Arthur Tran Van, Olivier Levillain, and Herve Debar. 2024. Mealy verifier: An au-tomated, exhaustive, and explainable methodology for analyzing state machines in protocol implementations. In Proceedings of the 19th International Conference on Availability, Reliability and Security . 1–10. [28] Jules van Thoor, Joeri de Ruiter, and Erik Poll. 2018. Learning state machines of TLS 1.3 implementations. Bachelor thesis. Radboud University (2018), 96. [29] Junjie Wang, Bihuan Chen, Lei Wei, and Yang Liu. 2019. Superion: Grammar-aware greybox fuzzing. In 2019 IEEE/ACM 41st International Conference on Soft-ware Engineering (ICSE) . IEEE, 724–735.

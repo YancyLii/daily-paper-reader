@@ -6,148 +6,94 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-29
-- 运行时间：2026-06-29 21:16:15 UTC
+- 最新运行日期：2026-07-01
+- 运行时间：2026-07-01 20:35:53 UTC
 - 运行状态：成功
-- 本次总论文数：42
-- 精读区：29
+- 本次总论文数：24
+- 精读区：11
 - 速读区：13
 
 ### 今日简报（AI）
-今日精读42篇AI安全论文，聚焦代码漏洞检测与长时Agent安全约束坍缩。  
-最值得关注：10分论文《Revelio》实现仓库级内存漏洞的低成本检测，《Governance Decay》揭示多步Agent中安全指令被悄然压缩擦除的机制。  
-建议开发者优先审视Agent长链任务中的规则衰减风险，并借鉴代码扫描的自动化思路加固自身项目。
-- 详情：[/202606/29/README](/202606/29/README)
+AI安全与智能体控制成今日焦点，24篇研究覆盖从多模态防御到代码智能体的深度优化。  
+最值得关注：多模态基础模型Yuvion VL专攻对抗内容与AI安全，以及用确定性控制平面驯服LLM编码智能体的“野生”行为。  
+建议读者优先阅读这两篇9分精读，并结合投机解码安全性速读，构建兼顾效率与风险的AI落地思维。
+- 详情：[/202607/01/README](/202607/01/README)
 
 ### 精读区论文标签
-1. [Revelio: Cost-Efficient Agentic Memory Safety Vulnerability Detection For Repository-Scale Codebases](/202606/29/2606.22263v1-revelio-cost-efficient-agentic-memory-safety-vulnerability-detection-for-repository-scale-codebases)  
-   标签：评分：10.0/10、query:vuldet
-   evidence：端到端智能体框架，结合LLM与静态分析生成可验证的漏洞证明，用于检测内存安全漏洞
-2. [Governance Decay: How Context Compaction Silently Erases Safety Constraints in Long-Horizon LLM Agents](/202606/29/2606.22528v1-governance-decay-how-context-compaction-silently-erases-safety-constraints-in-long-horizon-llm-agents)  
-   标签：评分：10.0/10、query:agsec
-   evidence：上下文压缩悄然移除嵌入式治理约束，导致LLM智能体执行禁止的工具操作
-3. [GIF: Locally Sound Geometric Information Flow Control for LLMs](/202606/29/2606.23277v1-gif-locally-sound-geometric-information-flow-control-for-llms)  
-   标签：评分：10.0/10、query:agsec
-   evidence：提出几何信息流控制（GIF），在LLM中实现基于雅可比矩阵的令牌级信息流追踪，防止提示注入和数据泄露。
-4. [AgentLens: Interpretable Safety Steering via Mechanistic Subspaces for Multi-Turn Coding Agent](/202606/29/2606.22673v1-agentlens-interpretable-safety-steering-via-mechanistic-subspaces-for-multi-turn-coding-agent)  
+1. [Yuvion VL: A Multimodal Foundation Model for Adversarial Content and AI Safety](/202607/01/2606.25034v2-yuvion-vl-a-multimodal-foundation-model-for-adversarial-content-and-ai-safety)  
    标签：评分：9.0/10、query:agsec
-   evidence：提出机制子空间用于多轮编码代理的可解释安全引导，实现细粒度行为控制
-5. [DE-FIVE: Detecting Malicious Image Prompts via Fourier Features and Image Vector Embeddings](/202606/29/2606.22779v1-de-five-detecting-malicious-image-prompts-via-fourier-features-and-image-vector-embeddings)  
+   evidence：面向对抗内容和AI安全的多模态基础模型
+2. [A Deterministic Control Plane for LLM Coding Agents](/202607/01/2606.26924v1-a-deterministic-control-plane-for-llm-coding-agents)  
    标签：评分：9.0/10、query:agsec
-   evidence：检测恶意图像提示以保护用户意图免受多模态篡改
-6. [Intent-Governed Tool Authorization for AI Agents](/202606/29/2606.22916v1-intent-governed-tool-authorization-for-ai-agents)  
+   evidence：提出确定性控制平面管理LLM编码代理的权限，实现安全控制
+3. [Agent Safety Is Action Alignment](/202607/01/2606.28739v1-agent-safety-is-action-alignment)  
    标签：评分：9.0/10、query:agsec
-   evidence：意图驱动的访问控制确保工具调用符合用户意图，防止未授权操作
-7. [Detecting Malicious Agent Skills in the Wild using Attention](/202606/29/2606.23416v1-detecting-malicious-agent-skills-in-the-wild-using-attention)  
-   标签：评分：9.0/10、query:agsec
-   evidence：检测LLM代理市场中的恶意第三方技能，防止代理劫持和数据泄露
-8. [JupOtter: Cell-Level Bug Detection in Jupyter Notebooks](/202606/29/2606.23877v1-jupotter-cell-level-bug-detection-in-jupyter-notebooks)  
+   evidence：主张智能体安全应聚焦行动对齐而非内容拒绝
+4. [Understanding Binary Code Similarity for Real-World Vulnerability Detection: A Large-Scale Empirical Study](/202607/01/2606.28870v1-understanding-binary-code-similarity-for-real-world-vulnerability-detection-a-large-scale-empirical-study)  
    标签：评分：9.0/10、query:vuldet
-   evidence：针对Jupyter笔记本的自动化错误检测系统，与漏洞识别相关
-9. [AutoSpec: Safety Rule Evolution for LLM Agents via Inductive Logic Programming](/202606/29/2606.24245v1-autospec-safety-rule-evolution-for-llm-agents-via-inductive-logic-programming)  
+   evidence：利用二进制代码相似性进行固件漏洞检测的大规模实证研究
+5. [From Tool Connection to Execution Control: Benchmarking Security Invariants in MCP-Style Agent Runtimes](/202607/01/2606.29073v1-from-tool-connection-to-execution-control-benchmarking-security-invariants-in-mcp-style-agent-runtimes)  
    标签：评分：9.0/10、query:agsec
-   evidence：使用归纳逻辑编程为LLM代理进化安全规则以阻止不安全行为
-10. [AutoSpec: Safety Rule Evolution for LLM Agents via Inductive Logic Programming](/202606/29/2606.24245v2-autospec-safety-rule-evolution-for-llm-agents-via-inductive-logic-programming)  
+   evidence：在代理运行时中强制执行安全不变量
+6. [Divergence-based Safety Measure for Large Language Models via Rational Inattention](/202607/01/2606.29081v1-divergence-based-safety-measure-for-large-language-models-via-rational-inattention)  
    标签：评分：9.0/10、query:agsec
-   evidence：LLM智能体安全规则的自动演化
-11. [Securing LLM-Agent Long-Term Memory Against Poisoning: Non-Malleable, Origin-Bound Authority with Machine-Checked Guarantees](/202606/29/2606.24322v1-securing-llm-agent-long-term-memory-against-poisoning-non-malleable-origin-bound-authority-with-machine-checked-guarantees)  
-   标签：评分：9.0/10、query:agsec
-   evidence：提出不可篡改、源头绑定的权限机制防止LLM代理记忆中毒
-12. [Poisoned Playbooks: Demystifying Knowledge Poisoning Effects on AI Security Agents](/202606/29/2606.24402v1-poisoned-playbooks-demystifying-knowledge-poisoning-effects-on-ai-security-agents)  
+   evidence：提出基于散度的安全度量，量化嵌入输入攻击下的输出约束，作为内容与行为安全约束
+7. [Symbolon: Symbolic Execution by Learning Code Transformation](/202607/01/2606.29108v1-symbolon-symbolic-execution-by-learning-code-transformation)  
    标签：评分：9.0/10、query:vuldet
-   evidence：知识中毒导致AI安全智能体产生错误利用行为，属于对漏洞分析的对抗攻击
-13. [Yuvion VL: A Multimodal Foundation Model for Adversarial Content and AI Safety](/202606/29/2606.25034v1-yuvion-vl-a-multimodal-foundation-model-for-adversarial-content-and-ai-safety)  
+   evidence：用于漏洞检测和安全测试的符号执行框架，通过学习代码变换提升可扩展性
+8. [Defending Against Harmful Supervision Hidden in Benign Samples](/202607/01/2606.30263v1-defending-against-harmful-supervision-hidden-in-benign-samples)  
    标签：评分：9.0/10、query:agsec
-   evidence：面向对抗内容与AI安全的多模态模型
-14. [ActPlane: Programmable OS-Level Policy Enforcement for Agent Harnesses](/202606/29/2606.25189v1-actplane-programmable-os-level-policy-enforcement-for-agent-harnesses)  
-   标签：评分：9.0/10、query:agsec
-   evidence：操作系统级策略执行保障智能体安全
-15. [Representation Matters: An Empirical Study of Program Representations for LLM Vulnerability Reasoning](/202606/29/2606.25356v1-representation-matters-an-empirical-study-of-program-representations-for-llm-vulnerability-reasoning)  
+   evidence：针对微调数据投毒中隐藏有害监督的防御方法，属于LLM安全控制策略
+9. [Words Speak Louder Than Code: Investigating Cognitive Heuristics in LLM-Based Code Vulnerability Detection](/202607/01/2606.30587v1-words-speak-louder-than-code-investigating-cognitive-heuristics-in-llm-based-code-vulnerability-detection)  
    标签：评分：9.0/10、query:vuldet
-   evidence：面向LLM漏洞检测的程序表征实证研究
-16. [PolicyAlign: Direct Policy-Based Safety Alignment for Large Language Models](/202606/29/2606.25442v1-policyalign-direct-policy-based-safety-alignment-for-large-language-models)  
+   evidence：首次系统研究认知启发式偏见对LLM漏洞检测的影响
+10. [AgentBound: Verifiable Behavioral Governance for Autonomous AI Agents](/202607/01/2606.30970v1-agentbound-verifiable-behavioral-governance-for-autonomous-ai-agents)  
    标签：评分：9.0/10、query:agsec
-   evidence：直接使用自然语言安全策略对LLM进行对齐，通过策略自蒸馏快速适应新安全需求
-17. [Automated Detection of Configuration-Specific Security Vulnerabilities via Patch Analysis](/202606/29/2606.25863v1-automated-detection-of-configuration-specific-security-vulnerabilities-via-patch-analysis)  
-   标签：评分：9.0/10、query:vuldet
-   evidence：静态补丁分析检测配置相关漏洞
-18. [Helpful or Harmful? Evaluating LLM-Assisted Vulnerability Patching via a Human Study](/202606/29/2606.25973v1-helpful-or-harmful-evaluating-llm-assisted-vulnerability-patching-via-a-human-study)  
-   标签：评分：9.0/10、query:vuldet
-   evidence：评估LLM辅助漏洞修复与手动调试在实际场景中的对比
-19. [The Unfireable Safety Kernel: Execution-Time AI Alignment for AI Agents and Other Escapable AI Systems](/202606/29/2606.26057v1-the-unfireable-safety-kernel-execution-time-ai-alignment-for-ai-agents-and-other-escapable-ai-systems)  
+   evidence：具备可验证行为监督的运行时治理框架用于自主智能体
+11. [A Lifecycle and Application-Stack Survey of Large Language Model Vulnerabilities: Attacks, Risks, Defenses, and Open Problems](/202607/01/2606.31639v1-a-lifecycle-and-application-stack-survey-of-large-language-model-vulnerabilities-attacks-risks-defenses-and-open-problems)  
    标签：评分：9.0/10、query:agsec
-   evidence：提出外部授权机制，包含进程隔离、操作前强制、故障关闭和外部签名授权，用于代理控制
-20. [Instruction Bleed: Cross-Module Interference in Prompt-Composed Agentic Systems](/202606/29/2606.26356v1-instruction-bleed-cross-module-interference-in-prompt-composed-agentic-systems)  
-   标签：评分：9.0/10、query:agsec
-   evidence：形式化提示组合代理系统中因Transformer自注意力非隔离导致的组合行为泄露
-21. [Verifying Intent and Harm: A Unified Defense Against LLM-Generated Threats](/202606/29/2606.26377v1-verifying-intent-and-harm-a-unified-defense-against-llm-generated-threats)  
-   标签：评分：9.0/10、query:agsec
-   evidence：联合验证提示意图与响应危害的统一防御框架
-22. [VIGIL: Runtime Enforcement of Behavioral Specifications in AI Agent Skills](/202606/29/2606.26524v1-vigil-runtime-enforcement-of-behavioral-specifications-in-ai-agent-skills)  
-   标签：评分：9.0/10、query:agsec
-   evidence：对AI代理技能的自然语言规范进行运行时执行，以约束输出内容与行为
-23. [Autoformalization of Agent Instructions into Policy-as-Code](/202606/29/2606.26649v1-autoformalization-of-agent-instructions-into-policy-as-code)  
-   标签：评分：9.0/10、query:agsec
-   evidence：将智能体指令与策略自动转化为形式化验证的安全策略代码
-24. [Chai: Agentic Discovery of Cryptographic Misuse Vulnerabilities](/202606/29/2606.26933v1-chai-agentic-discovery-of-cryptographic-misuse-vulnerabilities)  
-   标签：评分：9.0/10、query:vuldet
-   evidence：基于AI的加密误用漏洞发现系统，直接实现自动化漏洞检测。
-25. [On the Inseparability of Instructions and Data in Shared-Embedding Sequence Models](/202606/29/2606.27567v1-on-the-inseparability-of-instructions-and-data-in-shared-embedding-sequence-models)  
-   标签：评分：9.0/10、query:agsec
-   evidence：证明在共享嵌入中指令与数据不可分离，导致完美提示注入防护不可能，直接涉及LLM代理令牌流控制机制。
-26. [Yuvion LLM: An Adversarially-Aware Large Language Model for Content And AI Safety](/202606/29/2606.27632v1-yuvion-llm-an-adversarially-aware-large-language-model-for-content-and-ai-safety)  
-   标签：评分：9.0/10、query:agsec
-   evidence：对抗鲁棒内容安全大语言模型
-27. [USAD: Uncertainty-aware Statistical Adversarial Detection](/202606/29/2606.27832v1-usad-uncertainty-aware-statistical-adversarial-detection)  
-   标签：评分：9.0/10、query:vuldet
-   evidence：提出不确定性感知的统计对抗检测方法
-28. [SBridge: Identifying Source-to-Binary Function Similarity via Cross-Domain Control Block Matching](/202606/29/2606.28058v1-sbridge-identifying-source-to-binary-function-similarity-via-cross-domain-control-block-matching)  
-   标签：评分：9.0/10、query:vuldet
-   evidence：通过源到二进制函数相似性自动检测传播漏洞
-29. [Robust Harmful Features Under Jailbreak Attacks: Mechanistic Evidence from Attention Head Specialization in Large Language Models](/202606/29/2606.28153v1-robust-harmful-features-under-jailbreak-attacks-mechanistic-evidence-from-attention-head-specialization-in-large-language-models)  
-   标签：评分：9.0/10、query:agsec
-   evidence：LLM安全对齐中注意力头特化的机械论证据
+   evidence：综述涵盖智能体和工具的LLM漏洞，直接涉及安全控制策略
 
 ### 速读区论文标签
-1. [The Geometry of Refusal: Linear Instability in Safety-Aligned LLMs](/202606/29/2606.22686v1-the-geometry-of-refusal-linear-instability-in-safety-aligned-llms)  
+1. [Speculative Decoding at Temperature Zero: A Scoped Safety-Invariance Screen with a 48,072-Sample Expansion](/202607/01/2606.25097v1-speculative-decoding-at-temperature-zero-a-scoped-safety-invariance-screen-with-a-48072-sample-expansion)  
    标签：评分：8.0/10、query:agsec
-   evidence：隔离LLM中的拒绝方向，探测并操控安全护栏，展示线性不稳定性
-2. [Governed Shared Memory for Multi-Agent LLM Systems](/202606/29/2606.24535v1-governed-shared-memory-for-multi-agent-llm-systems)  
-   标签：评分：8.0/10、query:agsec
-   evidence：为多代理LLM系统中的共享内存定义治理原语，防止未授权泄露、过时传播和溯源崩溃
-3. [Inherited Circuits, Learned Semantics: How Fine-Tuning Creates Evasion Vulnerabilities Invisible to Standard Evaluation](/202606/29/2606.27091v1-inherited-circuits-learned-semantics-how-fine-tuning-creates-evasion-vulnerabilities-invisible-to-standard-evaluation)  
+   evidence：推测解码的安全不变性筛选
+2. [Reinforcement Learning for Software Vulnerability Analysis: A Systematic Review with Emphasis on C/C++ Source Code and Static Analysis](/202607/01/2606.28403v1-reinforcement-learning-for-software-vulnerability-analysis-a-systematic-review-with-emphasis-on-cc-source-code-and-static-analysis)  
    标签：评分：8.0/10、query:vuldet
-   evidence：微调后的安全分类LLM学习到的令牌级指示语义在行为保持变换下失效，可被绕过
-4. [RAVEN: Agentic RAG for Automated Vulnerability Repair](/202606/29/2606.22647v1-raven-agentic-rag-for-automated-vulnerability-repair)  
-   标签：评分：7.0/10、query:vuldet
-   evidence：利用代理式RAG与大语言模型进行自动化漏洞修复，展示了LLM在代码分析和修复中的应用
-5. [Capable but Careless: Do Computer-Use Agents Follow Contextual Integrity?](/202606/29/2606.23189v1-capable-but-careless-do-computer-use-agents-follow-contextual-integrity)  
+   evidence：系统梳理强化学习在漏洞分析中的应用，包括自动化检测
+3. [FlipGuard: Defending Large Language Models Against Quantization-Conditioned Backdoor Attacks](/202607/01/2606.28962v1-flipguard-defending-large-language-models-against-quantization-conditioned-backdoor-attacks)  
+   标签：评分：8.0/10、query:agsec
+   evidence：防御LLM中由量化触发的后门攻击的主动框架
+4. [Linguistic Firewall: Geometry as Defense in Multi-Agent Systems Routing](/202607/01/2606.30555v1-linguistic-firewall-geometry-as-defense-in-multi-agent-systems-routing)  
+   标签：评分：8.0/10、query:agsec
+   evidence：使用基于几何的防御来保护多智能体路由，防止恶意代理虚假陈述能力。
+5. [Safe and Generalizable Hierarchical Multi-Agent RL via Constraint Manifold Control](/202607/01/2606.24010v1-safe-and-generalizable-hierarchical-multi-agent-rl-via-constraint-manifold-control)  
    标签：评分：7.0/10、query:agsec
-   evidence：评估计算机使用代理的情境完整性，与内容与行为安全约束相关
-6. [Cryptographic certificates of validity for trustworthy AI](/202606/29/2606.23768v1-cryptographic-certificates-of-validity-for-trustworthy-ai)  
+   evidence：通过约束流形实现分层多智能体强化学习的硬安全约束
+6. [Tracing Target Answers in Poisoned Retrieval Corpora via Token Influence Attribution](/202607/01/2606.25721v1-tracing-target-answers-in-poisoned-retrieval-corpora-via-token-influence-attribution)  
    标签：评分：7.0/10、query:agsec
-   evidence：提出密码学证明方法，认证代理行为符合形式化策略，确保行为安全约束。
-7. [A Red Teaming Framework for Large Language Models: A Case Study on Faithfulness Evaluation](/202606/29/2606.25476v1-a-red-teaming-framework-for-large-language-models-a-case-study-on-faithfulness-evaluation)  
+   evidence：通过Token影响归因检测RAG语料投毒，增强LLM安全性
+7. [Formal Security Analysis of Agent Protocol Composition](/202607/01/2606.28690v1-formal-security-analysis-of-agent-protocol-composition)  
    标签：评分：7.0/10、query:agsec
-   evidence：红队框架评估LLM安全性和忠实度
-8. [ConcoLixir: Reactive LLM Discovery Oracles for Python Concolic Testing](/202606/29/2606.26545v1-concolixir-reactive-llm-discovery-oracles-for-python-concolic-testing)  
-   标签：评分：7.0/10、query:libfuz
-   evidence：解决Python混合执行中因库调用导致的限制，利用LLM生成输入，克服模糊测试API序列生成中的挑战。
-9. [An Automated Framework for Input Alphabet Construction in Stateful Protocol Implementation Learning](/202606/29/2606.23464v1-an-automated-framework-for-input-alphabet-construction-in-stateful-protocol-implementation-learning)  
+   evidence：对代理协议组合进行形式安全分析以强化安全性
+8. [Toward Secure and Reliable PDDL Formalization of Large Language Models with Planner-in-the-Loop Feedback](/202607/01/2606.29700v1-toward-secure-and-reliable-pddl-formalization-of-large-language-models-with-planner-in-the-loop-feedback)  
+   标签：评分：7.0/10、query:agsec
+   evidence：LLM规划的安全可靠PDDL形式化，安全控制
+9. [Entity Binding Failures in Tool-Augmented Agents](/202607/01/2606.30531v1-entity-binding-failures-in-tool-augmented-agents)  
+   标签：评分：7.0/10、query:agsec
+   evidence：研究工具增强代理中的实体绑定失败作为独特的安全问题
+10. [IntentTester: Intent-Driven Multi-agent Framework for Cross-Library Test Migration](/202607/01/2606.25588v1-intenttester-intent-driven-multi-agent-framework-for-cross-library-test-migration)  
    标签：评分：6.0/10、query:libfuz
-   evidence：有状态协议学习中的自动输入字母表生成，可迁移至模糊测试
-10. [RAS: Measuring LLM Safety Through Refusal Alignment](/202606/29/2606.25750v1-ras-measuring-llm-safety-through-refusal-alignment)  
+   evidence：意图驱动的测试迁移框架，可为库合成可执行测试，类似自动化fuzzing harness生成
+11. [How Much Static Structure Do Code Agents Need? A Study of Deterministic Anchoring](/202607/01/2606.26979v1-how-much-static-structure-do-code-agents-need-a-study-of-deterministic-anchoring)  
+   标签：评分：6.0/10、query:libfuz
+   evidence：使用静态分析为代码代理提供结构锚点，可迁移到模糊测试驱动生成
+12. [An Empirical Evaluation of Prompt Injection Vulnerabilities in Large Language Models Across Multilingual and Obfuscated Attack Scenarios](/202607/01/2606.29602v1-an-empirical-evaluation-of-prompt-injection-vulnerabilities-in-large-language-models-across-multilingual-and-obfuscated-attack-scenarios)  
    标签：评分：6.0/10、query:agsec
-   evidence：提出SafeVec，通过拒绝方向从内部表征测量LLM安全性的白盒评估方法
-11. [MIRROR: Novelty-Constrained Memory-Guided MCTS Red-Teaming for Agentic RAG](/202606/29/2606.26793v1-mirror-novelty-constrained-memory-guided-mcts-red-teaming-for-agentic-rag)  
-   标签：评分：6.0/10、query:agsec
-   evidence：针对多模态代理式RAG的统一红队测试框架，用于发现篡改攻击，与多模态输入安全防护相关
-12. [Improving Adversarial Robustness via Activation Amplification and Attenuation](/202606/29/2606.27784v1-improving-adversarial-robustness-via-activation-amplification-and-attenuation)  
+   evidence：对LLM在多语言和混淆攻击下提示注入漏洞的实证评估
+13. [An Empirical Study of Security Calibration in Large Language Models for Code](/202607/01/2606.31159v1-an-empirical-study-of-security-calibration-in-large-language-models-for-code)  
    标签：评分：6.0/10、query:vuldet
-   evidence：提出A3模块通过激活缩放增强对抗鲁棒性，可用于神经网络检测器
-13. [ToolPrivacyBench: Benchmarking Purpose-Bound Privacy in Tool-Using LLM Agents](/202606/29/2606.28061v1-toolprivacybench-benchmarking-purpose-bound-privacy-in-tool-using-llm-agents)  
-   标签：评分：6.0/10、query:agsec
-   evidence：评估使用工具的LLM代理中目的绑定隐私，审计多工具轨迹中的信息流。
+   evidence：对LLM生成代码的安全校准进行大规模研究
 
 
 <div class="dpr-home-promo-card">

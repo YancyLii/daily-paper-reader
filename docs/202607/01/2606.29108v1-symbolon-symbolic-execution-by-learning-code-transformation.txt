@@ -1,0 +1,1072 @@
+Title: Symbolon: Symbolic Execution by Learning Code Transformation
+
+URL Source: https://arxiv.org/pdf/2606.29108v1
+
+Published Time: Tue, 30 Jun 2026 00:52:53 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+# Symbolon: Symbolic Execution by Learning Code Transformation 
+
+Jie Zhu 
+
+University of Chicago jiezhu@uchicago.edu 
+
+Penghui Li 
+
+Columbia University pl2689@columbia.edu 
+
+Zhongxuan Li 
+
+University of Chicago zxli7@uchicago.edu 
+
+Chihao Shen 
+
+University of Maryland stevencs@umd.edu 
+
+Ziyang Li 
+
+Johns Hopkins University ziyang@jhu.edu 
+
+Yizheng Chen 
+
+University of Maryland yzchen@umd.edu 
+
+Kexin Pei 
+
+University of Chicago kpei@uchicago.edu 
+
+Abstract —Symbolic execution is a powerful program analysis technique with broad applications, such as vulnerability de-tection, security testing, and malware analysis. However, this technique is known to suffer from scalability issues, e.g., path explosion, complex constraints, due to certain structural and semantic patterns commonly presented in real-world programs. Existing approaches attempt to escape these patterns by trans-forming programs into new representations to reduce the exe-cution cost. Unfortunately, these transformations are often too rigid to exploit diverse local program semantics and sometimes rely on compiler optimizations designed for concrete execution that may misalign with the goals of symbolic execution. We present Symbolon, a framework that automatically learns diverse code transformations and applies them context-sensitively to improve symbolic execution. Our key insight is to formulate transformation discovery as a search problem over program representations. To make the search practical, Symbolon learns transformations cheaply offline on small pro-grams, distills them into a reusable library of agent skills, and uses an agent to instantiate these skills on repo-level targets. Our evaluation shows that Symbolon substantially improves the symbolic execution engine KLEE across 16 search strategies on 32 real-world programs, increasing line coverage by 3.69 × on average while reducing peak memory and per-query solver time by 29.2 × and 123 ×, respectively. When applied to the latest Linux kernel, Symbolon uncovers 21 previously unknown bugs, all of which have been reported to the kernel maintainers. 
+
+## 1. Introduction 
+
+Symbolic execution is a well-established and influen-tial program analysis technique that systematically explores program states under symbolic inputs [1, 2, 3, 4, 5] to rea-son about program properties and behaviors [6, 7, 8, 9]. It has been used as a key building block for a wide range of code reasoning tasks, including checking reachability proper-ties [10, 11, 12, 13, 14, 15, 16], generating high-coverage test inputs [3, 17, 18, 19, 20, 21], and detecting bugs and security vulnerabilities [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]. As a result, symbolic execution has supported production-scale testing workflows [33, 34, 35, 36, 37], and has been applied to analyze and secure a broad spectrum of real-world, security-critical software, including operating-system kernels and device stacks [20, 24, 38, 39, 40, 41, 42, 43], browsers [25], web and mobile applications [44, 45, 46, 47, 48, 49, 50, 51, 52, 53], commercial off-the-shelf (COTS) binary software [42, 54, 55, 56, 57, 58], low-level systems code [59, 60], embedded and firmware systems [61, 62, 63, 64], and safety-critical cyber-physical systems [65, 66, 67, 68, 69, 70]. Despite these successes, symbolic execution remains dif-ficult to scale to large, real-world programs, where modest increases in program size and functionality can induce dis-proportionate cost due to path explosion and hard-to-solve path constraints [5, 34, 71, 72, 73, 74]. These costs often arise from common source-level program structures. For example, when a loop bound depends on a symbolic input, the symbolic execution engine may fork many iterations, quickly exhausting its path budget [3, 71, 72, 75, 76]. Even along a single path, code that derives predicates or memory addresses from symbolic values, e.g., bit-level encodings, pointer arithmetic, can produce expensive constraints for SMT solvers to discharge [6, 77, 78, 79]. Importantly, these costs are representation-sensitive . Two equivalent implemen-tations can expose different numbers of branches, different memory-access patterns, and different constraints for the solver, making them either easier or harder for symbolic exe-cution to analyze [80]. The scalability of symbolic execution is thus shaped not only by what a program computes, but also by how that computation is represented in code. This susceptibility to code representation suggests a com-plementary approach to improving symbolic execution by transforming and enriching the program representation before exposing it to symbolic execution [5, 54, 73, 81]. In fact, program transformation is known to substantially affect the behavior of program analyses [82, 83, 84, 85, 86, 87], and symbolic execution is no exception [80]. Prior work has explored several ways to expose symbolic-execution-friendly code representations based on compiler optimizations [79, 80, 88], targeted transformations for data structures and control flow [89, 90, 91], operator-specific rewrites [92, 93, 94], and even semantics-breaking (behavior-changing) transformations that trade program equivalence for higher test coverage [95]. 1
+
+> arXiv:2606.29108v1 [cs.CR] 27 Jun 2026
+
+However, existing transformation-based approaches re-main limited by how transformations are obtained and applied. Compiler optimizations provide only a fixed set of transfor-mations designed primarily for concrete execution objectives, such as execution time and code size, but they can misalign with symbolic execution objectives, such as optimizing cov-erage, reachability, and solver cost. Other transformations tailored for symbolic execution are typically hand-coded for a narrow class of syntactic patterns or program constructs, e.g., specific operators on symbolic indices, and thus require substantial human expertise, miss useful transformations out-side predefined patterns, and are often too rigid to be broadly applied. This is problematic because the benefit of a trans-formation is highly sensitive to local context (Section 2.2). These fixed transformations that simplify branches, insert predicates [92, 96, 97, 98, 99], or replace data structure operations, may remove a symbolic-execution barrier in one local context but suppress useful behavior in another, e.g., bypassing (adding predicates like klee_assume [100]) hash or decryption checks may help a parser reach deeper payload-processing logic, but can miss the core behavior in cryp-tographic libraries. Existing approaches lack a mechanism for automatically discovering diverse, context-sensitive code transformations optimized for symbolic execution. 
+
+Our approach. We present Symbolon, a framework that automatically discovers and applies diverse, context-sensitive code transformations for symbolic execution. Our key idea is to formulate transformation discovery as a search problem over program representations. Given a program that intro-duces symbolic execution barriers, Symbolon searches for an alternative source-level representation that helps a symbolic execution engine generate inputs with improved metrics, e.g., coverage, on the original program. With this search target, Symbolon expands the search space by essentially relaxing the transformations to be semantics-breaking [95], rather than restricting the search within compiler optimizations or hand-written templates that strictly preserve the semantics. Specifically, Symbolon evaluates each transformation with a transform-and-replay reward. It runs symbolic execution on the transformed program, replays the generated tests on the original program, and uses their improvement on the original code to guide the search. In this formulation, the transformed program essentially acts as a test-generation scaffold, while the original program remains the optimization target. This allows Symbolon to explore a much larger transformation space, while keeping the search reward aligned with symbolic execution objectives on the original program. Making this formulation practical requires managing two costs: the open-ended transformation space and reward evalu-ation. As semantics-breaking transformations further expand the search space, simple code mutation is unlikely to effi-ciently reach useful transformations. Computing the reward exacerbates the cost by expensive symbolic execution (for test generation) and replay. Symbolon addresses the first by using large language models (LLMs) as a search prior, drawing on their recent successes in guiding evolutionary search over programs and large systems [101, 102, 103, 104]. It addresses the second by decoupling transformation discovery from deployment. Specifically, Symbolon learns the transfor-mations only from small programs [105], where symbolic execution and replay are cheap, and distills effective trans-formations into reusable rules as persistent agent skills [106, 107]. These learned skills capture recurring transformation patterns, grounding later agentic transformations for larger, real-world projects. As this learning incurs only a one-time cost, its cost can be amortized across projects and symbolic execution campaigns. Figure 2 shows Symbolon ’s workflow. Such a technical design in Symbolon directly addresses the rigidity of prior transformation-based approaches. The learned skills are discovered automatically rather than manu-ally specified, instantiated in local contexts rather than applied globally, and selected by replay-based feedback rather than by potentially misaligned objectives in compiler optimizations. As transformations are expressed at the source level, the agent can leverage rich source-level hints, e.g., symbol names, comments, to adapt each transformation rule in the learned agent skills to the target context. Importantly, the source-level transformations make Symbolon orthogonal to engine-side improvements like search strategies [22, 108, 109, 110, 111, 112, 113, 114, 115] and solver optimizations [115, 116, 117]. As a result, Symbolon consistently improves the effectiveness of KLEE across all its search strategies, e.g., by 3.69 × in coverage (see Section 5), without the need to adapt to any specific symbolic execution and compiler configurations. 
+
+Results. We evaluate Symbolon across 32 popular real-world software projects and 16 symbolic execution search strategies, including KLEE’s built-in strategies and the state-of-the-art searchers [110, 111, 112, 113, 114], to measure how Symbolon complements existing approaches. Symbolon consistently improves coverage across all search strategies, achieving an impressive 3.69 × more covered lines, averaged across all projects, while significantly reducing symbolic execution overhead, i.e., by 29.2 × and 123 × in peak memory usage and solver time per query, respectively. It also uncovers more sanitizer-reported security violations across all search strategies and identifies 21 new bugs when used to aug-ment the symbolic-execution-based Linux kernel bug-finding tool [20, 118]. We release our learned transformation rules (in agent skills), the agentic framework, and the transformed projects here: § cirrus-uchicago/Symbolon .
+
+Contributions. We make the following contributions:  
+
+> •
+
+We identify source-level program representation as the key optimization target for symbolic execution and formulate transformation discovery as an automated search problem over program representations.  
+
+> •
+
+We present Symbolon , a framework that automatically learns diverse, reusable transformation rules from small programs and transfers them as persistent agent skills to facilitate diverse transformations of real-world projects.  
+
+> •
+
+We operationalize replay on the original program as a verifiable reward for transformation search, allowing Symbolon to explore broad transformation spaces, includ-ing semantics-breaking ones, while ensuring the objective of transformations aligns with that of symbolic execution. 2• We evaluate Symbolon across a broad range of real-world projects and search strategies, demonstrating consistent coverage improvements, a significant reduction in sym-bolic execution overhead, and strong bug-finding capabil-ities in systems such as the Linux kernel. 
+
+## 2. Overview 
+
+This section first describes the background of symbolic execution. We then present an example to motivate our work. 
+
+2.1. Symbolic Execution Background 
+
+Symbolic execution is a program analysis technique for systematically reasoning about program behaviors [1, 2, 3, 5]. Instead of running a program with concrete inputs, a symbolic execution engine runs program 𝑃 with symbolic input to represent a set of possible inputs. During execution, the symbolic execution engine maintains a set of execution states, where each state consists of the program counter that tracks the current execution progress, and the path constraints that collect accumulated conditions along the explored path to characterize the inputs capable of reaching that state. When symbolic execution reaches a branch whose con-dition depends on symbolic values, it forks into multiple successor states, each extended with the corresponding branch predicate, and continues exploring different execution paths. As the number of states grows exponentially with the number of forks, the symbolic execution engine needs to select which pending state to advance. Prior work has proposed various strategies to prioritize certain states [110, 111, 112, 113, 114]. A state is removed when it becomes infeasible or reaches a termination statement, e.g., program exit or assertion failure. The symbolic execution engine translates the corresponding path constraints to a concrete test input that, when supplied to 𝑃 , drives execution along the same explored path. 
+
+Intrinsics. Symbolic execution engines are typically equipped with a set of intrinsic functions to support symbolic analysis. For example, sym_create() introduces a symbolic variable into the current execution state, which is helpful when applying symbolic execution to analyze a specific function without starting from the program entry point. In Section 2.2, we use its variant sym_choose() to create a symbolic integer that constrains the variable into a finite set of choices. Another widely used intrinsic is sym_assume() , which adds a new constraint to the current path constraint, e.g., sym_assume(x > 0) adds x > 0 to the current path constraint. Symbolon uses these intrinsics as part of the code transformation to make symbolic execution more efficient. 
+
+2.2. Motivating Example 
+
+In Figure 1, we present a simplified code snippet from the  
+
+> libtiff
+
+[119] for parsing and checking the metadata of TIFF 
+
+files. A typical TIFF file starts with an 8-byte header that points to the first Image File Directory (IFD), where multiple IFDs can be linked together to support multi-page images. Each IFD contains a 2-byte directory-entry count, followed by a sequence of 12-byte directory entries describing image metadata such as dimensions, sample layout, bit depth, and compression method, and ends with a 4-byte offset to the next IFD, or zero if there is no subsequent IFD. Figure 1 illustrates the key parsing logic that iterates over the directory entries in an input TIFF file and configures the image decoder based on the extracted compression method. Specifically, the parser first validates the byte order (line 4-5), distinguishing between little-endian ( "II" ) and big-endian ("MM" ). It then extracts the directory entry count ndirs for the current IFD (line 7) and loops through each entry dir[i] 
+
+to retrieve its content (line 8-9). After that, the parser extracts metadata fields and uses them to compute the image strip size  
+
+> nbytes
+
+(line 14), which determines the buffer size allocated to hold the image strip data. Finally, it reads the compression tag and dispatches to the corresponding decoder (line 16-20). 
+
+Symbolic execution on the original code. In this example, the harness supplies a fixed-size (e.g., 300-byte) symbolic input file through FILE *fp . The engine treats bytes read from fp as symbolic values and accumulates constraints over them. After read_order at line 3, the value of order is determined by the first two symbolic bytes, which encode the byte order of the TIFF file. Branch C1 checks whether this value matches one of the two valid byte-order markers. Al-though this appears as a single source-level condition, the two  
+
+> strcmp
+
+calls compare strings byte by byte, causing symbolic execution to fork inside the library routine to distinguish different mismatch positions. Most of these states return at 
+
+C1 . Only states consistent with order == "II" or order == "MM" reach the subsequent parsing logic. The next barrier is the directory-entry loop at C2 . The loop bound ndirs is read from the symbolic input at line 7, so the loop condition at line 8 also depends on the symbolic data. As a result, symbolic execution may fork at each iteration to represent whether the loop exits or continues, creating states for many possible counts of directory entries. As ndirs is a 16-bit value, this loop can expose a large number of possible iterations and quickly exhaust the exploration budget before the engine reaches the following tag-processing logic. Even after symbolic execution passes these path-explosion sources, the parser can still create solver-heavy expressions. At C3 , it computes nbytes by multiplying symbolic meta-data fields such as width, height, samples per pixel, and bits per sample. While the assignment itself does not add a path constraint, it builds a symbolic bit-vector expression. When later operations constrain this value, the solver must reason about symbolic multiplication and C integer overflow semantics, which is often much harder than linear arithmetic over symbolic values [71, 120]. Existing search strategies may reach this code earlier, but they do not simplify the expression used in these later queries. The symbolic expression for nbytes then flows into an-other barrier at C4 , where it is passed as the size argument to _TIFFmalloc . Many symbolic execution engines handle symbolic size allocations only under restrictions, e.g., by concretizing the size, rejecting the allocation, or terminat-3Execution Trace  
+
+> · · ·
+> · · · · · ·
+> TIFF_ERR
+> TIFF_OK
+> Path Explosion
+> Path Explosion
+> Complex Path Constraints
+> Symbolic Malloc Size
+> Symbolic I/O
+
+Original Code                     
+
+> 1int parse_image(FILE *fp) {
+> 2char order[3];
+> 3read_order(fp, order);
+> 4if (strcmp(order, "II") && strcmp(order, "MM"))
+> 5return TIFF_ERR;
+> 6TIFFDirEntry dir[MAXTAGS];
+> 7uint16_t ndirs = read16(fp);
+> 8for (uint16_t i = 0; i < ndirs; i++)
+> 9dir[i] = read_entry(fp);
+> 10 uint32_t w = get(dir, TAG_WIDTH);
+> 11 uint32_t h = get(dir, TAG_LENGTH);
+> 12 uint16_t spp = get(dir, TAG_SAMPLES);
+> 13 uint16_t bps = get(dir, TAG_BITS);
+> 14 size_t nbytes = (size_t) w * h * spp * bps / 8;
+> 15 16 uint8_t *strip = _TIFFmalloc(nbytes);
+> 17 uint16_t codec = get(dir, TAG_COMPRESS);
+> 18 fprintf(stderr, "codec %u", codec);
+> 19 decoders[codec](strip, nbytes);
+> 20 return TIFF_OK;
+> 21 }
+
+Transformations     
+
+> T1 int choice = sym_choose(0, 2); if (choice) return TIFF_ERR; else sym_assume(order == "II");
+> T2 sym_assume(ndirs == 23); for (uint16_t i = 0; i < 23; i++)
+> T3 size_t nbytes = STRIP_MAX; uint8_t *strip = malloc(nbytes);
+> T4 fprintf(stderr, "codec %u", codec);
+
+Execution Trace  
+
+> · · ·
+> · · · · · ·
+> TIFF_ERR
+> TIFF_OK
+> Deduplicate Equivalent States
+> Concretize Loop Bound
+> Avoid Complex Constraints
+> Allocate Concrete Memory Size
+> Remove Unde-fined Behaviors
+> C1
+> C2
+> C3
+> C4
+> C5
+
+Figure 1: A motivating example from libtiff showing how Symbolon helps symbolic execution by transforming the code. Each node in an execution trace represents an execution state, and each edge denotes a transition between two states. Nodes with dashed borders indicate states that are no longer explored in Symbolon. ing states when the size cannot be bounded or modeled. Therefore, exploration may stop before reaching the decoder dispatch. Similarly, C5 sends symbolic metadata to fprintf ,forcing the engine to model formatted file I/O for an out-put side effect that is irrelevant to decoder selection. These statements illustrate how basic memory management and I/O APIs can become barriers when they take symbolic values. 
+
+Symbolon transforms the original code. The green snip-pets in Figure 1 show how Symbolon transforms the original code into a representation that is easier for symbolic execu-tion to analyze. Note that these rewrites are not conventional compiler optimizations. They rely on understanding the local source-level intent, such as which code implements a semantic check, which values are needed only to reach downstream parsing logic, and which side effects are irrelevant to the exploration goal. Such intent is difficult for fixed compiler passes to exploit safely, and blindly optimizing for concrete execution can even obscure the symbolic execution objective. Transformation T1 replaces the byte-order check with an explicit symbolic choice that represents the semantic outcome of the check, i.e., whether the byte order is valid or invalid. This avoids forcing symbolic execution to reason through the byte-by-byte implementation in strcmp and instead ex-poses the source-level decision directly to the engine. In the valid branch, Symbolon constrains order to "II" as a representative valid byte order, avoiding a separate explo-ration of the symmetric "MM" case. This transformation is specific to the local context, in that it is appropriate here because the subsequent logic in the simplified example only needs a valid byte order to reach the tag-processing and decoder-dispatch code. If later code were data-dependent on the distinction between "II" and "MM" , the transformation would need to preserve both valid cases. This is similar in spirit to symmetry-breaking constraints [98, 99] and stream-lining [121], where additional constraints are introduced to avoid redundant regions of the search space. Transformation T2 addresses the symbolic loop bound at 
+
+C2 . Instead of allowing the 16-bit symbolic value ndirs to induce many loop iterations, Symbolon rewrites the loop into a fixed-iteration one derived from the configured symbolic input size (in our harness, the symbolic TIFF input is capped at 300 bytes). As a TIFF file uses an 8-byte header before the first IFD, and the IFD then contains a 2-byte entry count, a sequence of 12-byte directory entries, and a 4-byte pointer to the next IFD, the maximum number of directory entries that can fit in this input layout is thus  300 −8−2−412 
+
+ = 23 . Since 
+
+tiffinfo inspects metadata and does not need a large image payload to reach the downstream decoder-dispatch logic, this bound gives symbolic execution a concrete loop structure while preserving the ability to exercise the relevant parsing code on the original program during replay. Transformations T3 and T4 remove downstream barri-ers that are not essential for reaching the decoder dispatch. At C3 – C4 , the original code computes nbytes from sym-bolic metadata fields and passes it to _TIFFmalloc , producing both an expensive symbolic expression and a symbolic size allocation. Symbolon replaces nbytes in the transformed scaffold with the project-level bound STRIP_MAX , giving the engine a concrete allocation size and avoiding the symbolic multiplication expression in later queries. At C5 , Symbolon removes the diagnostic fprintf call, which only prints the selected compression method and does not affect the parser state or the following decoder dispatch. A standard com-piler optimization generally cannot perform these rewrites, as concretizing nbytes or removing formatted output can change the program’s observable behavior. In Symbolon ,however, since the transformed code is used only as a test-generation scaffold, all generated tests are replayed on the original program to measure improvement, with the original 
+
+nbytes computation and fprintf call remaining intact. 
+
+## 3. Methodology 
+
+Figure 2 shows the workflow of Symbolon . The goal of Symbolon is to learn source-level program representations that are more amenable to symbolic execution, while mea-4Rule Learning 
+
+Symbolic Execution Profiling 
+
+Transformation Search 
+
+Repo-level Transformation 
+
+Offline Learning                                                 
+
+> if (!memcmp(x, "test", 5)) {printf("privacy\n"); }b=abs(y) +mod(y, 2); c=y*y+pow(y, 3); d=cstr[z];
+> 123456
+> Program Pfrom Program Corpus
+> Symbolic Execution Trace
+> Symbolic Execution Engine
+> Trace shows line 2 seems suspicious ...
+> int var =sym_choice(0, 2); if (var) {symbolic_assume(x == "test"); }// ... original code ...
+> if(strcmp(x, cstr, ..
+> New Skill
+> if(memcmp(a,"test",5)) {…
+> Persist
+> - if (strcmp(order, "II")) +int choice =sym_choice(0,2); +if (choice == 0) {+sym_assume(order == "II"); return TIFF_ERR; +}
+> Agentic Transform
+
+skill format … 
+
+# skill_i.md                      
+
+> c=y*y+y*y*y;
+> libtiff/
+> tif_info.c
+> ...
+> Coverage Improved on P(+24% )
+> pow can not be handled by the …
+> Update :
+> - Add - Merge - Remove
+> ...
+> Coverage Unchanged on P(+0% )
+> <reasoning>… <code> ...
+> Name Description
+> Memory comparison
+> Use when facing byte-by-byte comparison …
+> Skill Library
+> Skill 1: concretize array size…
+> Skill 2: recursive to iterative…
+> ...
+> Rationalize
+> Simplify iteratively checking all bytes of "test "
+> bcmp
+> before
+> strcasecmp
+> after
+> memcmp assume
+
+Online Inference  
+
+> ...
+> Tests
+> libtiff/
+> tif_info.c
+> ...
+> Generate Inputs
+> Measure Coverage
+> Generalize
+> jq/ make/ .../
+> ...
+> Agentic Transform
+> Persist
+
+Figure 2: Overview of the Symbolon workflow. In the offline learning phase, Symbolon runs symbolic execution on simple programs and uses evolutionary search to learn a diverse collection of transformations. These transformations are then distilled into agent skills, which are further packaged into a reusable skill library for online inference to real-world programs. suring progress on the original program. This creates two practical challenges. First, the space of possible representa-tions is large, e.g., useful transformations may summarize library checks, bound symbolic loops, rewrite arithmetic, in-sert assumptions, or remove exploration-irrelevant side effects. Second, evaluating a transformation is expensive because it requires running symbolic execution on the transformed program and replaying the generated tests on the original program. Symbolon addresses these challenges with a two-phase design. In the offline learning phase, it searches for useful transformations on small programs, where symbolic execution and replay are cheap, and distills successful transfor-mations into a skill library T . In the repo-level transformation phase (online inference), it uses T to adapt these learned transformations to a target project 𝑃 tgt , producing a selected transformed scaffold 𝑃 sel . Symbolic execution is then run on 
+
+𝑃 sel , and the generated tests are replayed on 𝑃 tgt to measure progress on the original code. 
+
+3.1. Offline Learning 
+
+The offline phase learns reusable transformation knowl-edge from small programs. Its input is a corpus of programs 
+
+P, and its output is a skill library T [107]. Each skill records a recurring symbolic-execution barrier, the source context in which it appears, and a transformation strategy that has been validated by replay on the original program. The phase has three steps: profiling, transformation search, and skill distillation (rule learning). 
+
+Symbolic execution profiling. Given a program 𝑃 ∈ P ,Symbolon first runs symbolic execution on 𝑃 and collects a structured execution trace. The trace records source loca-tions reached by each state, branches that fork states, path constraints, solver queries, state-termination reasons, and cov-erage. These events are mapped back to source locations, allowing Symbolon to identify code regions whose represen-tation appears to block exploration. For example, a byte-by-byte string comparison may create many short-lived states, and a symbolic multiplication may later produce expensive solver queries (Section 2.2). Symbolon then asks an LLM agent to propose candidate 
+
+barriers from the program and trace. A barrier is a source-level explanation of why a code region is difficult for symbolic execution, not yet a trusted fact. Candidate barriers are ad-mitted into the skill library only if the later transformation search finds a rewrite whose generated tests improve replayed coverage on the original program. Importantly, the LLM here only proposes hypotheses, while symbolic execution and replay provide the evidence. 
+
+Transformation search. For each candidate barrier 𝑏 ,Symbolon searches for an alternative source-level representa-tion b𝑃 of 𝑃 . A transformed program b𝑃 is useful if symbolic execution on b𝑃 generates tests that improve a target metric when replayed on the original program 𝑃 . In this paper, the main metric is coverage, but the same formulation can opti-mize other replay-measurable objectives such as reachability or bug-triggering behavior [87]. This search space can often be too broad for simple syntactic rewriting. The same barrier may require different transformations depending on local context-sensitive features, e.g., types, constants, library calls, data dependencies, and program intent. As shown in Figure 1, for example, replacing a byte-order check with a representative valid case is only appropriate when the following code does not depend on the distinction between valid byte orders. Similarly, concretizing a loop bound requires understanding the input layout. Remov-ing a diagnostic output is useful only when the output side effect is irrelevant to the exploration target. Symbolon thus uses an LLM-guided evolutionary search [101, 103, 122] to propose candidate representations. Each transformed program b𝑃 is evaluated by transform-and-replay. Symbolon runs symbolic execution on b𝑃 , replays the generated tests on the original program 𝑃 , and computes the replayed metric on 𝑃 . If the replayed metric improves over symbolic execution on 𝑃 , Symbolon keeps (𝑃, b𝑃 ) as a validated transformation example for barrier 𝑏 . As the reward is measured on 𝑃 , not on b𝑃 , the search can include 5Algorithm 1 Offline learning of transformation skills                                                 
+
+> Require: Program corpus P, search budget 𝐾
+> Ensure: Skill library T
+> 1: T ← ∅
+> 2: for all 𝑃 ∈ P do
+> 3: // Profile the original program.
+> 4: (E 𝑃 , 𝐶 0) ← ProfileSE (𝑃 )
+> 5: if Saturated (𝐶 0)then
+> 6: continue
+> 7: end if
+> 8: // Infer candidate barriers from code and SE traces.
+> 9: B ← ProposeBarriers (𝑃, E𝑃 )
+> 10: for all 𝑏 ∈ B do
+> 11: // Search transformed representations and validate by replay on 𝑃 .
+> 12: V𝑏 ←SearchTransforms (𝑃, 𝑏, 𝐶 0, 𝐾 )
+> 13: if V𝑏 ≠∅then
+> 14: // Distill validated examples into reusable skills.
+> 15: T ← T ∪ CreateSkills (𝑏, V𝑏 )
+> 16: end if
+> 17: end for
+> 18: end for
+> 19: return T
+
+semantics-breaking transformations while avoiding rewards for transformations that only make b𝑃 appear to be easier. 
+
+Rule learning. While validated transformation examples are useful in-context demonstrations for the agent, a single before/after pair is too specific to transfer directly to large projects (Section 3.2). To this end, Symbolon generalizes validated examples into agent skills. For each barrier, the agent first synthesizes additional variants that express the same transformation idea under different local contexts. Each variant is validated with the same transform-and-replay met-ric. Symbolon then groups retained examples by barrier se-mantics and transformation strategy, deduplicates equivalent groups, and converts each group into a skill. Specifically, a skill includes four components: the barrier description, the applicability context, the transformation pro-cedure, and representative before/after examples with replay evidence (Appendix C). For instance, a skill may describe when a byte-by-byte comparison can be summarized into a symbolic choice plus an assumption, together with examples such as strcmp , memcmp , or project-specific wrapper functions. The resulting skill library T can be further updated, e.g., the rule-learning LLM can add, merge, and remove rules when it iterates through the samples in P, mimicking a typical training loop. Importantly, T is persistent and inspectable. It transfers transformation knowledge from small programs to large projects without updating model weights. Algorithm 1 abstracts the high-level steps. Search-Transforms runs an LLM-guided evolutionary search. Each candidate b𝑃 is first checked for compilation, then evaluated by running symbolic execution on b𝑃 and replaying the generated tests on the original program 𝑃 . It returns validated examples 
+
+(𝑃, b𝑃 ) whose replayed metric improves over 𝐶 0.
+
+3.2. Online Inference: Repo-Level Transformation 
+
+Given a target project 𝑃 tgt , Symbolon uses the learned skill library T to produce a transformed project (scaffold) for symbolic execution. The agent is given the current source tree, relevant skills retrieved based on its own judgment, and feedback from the previous valid iteration, including compiler diagnostics, symbolic-execution traces, and replayed coverage reports. This makes the transformation context-sensitive in two ways. First, the agent sees the local source context around each candidate edit, e.g., control flow, variable names, types, and comments. Second, the agent receives execution feedback that indicates which transformed regions helped or hindered exploration. Therefore, a skill is not applied as a fixed textual rewrite, but is instantiated according to the local program representation. In each iteration, the agent retrieves skills whose ap-plicability conditions match the current code and proposes localized source edits. Symbolon then validates the can-didate in three steps. First, it checks that the transformed project builds into LLVM bitcode. Second, it runs symbolic execution on the transformed bitcode. Third, it replays the generated tests on the original target project 𝑃 tgt and measures the replayed metric. If compilation fails, the candidate is rejected, and the diagnostics are returned to the agent. If compilation succeeds, the candidate becomes a valid scaffold, and Symbolon updates the selected output 𝑃 sel only when the replayed metric improves. After at most 𝐾 iterations, Symbolon returns 𝑃 sel , the best validated scaffold observed under the transformation budget. The original project remains the measurement target throughout this process. The trans-formed scaffold is used only to generate tests, while replay on 𝑃 tgt determines whether a transformation is useful. This design filters invalid or unhelpful transfers from the offline skill library and keeps the optimization objective aligned with symbolic-execution progress on the original code. Algorithm 2 summarizes this online inference step, which adapts learned agent skills for repo-level transformations. 
+
+Evaluate ( b𝑃, 𝑃 ) runs symbolic execution on b𝑃 , replays the generated tests on 𝑃 , and returns both the replayed metric and feedback artifacts such as traces, coverage reports, and diagnostics. In our evaluation, we use a fixed skill library learned offline. A natural extension is to promote validated target-specific transformations back into the library, but we disable this online skill growth in our evaluation to keep costs manageable (we discuss this extension in Section 6). 
+
+## 4. Implementation 
+
+We implement Symbolon in 2.1K LoC of Python, 3.5K LoC of shell scripts, and 3.7K LoC of Nix. We use KLEE 3.2 as the default symbolic execution backend. 
+
+Offline transformation learning corpus. We construct the offline learning corpus from CodeContests [105], which contains millions of competitive-programming submissions. To obtain C programs, we compile submissions with gcc and keep those that compile successfully. This leads to 22,578 6Algorithm 2 Skill-guided repo-level transformation                                                              
+
+> Require: Target project 𝑃 tgt , skill library T, transformation budget
+> 𝐾
+> Ensure: Selected transformed scaffold 𝑃 sel
+> 1: 𝑃 cur ←𝑃 tgt ,𝑃 sel ←𝑃 tgt
+> 2: // Initial feedback and baseline metric are measured on the original target.
+> 3: (𝐹, 𝐶 sel ) ← Evaluate (𝑃 tgt , 𝑃 tgt )
+> 4: for 𝑖 =1to 𝐾 do
+> 5: // Agent uses source context, learned skills, and prior feed-back.
+> 6: b𝑃 ←AgentTransform (𝑃 cur ,T, 𝐹 )
+> 7: if ¬Builds (b𝑃 )then
+> 8: 𝐹 ←Diagnostics (b𝑃 )
+> 9: continue
+> 10: end if
+> 11: // Run SE on the scaffold, replay tests on the original target.
+> 12: (𝐹, 𝐶 ) ← Evaluate (b𝑃, 𝑃 tgt )
+> 13: 𝑃 cur ←b𝑃
+> 14: if 𝐶 > 𝐶 sel then
+> 15: 𝑃 sel ←b𝑃 ,𝐶 sel ←𝐶
+> 16: end if
+> 17: end for
+> 18: return 𝑃 sel
+
+C programs. We remove near-duplicates, e.g., reformatted variants or versions with renamed identifiers, using a Jaccard-similarity threshold of 0.85, leaving 15,879 programs. We then sample one program per problem, producing a final corpus of 2,416 programs with an average length of 50.5 lines. Because these programs are small, we run KLEE on each with a 30-second timeout and an 8 GB memory limit, using the command-line configuration shown in Appendix A. 
+
+Transformation search. We instantiate the rule-learning phase with OpenEvolve [122], which uses an LLM to propose program variants and an external evaluator to select candidate transformed programs for refinement. The evaluator runs KLEE on the transformed program, replays the generated tests on the original program, and uses the resulting coverage as the reward. For each program, we cap the search at 20 iterations and stop early once replayed tests reach 100% coverage on the original program. Among the 2,416 programs, 1,567 reach 100% coverage within 14 iterations, suggesting that many useful transformations are found within a small search budget. We use Claude Sonnet 4.6 as the default model. The offline rule-learning cost averages $0.34 and 38.4K tokens per program. This is distinct from the per-project deployment cost measured in Section 5.5. 
+
+Skill library. The offline learning process produces a skill library with 211 skills after deduplication. Each skill is stored as a directory that contains a SKILL.md file and a 
+
+references/ directory. The SKILL.md file describes the code pattern, why such a pattern impedes symbolic execution, and the expected changes in symbolic execution traces af-ter applying the transformation. The references/ directory stores validated transformation examples collected during of-fline learning. On average, each skill contains 1.02 validated transformation examples and 2.3 augmented applicability patterns. During online inference, the agent can retrieve a skill by recognizing a code pattern in the target program and instantiate the corresponding transformation according to the surrounding program context. 
+
+Agent settings. We implement the repo-level transformation agent as a Python program built on Claude Agent SDK 0.2.96. The learned skills are mounted as a local read-only plugin, and all skills are enabled during transformation. Given a target project, the agent proposes localized source edits, while an external harness performs compilation, symbolic execution, and replay for coverage measurement. To keep edits local, each round may modify at most three files. After each round, the harness builds the transformed code, runs KLEE, collects its run.istats trace and an llvm-cov coverage report, and returns these artifacts to the agent for the next round. The agent runs in a sandbox with write access only to the target codebase. Transformation references and skills are read-only, network access and sub-agent spawning are disabled, and only a small whitelist of tools is available: read tools ( Read ,
+
+Glob , Grep , Bash:sqlite3 for reading traces, and Bash:jq 
+
+for reading coverage reports) and write tools ( Write , Edit ,and MultiEdit ). We guard symbolic-execution-only source edits with #ifdef KLEE_BITCODE , allowing the same source tree to produce a transformed LLVM-bitcode build for KLEE and an unmodified native build for replay-based coverage measurement. 
+
+## 5. Evaluation 
+
+To evaluate the effectiveness of Symbolon , we aim to answer the following research questions: 
+
+RQ1: Effectiveness : How much does Symbolon help sym-bolic execution to improve code coverage with differ-ent search strategies? 
+
+RQ2: Execution Efficiency : How does Symbolon affect the runtime overhead of symbolic execution? 
+
+RQ3: Security Impact : How does Symbolon help find more real-world security violations and bugs? 
+
+RQ4: Cost : What is the deployment cost of Symbolon? 
+
+RQ5: Sensitivity : How much do different components of Symbolon contribute to its overall effectiveness? 
+
+5.1. Experiment Setup 
+
+Benchmark. We evaluate Symbolon on 32 real-world open-source programs widely used in previous symbolic execution and fuzzing studies [110, 111, 113, 123, 124, 125], following the same configurations when settings are available. As shown in Table 1, we use the latest release available for each program at the time of our evaluation. We build all projects using clang-16 and disable compiler optimization (-O0 ) to ensure the generated bitcode is consistent with the original code implementation. Other build configurations include flags minimizing dependence on external libraries. 
+
+Baselines. We evaluate Symbolon across a broad set of established search strategies to assess whether Symbolon -transformed programs are generally amenable to symbolic 7Table 1: Programs used to evaluate Symbolon. LoC is the number of source lines reported by llvm-cov and serves as the upper bound for line coverage.                                                                                      
+
+> Program Version LoC Program Version LoC
+> bash 5.3 55,638 bc 1.08.2 5,339 bison 3.8.2 29,108 cjpeg 3.1.4.1 8,642 cjson 1.7.19 2,298 combine 0.4.0 5,332 curl 8.20.0 58,091 diff 3.12 8,898 expat 2.8.0 9,711 find 4.10.0 15,930 flex 2.6.4 9,451 flvmeta 1.2.2 7,478 gawk 5.4.0 41,246 grep 3.12 10,303 gzip 1.14 4,074 jasper 4.2.9 22,124 jq 1.8.1 16,935 xmllint 2.15.3 88,109 lua 5.4.7 14,883 make 4.4 14,070 nasm 3.01 49,625 objcopy 2.46.0 97,417 openssl 4.0.0 283,323 patch 2.8 10,525 readelf 2.46.0 60,612 sed 4.10 13,852 sqlite 3.53.1 116,524 strip-new 2.46.0 97,658 tic 6.6 11,994 tiffinfo 4.7.1 19,725 transicc 2.19 19,742 vim 9.2.0458 112,907
+
+execution, rather than merely tailored to particular strategies. Specifically, we include all 11 built-in search strategies in KLEE, together with five additional representative works from recent years, summarized in Table 2. All experiments are built on KLEE 3.2 [3]. Empc [110] runs with the original settings, including the bipartite-matching cap and analyzer thread-pool configuration. CGS [113] requires a branch-dependency pre-pass, which we apply to the bitcode before running it with the default target-branch selection settings. We evaluate Learch [111] with its shipped feedforward network under greedy state selection, which matches their reported best-performing configuration. SGS [114] interleaves four subpath-guided searchers with subpath lengths fixed to 1/2/4/8 over each state’s most recently taken branches. For CBC [112], we use its default settings for the bounded-DFS exploration depth around sensitive instructions. 
+
+Metrics. We use line coverage as the primary metric fol-lowing prior work [3, 5, 110], considering that Symbolon transforms the program before symbolic execution, making KLEE’s internal bitcode coverage not representative of the coverage on the original source code. We thus report external coverage: after KLEE generates tests on either the original or transformed code, we replay those tests on a separately instrumented native build of the original program and mea-sure line coverage with llvm-cov . The coverage is measured over 10 independent runs with a 12-hour end-to-end budget. For Symbolon , this budget includes repo-level transformation and validation time, so any time spent by the agent directly reduces the remaining symbolic-execution time, ensuring a fair comparison with the baselines. 
+
+Environment. We run all evaluations on bare-metal x86-64 servers, each with two Intel Xeon Gold 6240R processors and 192 GB RAM, running Ubuntu 24.04.4 LTS [126]. Each evaluation instance runs in an isolated container limited to one CPU core and 40 GB memory. We use Z3 [127] as the SMT backend and cap KLEE at 32 GB memory, leaving the remaining container memory for the solver, runtime libraries, 
+
+Table 2: Baseline search strategies used in our evaluation.                       
+
+> Strategy Prioritization
+> bfs Oldest live state, exploring shallow paths
+> dfs Most recently added state
+> random-path Random on execution tree, prefer deep states
+> random-state Any live path with uniform probability
+> nurs:depth Deeper states with higher probability
+> nurs:covnew Paths that recently discovered new coverage
+> nurs:cpicnt States whose call-path is rarely taken
+> nurs:qc States with cheap constraint-solving history
+> nurs:icnt States at rarely-executed instructions
+> nurs:md2u Paths closest to uncovered CFG instructions
+> nurs:rp Exponentially favors shallower states
+> cbc [112] Reviving states near sensitive instructions
+> cgs [113] Paths storing flip uncovered branches
+> empc [110] Paths in minimum path cover of the CFG
+> learch [111] Highest-reward state from trained model
+> sgs [114] The least explored subpaths
+
+and OS overhead. All runs use the same fixed KLEE con-figuration, including POSIX/uClibc runtime support, query logging, coverage output, and a watchdog (see the full com-mand line in Appendix A). To reduce resource interference, we run at most four evaluation instances concurrently on each server and disable other background workloads. 
+
+5.2. Coverage Improvement 
+
+Figure 3 summarizes the coverage improvement of Symbolon across 32 programs and 16 search strategies. Symbolon substantially improves replayed line coverage on the original programs. The average improvement is 3.69 ×
+
+and 3.87 × when coverage is aggregated by programs and search strategies, respectively. The gains are especially vis-ible in hard cases where the baseline makes no progress. For 69 program–strategy pairs with zero baseline coverage, Symbolon covers at least one line, and for 68 of these pairs, it covers at least 1,000 lines. The gains hold across most benchmark programs. For each program, we compute the improvement ratio by sum-ming the covered lines over all 16 search strategies with Symbolon and dividing by the corresponding baseline sum. Symbolon improves coverage on 30 of the 32 programs, with at least 1.5 × improvement on 25 programs. On 19 pro-grams, Symbolon covers more lines than the baseline under every evaluated search strategy. The largest program-level improvement is 22.75 × on lua . We leave the discussion of why Symbolon does not improve cjson or nasm to Section 6, though it still improves a subset of search strategies. Symbolon also improves coverage across all search strate-gies. As some programs have zero baseline coverage, im-provement ratios for baselines on these programs are unde-fined. Therefore, for each strategy, we report an aggregate improvement ratio, computed as the total number of lines covered by Symbolon across all 32 programs divided by the corresponding total baseline coverage. The improvement ranges from 1.56 × to 7.51 ×, with a mean of 3.87 ×. No-8+ Symbolon                             
+
+> Baseline
+> dfs (1.69 ×)
+> bfs (1.90 ×)
+> random-state (6.56 ×)
+> random-path (2.62 ×)
+> nurs:covnew (5.54 ×)
+> nurs:md2u (6.41 ×)
+> nurs:depth (7.51 ×)
+> nurs:rp (2.08 ×)
+> nurs:icnt (5.37 ×)
+> nurs:cpicnt (3.20 ×)
+> nurs:qc (5.32 ×)
+> sgs (6.88 ×)
+> cgs (1.89 ×)
+> cbc (1.70 ×)
+> empc (1.68 ×)
+> learch (1.56 ×)
+> bash 1.66 ×bc 13.47 ×bison 7.97 ×cjpeg 1.04 ×cjson 0.95 ×combine 1.84 ×curl 2.17 ×diff 3.12 ×
+> expat 3.52 ×find 3.20 ×flex 4.04 ×flvmeta 2.06 ×gawk 2.10 ×grep 1.72 ×gzip 1.16 ×jasper 6.47 ×
+> jq 3.76 ×xmllint 6.66 ×lua 22.75 ×make 2.67 ×nasm 0.96 ×objcopy 3.41 ×openssl 2.08 ×patch 1.25 ×
+> readelf 1.44 ×sed 2.10 ×sqlite 3.68 ×strip-new 1.44 ×tic 2.36 ×tiffinfo 2.66 ×transicc 1.77 ×vim 2.66 ×
+
+Figure 3: Per-program line coverage across 16 search strategies after 12 hours. Each subplot shows one program. Bars follow the legend order. For each bar, the dark segment represents baseline coverage, and the light segment represents additional coverage obtained from Symbolon under the same strategy. The ratio in each subplot title is Symbolon’s average improvement on that program across all strategies, while the ratio below each legend entry is the average improvement of that strategy across all programs. Each subplot uses an independent 𝑦 -axis. Very small or visually similar baseline bars, e.g., 
+
+lua and flex , reflect low or similar baseline coverage at this scale.   
+
+> +Symbolon
+> Baseline
+> vanilla (3.39 ×)
+> -O2
+> (3.77 ×)
+> -sccp
+> (3.21 ×)
+> -ipsccp
+> (3.69 ×)
+> -gvn_hoist
+> (3.44 ×)
+> -sroa
+> (3.34 ×)
+> -adce
+> (3.77 ×)
+> jasper 5.28 ×make 1.75 ×
+
+Figure 4: Line coverage of Symbolon under different compiler-optimization flags. Each bar is one flag (color); the solid base is the baseline coverage with that flag and the lighter cap is the additional lines Symbolon covers. Titles report the per-program improvement ratio. tably, Symbolon also reduces the dependence on the choice of search strategy. On the original programs, the strongest strategy covers 7.4 × as many lines as the weakest one. After applying Symbolon , this gap drops to 1.7 ×. This suggests that Symbolon makes the transformed programs easier to explore across a wide range of search strategies, rather than only benefiting a particular strategy. 
+
+Improving compiler optimizations. Beyond improving search strategies, we show that Symbolon also complements existing transformation-based approaches, e.g., compiler op-timizations [80]. Specifically, for a program compiled with a compiler optimization flag deemed effective by prior work [80], we further transform it with Symbolon and com-pare the resulting coverage improvement against that on the original program. As shown in Figure 4, Symbolon con-sistently improves coverage across all compiler-flag config-urations by 3.52 × on average. This observation validates that Symbolon can further augment rigid compiler transfor-mations, which are strictly semantics-preserving and often misaligned with the objective of symbolic execution. 
+
+5.3. Execution Efficiency 
+
+Symbolic execution can stop making progress when the state set or solver workload exhausts the analysis budget. We thus evaluate whether Symbolon makes programs cheaper to explore. For each program, we report peak resident memory and average solver time per query, averaged across all 16 search strategies. As shown in Table 3, Symbolon reduces peak memory on 28 of 32 programs and average solver time per query on 29 of 32 programs. The mean per-program reduction factors are 29.2 × for peak memory and 123 × for solver time per query. 
+
+Memory. Symbolon reduces memory by removing or com-pressing sources of state growth before the engine reaches them, e.g., summarizing byte-by-byte checks, bounding sym-bolic loops, and bypassing exploration-irrelevant I/O. The arithmetic mean peak memory drops from 18,890 MB to 6,684 MB, while the median transformed peak memory is only 824 MB. Moreover, 18 transformed programs run un-9Table 3: Runtime overhead of symbolically executing the original (Vanilla) versus the Symbolon -transformed program, for peak resident memory and average solving time per query. The reduction factor Ratio column is computed as Vanilla/ Symbolon (a ratio >1 means Symbolon costs less and higher is better); the last row reports arithmetic means across programs.                                                                                                                                                                                                              
+
+> Program Peak Memory (MB) Avg. Solving Time (ms)
+> Vanilla Symbolon Ratio Vanilla Symbolon Ratio
+> bash 29,998 14,215 2.1 5,543 983 5.6
+> bc 19,353 260 74.3 1,739 5.7 307
+> bison 7,751 1,028 7.5 16,601 90 184
+> cjpeg 19,279 16,362 1.2 41,427 13,703 3.0
+> cjson 26,845 24,189 1.1 282 260 1.1
+> combine 26,902 405 66.4 43 14 3.2
+> curl 17,719 292 60.6 318 2.4 133
+> diff 14,116 1,727 8.2 18,854 212 88.9
+> expat 15,625 305 51.3 4,577 26 178
+> find 22,211 616 36.1 486 36 13.5
+> flex 96 186 0.52 1.5 5.8 0.25
+> flvmeta 25,644 336 76.4 2,855 46 61.6
+> gawk 23,464 25,194 0.93 6,232 16 384
+> grep 13,194 11,683 1.1 35,440 8,836 4.0
+> gzip 1,142 994 1.1 192,424 4,211 45.7
+> jasper 19,174 205 93.6 343 2.3 149
+> jq 22,203 283 78.5 27 1,195 0.02
+> xmllint 17,604 444 39.7 5,011 31 159
+> lua 11,354 5,981 1.9 215 1,918 0.11
+> make 23,199 19,377 1.2 6,289 1,189 5.3
+> nasm 22,011 26,941 0.82 10,405 87 120
+> objcopy 18,916 1,726 11.0 8,196 4,824 1.7
+> openssl 16,969 2,309 7.3 12,396 36 342
+> patch 32,094 28,756 1.1 659 570 1.2
+> readelf 649 271 2.4 53,188 166 321
+> sed 26,368 26,734 0.99 408 249 1.6
+> sqlite 26,356 768 34.3 4,975 13 397
+> strip-new 18,891 462 40.8 8,079 42 193
+> tic 25,562 308 82.9 348 0.99 351
+> tiffinfo 14,884 326 45.6 725 6.5 111
+> transicc 25,815 317 81.4 2,821 18 155
+> vim 19,094 881 21.7 143,495 624 230
+> Average 18,890 6,684 29.2 18,263 1,232 123
+
+der 1 GB. The largest reductions exceed 70 × on memory-bound programs such as jasper , tic , and bc , indicating that Symbolon substantially reduces the live state space that KLEE must keep resident. 
+
+Constraint solving time. Symbolon also reduces solver-side cost by changing the expressions that enter solver queries, e.g., concretizing symbolic sizes or bounds and rewriting solver-hostile computations. The arithmetic mean solver time per query drops from 18,263 ms to 1,232 ms, and the mean per-program reduction factor is 123 ×. The largest reductions exceed 300 × on query-bound programs such as sqlite , gawk ,and openssl . These savings show that Symbolon improves exploration not only by reaching more code, but also by making transformed programs cheaper for both the engine and the solver to process. 
+
+5.4. Finding Bugs 
+
+We evaluate the ability of Symbolon to help discover real-world security violations. Specifically, we apply Symbolon to (1) directly find security violations in user-space programs, and (2) generate syscall descriptions using SyzSpec [20] for the Linux kernel to assist kernel fuzzing. 
+
+Finding security violations with sanitizers. We first use KLEE and Symbolon to detect memory-safety bugs and un-defined behaviors in the same set of programs. This leverages KLEE’s built-in memory error detector and its integration with the Undefined Behavior Sanitizer (UBSan). Since the program is transformed by Symbolon , sanitizer reports ob-tained from the transformed program do not necessarily indicate violations in the original program. Following similar practices in prior work [110, 113], we build the original program with UBSan and Address Sanitizer (ASan), replay the tests generated by KLEE/ Symbolon on it, and count the unique security violations reported by each sanitizer. As Table 4 shows, across 16 search strategies, Symbolon reports 240 more UBSan violations and 25 more ASan viola-tions than running KLEE on the original programs. We have manually validated these sanitizer reports and have respon-sibly disclosed confirmed issues that present real security risks to the respective maintainers. 
+
+Table 4: Unique security violations found in original pro-grams. Tests are generated on original (Vanilla) versus Symbolon -transformed programs. Δ is the absolute gain achieved by Symbolon.                                                                                                              
+
+> Strategy UBSan Violations ASan Violations
+> Vanilla Symbolon ΔVanilla Symbolon Δ
+> bfs 26 47 +21 550
+> dfs 13 24 +11 21-1
+> random-path 21 43 +22 35+2
+> random-state 14 19 +5 69+3
+> nurs:depth 16 26 +10 01+1
+> nurs:covnew 17 42 +25 25+3
+> nurs:cpicnt 24 39 +15 32-1
+> nurs:qc 14 19 +5 21-1
+> nurs:icnt 15 24 +9 03+3
+> nurs:md2u 18 31 +13 24+2
+> nurs:rp 29 45 +16 38+5
+> cbc 20 31 +11 47+3
+> cgs 32 44 +12 610 +4
+> empc 37 67 +30 990
+> learch 29 62 +33 67+1
+> sgs 810 +2 12+1
+> Total 333 573 +240 54 79 +25
+
+Finding crashes by generating syscall descriptions. Sym-bolic execution can support kernel fuzzing by generating syscall descriptions that help construct valid syscall inputs. For example, SyzSpec [20] symbolically analyzes kernel syscall handlers and extracts input types, sizes, and constraints for syzkaller . However, native kernel code is difficult for symbolic execution to analyze, so we use Symbolon as a front end to SyzSpec. We run SyzSpec on both the original kernel and the Symbolon -transformed kernel, generate syscall descriptions from each, and then fuzz the unmodified original kernel with syzkaller . Following SyzSpec’s setup, we target the same Linux drivers and subsystems that remain available in our evaluated kernel version, excluding capi20 because it has been removed. Each target is fuzzed for 24 hours over 10 Table 5: 24-hour syzkaller fuzzing results using syscall descriptions generated by running SyzSpec on the original kernel (Vanilla) and on the Symbolon-transformed kernel.                                                              
+
+> Kernel Target Edge Coverage Crashes
+> Vanilla Symbolon Ratio Vanilla Symbolon
+> i2c 1,621 1,743 1.08 22
+> infiniband 714 1,831 2.56 01
+> input_event 1,940 1,798 0.93 11
+> io_uring 1,708 2,727 1.60 11
+> mapper_control 1,185 26,234 22.14 14
+> ppp 3,878 3,022 0.78 12
+> ptmx 1,846 5,055 2.74 13
+> sg 3,044 2,844 0.93 41
+> snd_seq 1,620 2,108 1.30 01
+> uinput 2,767 2,898 1.05 12
+> Total 20,323 50,260 2.47 12 18
+
+three runs, using four CPU cores split across two QEMU instances. We report average final KCOV edge coverage and the number of unique crashes. Table 5 shows that descriptions generated from the Symbolon-transformed kernel improve end-to-end fuzzing effectiveness. Across all targets, aggregate edge coverage increases from 20,323 to 50,260, a 2.47 × improvement over descriptions generated from the original kernel. Symbolon improves edge coverage on 7 of 10 targets, with the largest gain on mapper_control . The generated descriptions also increase the total number of unique crashes from 12 to 18, improving crash discovery on 6 of 10 targets. These results show that transforming the symbolic-analysis target can help SyzSpec recover more useful syscall descriptions and translate into better kernel-fuzzing outcomes on the original kernel. We further run an extended continuous fuzzing campaign beyond the 24-hour comparison. This campaign uncovers 21 previously unknown Linux kernel bugs that were not reported by syzbot at the time of discovery. As shown in Table 6, these bugs include use-after-free, out-of-bounds access, null-pointer dereference, hang, and RCU-stall cases. At the time of writing, we have responsibly reported all identified bugs to the relevant maintainers and have suggested potential patches to help the fixing process. Among these bugs, two of them have been acknowledged by the maintainers and one bug has been forwarded to the public mail list for discussion. We continue to actively monitor the status of these reports and will provide update for each bug. 
+
+Case studies. Figure 5 shows two representative bugs ex-posed by Symbolon-generated tests. In flvmeta , Symbolon enables KLEE to reach yaml_on_tag , where a 64-bit tag offset is printed with sprintf into a 20-byte stack buffer. The gener-ated input makes the decimal offset require 21 bytes including the null terminator, triggering a one-byte ASan-reported stack overflow. In the Linux JFS case, Symbolon helps SyzSpec recover syscall descriptions that guide syzkaller 
+
+to jfs_open , where an on-disk extent descriptor is decoded into an unchecked allocation-group index and used to access 
+
+db_active[MAXAG] .
+
+Table 6: New linux kernel bugs discovered by Symbolon .File: enclosing source file (kernel-relative). Function: enclos-ing kernel function.                                              
+
+> File Function Type
+> jfs/jfs_imap.c diRead NPD
+> net/socket.c kernel_sock_shutdown NPD
+> vidtv/vidtv_psi.c vidtv_psi_ts_psi... 1NPD
+> jfs/file.c jfs_open OOB
+> jfs/jfs_txnmgr.c txAbort Assertion
+> ipv4/udp_tunnel_nic.c udp_tunnel_nic_device... 2UAF
+> gfs2/rgrp.c read_rindex_entry WARN
+> hfsplus/super.c hfsplus_commit_superblock Hang
+> events/core.c perf_event_release_kernel Hang
+> ipv4/ip_input.c ip_rcv RCU stall
+> mm/memfd.c memfd_create RCU stall
+> fs/stat.c newfstat RCU stall
+> fs/stat.c newlstat RCU stall
+> fs/fcntl.c sys_fcntl RCU stall
+> events/core.c perf_fasync RCU stall
+> events/core.c perf_release RCU stall
+> block/blk-mq.c blk_mq_free_rqs OOB
+> v4l2-core/v4l2-dev.c v4l2_open UAF
+> module/main.c try_module_get OOB
+> jfs/jfs_logmgr.c lbmIODone UAF
+> dvb-core/dvbdev.c dvb_device_put UAF
+> 1vidtv_psi_ts_psi_write_into 2udp_tunnel_nic_device_sync_work
+
+5.5. Deployment Cost 
+
+Symbolon incurs a recurring per-project cost before sym-bolic execution, i.e., the agent retrieves learned skills, instan-tiates local rewrites, and validates candidate transformations. Table 7 reports this deployment cost for applying the dis-tilled skill library, excluding the one-time offline rule-learning phase. Across the 32 programs, deployment takes 21.44 min-utes, consumes 6.41M tokens, and costs $11.58 on average. We charge this time to Symbolon under the same 12-hour end-to-end budget used by the baselines. On average, deployment consumes only 3.0% of the budget, leaving the remaining time for symbolic exploration. The worst-case time is 26.8 minutes on find , and the highest cost is $14.62 on jasper .As the transformed source is produced before symbolic ex-ecution and is independent of the engine configuration, it can be reused across repeated campaigns, different budgets, and, in our evaluation, all 16 search strategies. Therefore, the recurring deployment overhead remains reasonably small relative to the symbolic execution campaigns it accelerates, while the more expensive open-ended transformation rule discovery is amortized through offline one-time skill learning. 
+
+5.6. Sensitivity Analysis 
+
+We further study how Symbolon behaves under different implementation choices and deployment settings. Specifically, we vary the agent and LLM backend, ablate components of the learned skill library, and test whether the same high-level workflow transfers to other symbolic execution engines and programming languages. 
+
+Agent and LLM backends. We first vary the agent and model used during repo-level transformation while keeping 11 1 static int yaml_on_tag(flv_tag *tag, flv_parser *parser) {            
+
+> 2char buffer[20]; /* 20-byte stack buffer */
+> 3/* ... */
+> 4/* current_tag_offset is a 64-bit file offset taken straight
+> 5* from the parsed stream with no bound. A crafted FLV makes its
+> 6* unsigned-decimal form need 21 bytes (20 digits + NUL). */
+> 7sprintf(buffer, "%" FILE_OFFSET_PRINTF_FORMAT "u",
+> 8FILE_OFFSET_PRINTF_TYPE(parser->stream->current_tag_offset));
+> 9/* ^^ ASAN: stack-buffer-overflow, WRITE of size 21 into buffer[20] ^^ */ ,→
+> 10 }
+
+(a) A buffer overflow bug in yaml_on_tag : a 64-bit tag offset is printed with sprintf into a 20-byte stack buffer, but a crafted FLV forces an offset whose 20-digit decimal form needs 21 bytes, writing one past buffer[20] .1 static int jfs_open(struct inode *inode, struct file *file) {             
+
+> 2struct jfs_inode_info *ji = JFS_IP(inode);
+> 3struct jfs_sb_info *jfs_sb = JFS_SBI(inode->i_sb);
+> 4/* ... */
+> 5/* BLKTOAG decodes an on-disk PXD with no validation that
+> 6* the result falls inside db_active[MAXAG = 128]. A crafted
+> 7* inode forces a negative index. */
+> 8ji->active_ag = BLKTOAG(addressPXD(&ji->ixpxd), jfs_sb);
+> 9atomic_inc(&jfs_sb->bmap->db_active[ji->active_ag]);
+> 10 /* ^^ UBSAN: index = -128, size 128 ^^ */
+> 11 }
+
+(b) An out-of-bounds access in jfs_open : BLKTOAG decodes an on-disk PXD without validating that the result indexes within 
+
+db_active[MAXAG] , so a crafted inode forces a negative index and an out-of-bounds atomic increment. 
+
+Figure 5: Two representative bugs exposed by Symbolon -generated tests and missed by the evaluated baselines under the same budget. (a) An ASan-reported stack overflow in flvmeta . (b) An out-of-bounds access in Linux JFS that can corrupt kernel memory or trigger a crash. 
+
+Table 7: Per-program deployment cost of Symbolon: wall-clock time, token usage, and dollar cost of applying the distilled skill library with default model configuration. 
+
+Program Time #Tok. Cost Program Time #Tok. Cost 
+
+(min) (M) ($) (min) (M) ($) bash 17.5 7.72 11.39 bc 20.6 9.41 14.52 bison 17.8 7.83 12.46 cjpeg 25.5 4.34 8.22 cjson 14.0 6.06 10.96 combine 17.9 7.77 14.23 curl 18.5 8.16 11.46 diff 25.4 7.41 13.94 expat 20.3 6.64 11.11 find 26.8 7.02 11.34 flex 22.6 6.33 11.89 flvmeta 24.0 5.71 10.10 gawk 23.8 7.74 11.57 grep 18.5 6.98 11.29 gzip 21.6 5.09 10.13 jasper 25.9 7.32 14.62 jq 21.6 5.23 13.94 tiffinfo 20.7 6.38 12.29 xmllint 17.8 4.07 8.98 lua 18.8 3.95 8.40 make 19.3 5.19 11.18 nasm 24.7 6.41 10.22 objcopy 22.0 5.12 11.81 openssl 19.4 8.15 11.66 patch 19.5 5.71 11.95 readelf 21.8 7.46 12.94 sed 24.4 4.61 7.84 sqlite 24.8 5.64 10.73 strip-new 23.5 5.26 10.75 tic 21.4 8.61 13.92 transicc 22.6 5.92 12.15 vim 23.2 5.98 12.51 
+
+Average 21.44 6.41 11.58 - - - -
+
+the learned skill library fixed. As shown in Table 8, Symbolon remains effective across different backends, while their final coverage depends on model and agent quality. Replacing the default Claude Code + Claude Opus 4.6 with Claude Sonnet 4.6 reduces average line coverage by 17.0%, suggest-ing that stronger reasoning and code capability help adapt learned transformations to target programs. Using Codex with GPT 5.5 in high-effort mode improves coverage by 23.5% over the default, while GPT 5.3-Codex performs 8.3% below the default but remains competitive. These results show that Symbolon is not tied to a single LLM or agent runtime, while stronger backends can further improve repo-level transformation. 
+
+Skill library. We next ablate the skill library to understand which learned information is most useful during repo-level transformation. Removing pattern augmentation reduces aver-age line coverage by 44.7%, showing that additional trigger patterns help the agent recognize transformation opportunities across diverse target contexts. Removing concrete before-and-
+
+Table 8: Sensitivity analysis of Symbolon to different set-tings. Agent and Models : different agent setting for the online inference in Symbolon . Skill Library : different settings for integrating the skill library to the agent. LCov is averaged line coverage across 32 benchmark programs with nurs:covnew 
+
+search strategy; Δ is the relative change compared to the full Symbolon (top row). 
+
+Configuration LCov Δ (%) 
+
+Symbolon (default) 
+
+Claude Code + Claude Opus 4.6 5,336 —
+
+Agent and Models 
+
+Claude Code + Claude Sonnet 4.6 4,427 -17.0 
+
+Codex + GPT 5.5 high effort 6,590 +23.5 
+
+Codex + GPT 5.3-Codex high effort 4,892 -8.3 
+
+Skill Library 
+
+w/o Pattern Augmentation 2,951 -44.7 w/o Transformation 1,468 -72.5 w/o Barrier Description 1,163 -78.2 
+
+after transformation examples causes a larger drop of 72.5%, indicating that examples are critical for turning a barrier diagnosis into an actionable rewrite. Removing the barrier description reduces coverage by 78.2%, the largest degrada-tion among the ablations. This suggests that effective skill transfer requires both what to transform and why the code impedes symbolic execution. Syntactic patterns or examples alone are insufficient for context-sensitive transformation. 
+
+Generalization to other languages. Symbolon operates at the source level and does not depend on specific inter-mediate representations, solver APIs, or search policies. To test this generalizability, we integrate Symbolon with three additional symbolic execution engines, i.e., Owi [128] for Rust, CrossHair [129, 130] for Python, and ExpoSE [46] for JavaScript. As these engines expose different execution interfaces, we keep the experiment lightweight. Specifically, Symbolon starts from the existing learned skill library and relies on repo-level transformation, without engine-specific 12 rule learning. We evaluate two projects per language using each engine’s default configuration, under the same 12-hour budget for both the baseline and the transformed program. Each configuration is repeated three times, and coverage is measured by replaying generated inputs on the original program. The evaluated projects and versions are listed in Appendix B. Table 9 summarizes the results. Symbolon improves cov-erage for all three engines, with gains of 82% for Owi , 178% for CrossHair , and 35% for ExpoSE . The coverage increases by 56% across the six projects. These results are not intended as a full benchmark for non-C engines, but they provide evidence that the source-level transformation workflow can transfer beyond the default C/KLEE setting with minimal engine-specific engineering. 
+
+Table 9: Generalization of Symbolon across symbolic-execution engines and source languages. We report aggregate line coverage over each engine’s benchmark projects. Δ: rel-ative gain of Symbolon over running the engine alone.                          
+
+> Engine Language #Projects Line Coverage
+> Vanilla Symbolon Δ(%)
+> Owi Rust 2171 312 +82
+> CrossHair Python 2141 393 +178
+> ExpoSE JavaScript 21,079 1,464 +35
+> Total 61,391 2,169 +56
+
+## 6. Discussion 
+
+Cost of agentic transformation. Symbolon amortizes open-ended rule discovery by learning transformations offline on small programs, but applying learned skills to a new reposi-tory still incurs a repo-level transformation cost. The agent must locate candidate contexts, instantiate rules, validate transformed code, and run a few symbolic executions and replays before the main campaign. In our evaluation, we charge this repo-level transformation and validation time to Symbolon by reducing its remaining symbolic-execution bud-get, so Symbolon and the baselines are compared under the same end-to-end budget (Section 5.1). However, this setting still does not rule out the possibility that a promising initial transformation fails to translate into improved performance over a longer campaign, in which case the transformation overhead can outweigh the eventual coverage gain. A natu-ral extension is budget-aware online transformation, where Symbolon observes symbolic-execution progress and pro-poses transformations during the campaign, while avoiding reintroducing the expensive transform-and-replay loop that offline learning is designed to amortize. 
+
+Learning–deployment gap. Symbolon learns transforma-tion skills from small benchmark programs because reward evaluation is cheap in that setting. While our evaluation shows that these skills transfer to larger real-world projects, a gap can remain between offline-learning programs and deployment targets. Real projects often include domain-specific APIs, macros, and long-range dependencies that may not appear in small coding benchmarks. As a result, some real-world barriers may not be covered by our learned skill library, and some learned rules may need to be substantially adapted before becoming useful. Future work could reduce this gap by learning from broader or domain-specific corpora, main-taining project-specific skill libraries, or developing cheaper proxy rewards for transformation search. 
+
+## 7. Related Work 
+
+Optimizations for symbolic execution. A large body of work improves symbolic execution by optimizing the engine, solver, or exploration policy. Existing approaches employ search strategies and learned state-selection policies to prior-itize promising program states [22, 110, 111, 112, 114], and leverage pruning, slicing, memoization, and under-constrained execution to reduce the program region to explore or reuse prior reasoning [24, 131, 132, 133]. Other solver-aware tech-niques use concrete executions, constraint simplification, or specialized reasoning to reduce query cost [6, 79, 113]. Other systems improve symbolic or concolic execution engines for specific deployment settings, such as hybrid fuzzing, binary analysis, firmware analysis, and long-running campaigns [40, 55, 57, 64, 109, 124], which often introduce domain-specific optimization opportunities. Recent ML/LLM-assisted sym-bolic and concolic systems further use language models inside the analysis loop to generate tests, interpret or solve path con-straints, complete structured inputs, summarize constraints, or guide vulnerability discovery [23, 115, 116, 117, 134, 135, 136, 137]. Symbolon complements these approaches by changing the source representation before these approaches take place, while staying disentangled from all optimizations during symbolic execution. 
+
+Program transformation for symbolic execution. A com-plementary direction reduces symbolic execution cost by enriching the program representation (via compilation and transformation) exposed to the symbolic execution engine [5, 73]. As program analyses are known to be sensitive to code transformations [82, 83, 84, 85, 86, 87, 138], existing approaches have also exploited this to improve symbolic execution [79, 80, 88, 89, 90, 91, 92, 93, 94, 95]. However, their transformation spaces are usually fixed by compiler passes or narrow expert-written templates tied to specific program constructs. Symbolon builds on a similar insight but treats transformation discovery as a learning problem. It automatically searches for diverse transformation rules from symbolic execution feedback, stores them as persistent agent skills, and instantiates them across diverse contexts in the project to optimize symbolic execution. 
+
+LLM-guided code evolution. Recent work has shown that LLMs can serve not only as code generators but also as proposal mechanisms in efficient search over programs, algo-rithms, and agentic systems [101, 102, 103, 139, 140]. For example, AlphaEvolve and ADRS use evolutionary coding-agent loops to find state-of-the-art algorithms and system ar-chitectures that human experts have missed for decades [103, 13 104]. These approaches suggest a new form of learning in which knowledge is accumulated through code and agent memory/skills, rather than solely through updates to model weights. Symbolon follows a similar spirit, but differs in both the optimization target and the deployment model. Rather than evolving the program to improve its own performance, Symbolon evolves program representations that improve how symbolic execution reasons about them. Moreover, Symbolon does not run expensive evolution on every large repository. It performs cheap transformation discovery offline on small programs, and transfers the learned knowledge via persistent agent skills [106, 107] to repo-level transformations. There-fore, Symbolon suggests a broader future direction for evolu-tionary search when reward computation is expensive, making it promising to extend program representation learning to other code reasoning tasks, e.g., fuzzing, formal verification, and agentic software analysis. 
+
+## 8. Conclusion 
+
+This paper introduces Symbolon, a framework that learns source-level program transformations to improve symbolic execution. Rather than relying on fixed compiler optimiza-tions or hand-written rewrite rules, Symbolon automatically searches for program representations amenable to symbolic execution, validates them by replaying the tests on the orig-inal program, and learns transformation rules as persistent agent skills for agentic, repo-level transformation on pop-ular real-world software projects. By measuring progress on the original program, Symbolon keeps the optimization target aligned with the goal of symbolic execution, while allowing a broad transformation space. Our evaluation across 32 real-world C programs and 16 search strategies shows consistent improvements in coverage, with substantially re-duced overhead in symbolic execution. Symbolon also finds new security violations in these programs, as well as Linux kernel bugs when used to augment state-of-the-art kernel bug finders based on symbolic execution. 
+
+## References 
+
+[1] J. C. King, “Symbolic execution and program testing,” Commun. ACM , vol. 19, no. 7, p. 385–394, 1976. [2] C. Cadar, P. Godefroid, S. Khurshid, C. S. Păsăreanu, K. Sen, N. Till-mann, and W. Visser, “Symbolic execution for software testing in practice: preliminary assessment,” in Proceedings of the 33rd Inter-national Conference on Software Engineering , 2011, pp. 1066–1071. [3] C. Cadar, D. Dunbar, and D. R. Engler, “KLEE: Unassisted and automatic generation of high-coverage tests for complex systems programs,” in Proceedings of the 8th USENIX Symposium on Op-erating Systems Design and Implementation (OSDI’08) . USENIX Association, 2008, pp. 209–224. [4] V. Chipounov, V. Kuznetsov, and G. Candea, “S2e: A platform for in-vivo multi-path analysis of software systems,” in Proceedings of the sixteenth international conference on Architectural support for programming languages and operating systems . ACM, 2011. [5] S. Poeplau and A. Francillon, “Symbolic execution with SYMCC: don’t interpret, compile!” in Proceedings of the 29th USENIX Con-ference on Security Symposium . USENIX Association, 2020, pp. 181–198. [6] E. Coppa, D. C. D’Elia, and C. Demetrescu, “Rethinking pointer rea-soning in symbolic execution,” in Proceedings of the 32nd IEEE/ACM International Conference on Automated Software Engineering (ASE) .IEEE, 2017, pp. 613–618. [7] M. H. Schwerhoff, “Advancing automated, permission-based pro-gram verification using symbolic execution,” Ph.D. dissertation, ETH Zurich, 2016. [8] Y. Hu, G. Huang, and P. Huang, “Automated reasoning and detection of specious configuration in large systems with symbolic execution,” in Proceedings of the 14th USENIX Symposium on Operating Systems Design and Implementation (OSDI 20) , 2020, pp. 719–734. [9] D. Kuts, “Towards symbolic pointers reasoning in dynamic symbolic execution,” in 2021 Ivannikov Memorial Workshop (IVMEM) . IEEE, 2021, pp. 42–49. [10] L. Borzacchiello, M. Cornacchia, D. Maiorca, G. Giacinto, and E. Coppa, “Droidreach++: Exploring the reachability of native code in android applications,” Computers & Security , p. 104657, 2025. [11] P. Godefroid, N. Klarlund, and K. Sen, “Dart: Directed automated random testing,” in Proceedings of the 2005 ACM SIGPLAN confer-ence on Programming language design and implementation , 2005, pp. 213–223. [12] S. Person, G. Yang, N. Rungta, and S. Khurshid, “Directed incremental symbolic execution,” in Proceedings of the 32nd ACM SIGPLAN Conference on Programming Language Design and Implementation ,2011, pp. 504–515. [13] S. Y. Chau, M. Yahyazadeh, O. Chowdhury, A. Kate, and N. Li, “Analyzing semantic correctness with symbolic execution: A case study on pkcs# 1 v1. 5 signature verification,” in Network and Distributed Systems Security (NDSS) Symposium 2019 , 2019. [14] V. Kuznetsov, J. Kinder, S. Bucur, and G. Candea, “Efficient state merging in symbolic execution,” in Proceedings of the 33rd ACM SIGPLAN Conference on Programming Language Design and Im-plementation , 2012, pp. 193–204. [15] Z. Susag, S. Lahiri, J. Hsu, and S. Roy, “Symbolic execution for randomized programs,” Proceedings of the ACM on Programming Languages , vol. 6, no. OOPSLA2, pp. 1583–1612, 2022. [16] R. Baldoni, E. Coppa, D. C. D’Elia, and C. Demetrescu, “Assisting malware analysis with symbolic execution: A case study,” in Inter-national conference on cyber security cryptography and machine learning . Springer, 2017, pp. 171–188. [17] N. Stephens, J. Grosen, C. Salls, A. Dutcher, R. Wang, J. Corbetta, Y. Shoshitaishvili, C. Kruegel, and G. Vigna, “Driller: Augmenting fuzzing through selective symbolic execution.” in NDSS , vol. 16, no. 2016, 2016, pp. 1–16. [18] Y. Chen, P. Li, J. Xu, S. Guo, R. Zhou, Y. Zhang, T. Wei, and L. Lu, “Savior: Towards bug-driven hybrid testing,” in 2020 IEEE Symposium on Security and Privacy (SP) . IEEE, 2020, pp. 1580–1596. [19] H. Huang, P. Yao, R. Wu, Q. Shi, and C. Zhang, “Pangolin: Incre-mental hybrid fuzzing with polyhedral path abstraction,” in 2020 IEEE Symposium on Security and Privacy (SP) . IEEE, 2020, pp. 1613–1627. [20] Y. Hao, J. Pu, X. Li, Z. Qian, and A. A. Sani, “SyzSpec: specification generation for linux kernel fuzzing via under-constrained symbolic execution,” in Proceedings of the 2025 ACM SIGSAC Conference on Computer and Communications Security . Association for Computing Machinery, 2025, pp. 813–826. [21] Y. Ling, G. Rajiv, K. Gopinathan, and I. Sergey, “Sound and effi-cient generation of data-oriented exploits via programming language synthesis,” in 34th USENIX Security Symposium (USENIX Security 25) , 2025, pp. 413–429. [22] N. Ruaro, K. Zeng, L. Dresel, M. Polino, T. Bao, A. Continella, S. Zanero, C. Kruegel, and G. Vigna, “Syml: Guiding symbolic execution toward vulnerable states through pattern learning,” in Pro-ceedings of the 24th International Symposium on Research in Attacks, Intrusions and Defenses , 2021, pp. 456–468. 
+
+14 [23] M. Shafiuzzaman, A. Desai, W. Guo, and T. Bultan, “Guiding sym-bolic execution with static analysis and llms for vulnerability discov-ery,” arXiv preprint arXiv:2604.06506 , 2026. [24] D. A. Ramos and D. Engler, “Under-constrained symbolic execu-tion: Correctness checking for real code,” in 24th USENIX Security Symposium (USENIX Security 15) , 2015, pp. 49–64. [25] F. Brown, D. Stefan, and D. Engler, “Sys: A static/symbolic tool for finding good bugs in good (browser) code,” in 29th USENIX Security Symposium (USENIX Security 20) , 2020, pp. 199–216. [26] Y. Wang, C. Zhang, Z. Zhao, B. Zhang, X. Gong, and W. Zou, “Maze: Towards automated heap feng shui,” in 30th USENIX security symposium (USENIX security 21) , 2021, pp. 1647–1664. [27] K. Huang, Y. Huang, M. Payer, Z. Qian, J. Sampson, G. Tan, and T. Jaeger, “The taming of the stack: Isolating stack data from memory errors,” in NDSS , 2022. [28] Z. Zhang, Y. Hao, W. Chen, X. Zou, X. Li, H. Li, Y. Zhai, and B. Lau, “Symbisect: Accurate bisection for fuzzer-exposed vulnerabilities,” in 
+
+33rd USENIX Security Symposium (USENIX Security 24) , 2024, pp. 2493–2510. [29] X. Shao, Z. Ling, Y. Zhang, H. Yan, Y. Wei, L. Luo, Z. Liu, J. Luo, and X. Fu, “The cost of performance: Breaking threadx with kernel object masquerading attacks,” in 34th USENIX Security Symposium (USENIX Security 25) , 2025, pp. 7507–7524. [30] M. Alharthi, F. Sang, D. Kuvaiskii, M. Vij, and T. Kim, “Rakis: Secure fast i/o primitives across trust boundaries on intel sgx,” in 
+
+Proceedings of the Twentieth European Conference on Computer Systems , 2025, pp. 1177–1193. [31] K. Man, Z. Wang, Y. Hao, S. Zheng, X. Zhou, Y. Cao, and Z. Qian, “Scad: Towards a universal and automated network side-channel vul-nerability detection,” in 2025 IEEE Symposium on Security and Privacy (SP) . IEEE, 2025, pp. 1861–1876. [32] Y. Ding, A. Gervais, R. Wattenhofer, and H. Sato, “Hunting defi vulnerabilities via context-sensitive concolic verification,” in Pro-ceedings of the 2024 IEEE/ACM 46th International Conference on Software Engineering: Companion Proceedings , 2024, pp. 324–325. [33] P. Godefroid, M. Y. Levin, and D. Molnar, “Sage: whitebox fuzzing for security testing,” Commun. ACM , vol. 55, no. 3, p. 40–44, 2012. [34] E. Bounimova, P. Godefroid, and D. Molnar, “Billions and billions of constraints: whitebox fuzz testing in production,” in Proceedings of the 2013 International Conference on Software Engineering . IEEE Press, 2013, p. 122–131. [35] N. Tillmann and J. De Halleux, “Pex: white box test generation for .net,” in Proceedings of the 2nd International Conference on Tests and Proofs . Springer-Verlag, 2008, p. 134–153. [36] N. Tillmann, J. de Halleux, and T. Xie, “Transferring an automated test generation tool to practice: from pex to fakes and code digger,” in Proceedings of the 29th ACM/IEEE International Conference on Automated Software Engineering . Association for Computing Machinery, 2014, p. 385–396. [37] P. Godefroid, “Higher-order test generation,” SIGPLAN Not. , vol. 46, no. 6, p. 258–269, 2011. [38] N. Redini, A. Machiry, D. Das, Y. Fratantonio, A. Bianchi, E. Gustafson, Y. Shoshitaishvili, C. Kruegel, and G. Vigna, “Boot-stomp: On the security of bootloaders in mobile devices,” in 26th USENIX Security Symposium (USENIX Security 17) , 2017, pp. 781– 798. [39] H. Sun, Y. Shen, J. Liu, Y. Xu, and Y. Jiang, “ {KSG }: Augmenting kernel fuzzing with system call specification generation,” in 2022 USENIX Annual Technical Conference (USENIX ATC 22) , 2022, pp. 351–366. [40] R. David, S. Bardin, T. D. Ta, L. Mounier, J. Feist, M.-L. Potet, and J.-Y. Marion, “Binsec/se: A dynamic symbolic execution toolkit for binary-level analysis,” in 2016 IEEE 23rd International Conference on Software Analysis, Evolution, and Reengineering (SANER) , vol. 1. IEEE, 2016, pp. 653–656. [41] J. Liu, L. Yi, W. Chen, C. Song, Z. Qian, and Q. Yi, “Linkrid: Vetting imbalance reference counting in linux kernel with symbolic execution,” in 31st USENIX Security Symposium (USENIX Security 22) , 2022, pp. 125–142. [42] H. Han, J. Kyea, Y. Jin, J. Kang, B. Pak, and I. Yun, “Queryx: Symbolic query on decompiled code for finding bugs in cots binaries,” in 2023 IEEE Symposium on Security and Privacy (SP) . IEEE, 2023, pp. 3279–3295. [43] K. Kim, T. Kim, E. Warraich, B. Lee, K. R. Butler, A. Bianchi, and D. J. Tian, “Fuzzusb: Hybrid stateful fuzzing of usb gadget stacks,” in 2022 IEEE Symposium on Security and Privacy (SP) . IEEE, 2022, pp. 2212–2229. [44] G. Li, E. Andreasen, and I. Ghosh, “Symjs: Automatic symbolic testing of javascript web applications,” in Proceedings of the 22nd ACM SIGSOFT International Symposium on Foundations of Software Engineering , 2014, pp. 449–459. [45] F. Marques, M. Ferreira, A. Nascimento, M. E. Coimbra, N. Santos, L. Jia, and J. Fragoso Santos, “Automated exploit generation for node. js packages,” Proceedings of the ACM on Programming Languages ,vol. 9, no. PLDI, pp. 1341–1366, 2025. [46] B. Loring, D. Mitchell, and J. Kinder, “ExpoSE: Practical symbolic execution of standalone javascript,” in Proceedings of the 24th ACM SIGSOFT International SPIN Symposium on Model Checking of Software , 2017, pp. 196–199. [47] L. Borzacchiello, E. Coppa, D. Maiorca, A. Columbu, C. Demetrescu, and G. Giacinto, “Reach me if you can: On native vulnerability reachability in android apps,” in European Symposium on Research in Computer Security . Springer, 2022, pp. 701–722. [48] Z. Liu, T. Lee, J. Yu, Z. Kang, and Y. Cao, “The domino effect: De-tecting and exploiting dom clobbering gadgets via concolic execution with symbolic dom,” in 34th USENIX Security Symposium (USENIX Security 25) , 2025, pp. 8293–8312. [49] X. Huang, L. Zhang, Y. Liu, P. Deng, Y. Cao, Y. Zhang, and M. Yang, “Towards automatic detection and exploitation of java web applica-tion vulnerabilities via concolic execution guided by cross-thread object manipulation,” in 34th USENIX Security Symposium (USENIX Security 25) , 2025, pp. 8367–8384. [50] S. Artzi, A. Kiezun, J. Dolby, F. Tip, D. Dig, A. Paradkar, and M. D. Ernst, “Finding bugs in dynamic web applications,” in Proceedings of the 2008 international symposium on Software testing and analysis ,2008, pp. 261–272. [51] S. Artzi, J. Dolby, F. Tip, and M. Pistoia, “Directed test generation for effective fault localization,” in Proceedings of the 19th International Symposium on Software Testing and Analysis . Association for Computing Machinery, 2010, p. 49–60. [52] J. F. Santos, P. Maksimović, T. Grohens, J. Dolby, and P. Gardner, “Symbolic execution for javascript,” in Proceedings of the 20th In-ternational Symposium on Principles and Practice of Declarative Programming . Association for Computing Machinery, 2018. [53] N. Mirzaei, S. Malek, C. S. Păsăreanu, N. Esfahani, and R. Mahmood, “Testing android apps through symbolic execution,” ACM SIGSOFT Software Engineering Notes , vol. 37, no. 6, pp. 1–5, 2012. [54] S. Poeplau and A. Francillon, “Symqemu: Compilation-based sym-bolic execution for binaries,” in Ndss 2021, network and distributed system security symposium . Internet Society, 2021. [55] F. Wang and Y. Shoshitaishvili, “Angr-the next generation of binary analysis,” in 2017 IEEE Cybersecurity Development (SecDev) . IEEE, 2017, pp. 8–9. [56] S. K. Cha, T. Avgerinos, A. Rebert, and D. Brumley, “Unleashing mayhem on binary code,” in 2012 IEEE Symposium on Security and Privacy . IEEE, 2012, pp. 380–394. [57] Z. Qi, J. Hu, Z. Xiao, and H. Yin, “Symfit: Making the common (concrete) case fast for binary-code concolic execution,” in 33rd USENIX Security Symposium (USENIX Security 24) , 2024, pp. 415– 432. 
+
+15 [58] L.-A. Daniel, S. Bardin, and T. Rezk, “Binsec/rel: Efficient relational symbolic execution for constant-time at binary-level,” in 2020 IEEE Symposium on Security and Privacy (SP) . IEEE, 2020, pp. 1021– 1038. [59] C. Cebeci, Y. Zou, D. Zhou, G. Candea, and C. Pit-Claudel, “Practical verification of system-software components written in standard c,” in Proceedings of the ACM SIGOPS 30th Symposium on Operating Systems Principles , 2024, pp. 455–472. [60] R. Iyer, K. Argyraki, and G. Candea, “Automatically reasoning about how systems code uses the cpu cache,” in 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24) , 2024, pp. 581–598. [61] J. Zaddach, L. Bruno, A. Francillon, D. Balzarotti et al. , “Avatar: A framework to support dynamic security analysis of embedded systems’ firmwares.” in NDSS , vol. 14, no. 2014, 2014, pp. 1–16. [62] D. Davidson, B. Moench, T. Ristenpart, and S. Jha, “Fie on firmware: Finding vulnerabilities in embedded systems using symbolic execu-tion,” in 22nd USENIX Security Symposium (USENIX Security 13) ,2013, pp. 463–478. [63] T. Scharnowski, N. Bars, M. Schloegel, E. Gustafson, M. Muench, G. Vigna, C. Kruegel, T. Holz, and A. Abbasi, “Fuzzware: Using pre-cise mmio modeling for effective firmware fuzzing,” in 31st USENIX Security Symposium (USENIX Security 22) , 2022, pp. 1239–1256. [64] C. Liu, A. Mera, E. Kirda, M. Xu, and L. Lu, “Co3: concolic co-execution for firmware,” in 33rd USENIX Security Symposium (USENIX Security 24) , 2024, pp. 5591–5608. [65] H. Kim, M. O. Ozmen, Z. B. Celik, A. Bianchi, and D. Xu, “Patchverif: Discovering faulty patches in robotic vehicles,” in 32nd USENIX Security Symposium (USENIX Security 23) , 2023, pp. 3011–3028. [66] C. S. Păsăreanu and N. Rungta, “Symbolic pathfinder: symbolic execution of java bytecode,” in Proceedings of the 25th IEEE/ACM International Conference on Automated Software Engineering , 2010, pp. 179–180. [67] G. Yang, S. Person, N. Rungta, and S. Khurshid, “Directed incremental symbolic execution,” ACM Trans. Softw. Eng. Methodol. , vol. 24, no. 1, 2014. [68] K. Luckow, C. S. Păsăreanu, M. B. Dwyer, A. Filieri, and W. Visser, “Exact and approximate probabilistic symbolic execution for nondeter-ministic programs,” in Proceedings of the 29th ACM/IEEE Interna-tional Conference on Automated Software Engineering . Association for Computing Machinery, 2014, p. 575–586. [69] E. Kurian, D. Briola, P. Braione, and G. Denaro, “Automatically gen-erating test cases for safety-critical software via symbolic execution,” 
+
+Journal of Systems and Software , vol. 199, p. 111629, 2023. [70] T. Kim, A. Ding, S. Etigowni, P. Sun, J. Chen, L. Garcia, S. Zonouz, D. Xu, and D. Tian, “Reverse engineering and retrofitting robotic aerial vehicle control firmware using dispatch,” in Proceedings of the 20th Annual International Conference on Mobile Systems, Appli-cations and Services , 2022, pp. 69–83. [71] C. Cadar and K. Sen, “Symbolic execution for software testing: Three decades later,” Commun. ACM , vol. 56, no. 2, pp. 82–90, 2013. [72] R. Baldoni, E. Coppa, D. C. D’elia, C. Demetrescu, and I. Finocchi, “A survey of symbolic execution techniques,” ACM Comput. Surv. ,vol. 51, no. 3, pp. 50:1–50:39, 2018. [73] G. Wei, S. Jia, R. Gao, H. Deng, S. Tan, O. Bračevac, and T. Rompf, “Compiling parallel symbolic execution with continuations,” in 2023 IEEE/ACM 45th International Conference on Software Engineering (ICSE) . IEEE, 2023, pp. 1316–1328. [74] S. Bucur, V. Ureche, C. Zamfir, and G. Candea, “Parallel symbolic execution for automated real-world software testing,” in Proceedings of the sixth conference on Computer systems , 2011, pp. 183–198. [75] X. Xiao, S. Li, T. Xie, and N. Tillmann, “Characteristic studies of loop problems for structural test generation via symbolic execution,” in 2013 28th IEEE/ACM International Conference on Automated Software Engineering (ASE) . IEEE, 2013, pp. 246–256. [76] A. Fromherz, K. S. Luckow, and C. S. Păsăreanu, “Symbolic arrays in symbolic pathfinder,” ACM SIGSOFT Software Engineering Notes ,vol. 41, no. 6, pp. 1–5, 2017. [77] L. Borzacchiello, E. Coppa, D. Cono D’Elia, and C. Demetrescu, “Memory models in symbolic execution: key ideas and new thoughts,” 
+
+Software Testing, Verification and Reliability , vol. 29, no. 8, p. e1722, 2019. [78] H. Xu, Z. Zhao, Y. Zhou, and M. R. Lyu, “Benchmarking the capability of symbolic execution tools with logic bombs,” IEEE Transactions on Dependable and Secure Computing , vol. 17, no. 6, pp. 1243–1256, 2020. [79] J. Chen, W. Hu, L. Zhang, D. Hao, S. Khurshid, and L. Zhang, “Learning to accelerate symbolic execution via code transformation,” in 32nd European Conference on Object-Oriented Programming (ECOOP 2018) . Schloss Dagstuhl–Leibniz-Zentrum für Informatik, 2018, pp. 6–1. [80] Y. Zhang, M. Sirlanci, R. Wang, and Z. Lin, “When compiler optimiza-tions meet symbolic execution: An empirical study,” in Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Commu-nications Security , 2024, pp. 4212–4225. [81] G. Wei, O. Bračevac, S. Tan, and T. Rompf, “Compiling symbolic execution with staging and algebraic effects,” Proceedings of the ACM on Programming Languages , vol. 4, no. OOPSLA, pp. 1–33, 2020. [82] R. van Tonder and C. Le Goues, “Tailoring programs for static analysis via program transformation,” in Proceedings of the ACM/IEEE 42nd International Conference on Software Engineering , 2020, pp. 824– 834. [83] K. S. Namjoshi and Z. Pavlinovic, “The impact of program transfor-mations on static program analysis,” in International Static Analysis Symposium . Springer, 2018, pp. 306–325. [84] J. Jung, H. Hu, D. Solodukhin, D. Pagan, K. H. Lee, and T. Kim, “Fuzzification:anti-fuzzing techniques,” in 28th USENIX Security Symposium (USENIX Security 19) , 2019, pp. 1913–1930. [85] H. Peng, Y. Shoshitaishvili, and M. Payer, “T-fuzz: fuzzing by program transformation,” in 2018 IEEE Symposium on Security and Privacy (SP) . IEEE, 2018, pp. 697–710. [86] E. Güler, C. Aschermann, A. Abbasi, and T. Holz, “Antifuzz: impeding fuzzing audits of binary executables,” in 28th USENIX Security Symposium (USENIX Security 19) , 2019, pp. 1931–1947. [87] J. Zhu, C. Shen, Z. Li, J. Yu, Y. Chen, and K. Pei, “Locus: Agen-tic predicate synthesis for directed fuzzing,” in Proceedings of the ACM/IEEE 48nd International Conference on Software Engineering .Association for Computing Machinery, 2026. [88] S. Dong, O. Olivo, L. Zhang, and S. Khurshid, “Studying the influ-ence of standard compiler optimizations on symbolic execution,” in 
+
+2015 IEEE 26th International Symposium on Software Reliability Engineering (ISSRE) . IEEE, 2015, pp. 205–215. [89] C. Cadar, “Targeted program transformations for symbolic execution,” in Proceedings of the 2015 10th Joint Meeting on Foundations of Software Engineering , 2015, pp. 906–909. [90] C. Saumya, M. Hassan, R. Gangaraju, M. Kulkarni, and K. Sun-dararajah, “Taming the hydra: Targeted control-flow transformations for dynamic symbolic execution,” Proceedings of the ACM on Pro-gramming Languages , vol. 10, no. OOPSLA1, pp. 59–85, 2026. [91] K. Zhu, C. Guo, K. Yan, X. Jia, H. Du, Q. Huang, Y. Xie, and J. Tang, “Loopscc: Towards summarizing multi-branch loops within determinate cycles,” arXiv preprint arXiv:2411.02863 , 2024. [92] D. S. Bouras and S. Mechtaev, “Defusing logic bombs in sym-bolic execution with llm-generated ghost code,” arXiv preprint arXiv:2603.19239 , 2026. [93] D. M. Perry, A. Mattavelli, X. Zhang, and C. Cadar, “Accelerating array constraints in symbolic execution,” in Proceedings of the 26th ACM SIGSOFT International Symposium on Software Testing and Analysis , 2017, pp. 68–78. 
+
+16 [94] E. T. Barr, D. Clark, M. Harman, and A. Marginean, “Indexing operators to extend the reach of symbolic execution,” arXiv preprint arXiv:1806.10235 , 2018. [95] H. Converse, O. Olivo, and S. Khurshid, “Non-semantics-preserving transformations for higher-coverage test generation using symbolic execution,” in 2017 IEEE International Conference on Software Testing, Verification and Validation (ICST) . IEEE, 2017, pp. 241– 252. [96] D. Trabish and S. Itzhaky, “Enhancing symbolic execution with machine-checked safety proofs,” in Proceedings of the 15th ACM SIGPLAN International Conference on Certified Programs and Proofs ,2026, pp. 294–308. [97] N. He, Z. Zhao, J. Wang, Y. Hu, S. Guo, H. Wang, G. Liang, D. Li, X. Chen, and Y. Guo, “Eunomia: Enabling user-specified fine-grained search in symbolically executing webassembly binaries,” in Proceed-ings of the 32nd ACM SIGSOFT International Symposium on Software Testing and Analysis , 2023, pp. 385–397. [98] J. Crawford, M. Ginsberg, E. Luks, and A. Roy, “Symmetry-breaking predicates for search problems,” KR , vol. 96, no. 1996, pp. 148–159, 1996. [99] I. P. Gent and B. Smith, Symmetry breaking during search in con-straint programming . University of Leeds, School of Computer Studies Leeds, 1999. [100] Klee, “Klee intrinsics,” Intrinsics, 2023. [101] B. Romera-Paredes, M. Barekatain, A. Novikov, M. Balog, M. P. Kumar, E. Dupont, F. J. Ruiz, J. S. Ellenberg, P. Wang, O. Fawzi 
+
+et al. , “Mathematical discoveries from program search with large language models,” Nature , vol. 625, no. 7995, pp. 468–475, 2024. [102] K. Sen, “Kiss sorcar: A stupidly-simple general-purpose and software engineering ai assistant,” arXiv preprint arXiv:2604.23822 , 2026. [103] A. Novikov, N. V ˜u, M. Eisenberger, E. Dupont, P.-S. Huang, A. Z. Wagner, S. Shirobokov, B. Kozlovskii, F. J. Ruiz, A. Mehrabian et al. ,“Alphaevolve: A coding agent for scientific and algorithmic discovery,” 
+
+arXiv preprint arXiv:2506.13131 , 2025. [104] A. Cheng, S. Liu, M. Pan, Z. Li, B. Wang, A. Krentsel, T. Xia, M. Cemri, J. Park, S. Yang et al. , “Barbarians at the gate: How ai is upending systems research,” arXiv preprint arXiv:2510.06189 , 2025. [105] Y. Li, D. Choi, J. Chung, N. Kushman, J. Schrittwieser, R. Leblond, T. Eccles, J. Keeling, F. Gimeno, A. D. Lago, T. Hubert, P. Choy, C. de Masson d’Autume, I. Babuschkin, X. Chen, P.-S. Huang, J. Welbl, S. Gowal, A. Cherepanov, J. Molloy, D. J. Mankowitz, E. S. Robson, P. Kohli, N. de Freitas, K. Kavukcuoglu, and O. Vinyals, “Competition-level code generation with alphacode,” Science , vol. 378, no. 6624, pp. 1092–1097, 2022. [106] R. Xu and Y. Yan, “Agent skills for large language models: Archi-tecture, acquisition, security, and the path forward,” arXiv preprint arXiv:2602.12430 , 2026. [107] Anthropic, “Equipping agents for the real world with agent skills,” https://www.anthropic.com/engineering/ equipping-agents-for-the-real-world-with-agent-skills, 2025. [108] J. Chen, W. Han, M. Yin, H. Zeng, C. Song, B. Lee, H. Yin, and I. Shin, “Symsan: Time and space efficient concolic execution via dynamic data-flow analysis,” in 31st USENIX Security Symposium (USENIX Security 22) , 2022, pp. 2531–2548. [109] I. Yun, S. Lee, M. Xu, Y. Jang, and T. Kim, “Qsym: A practical con-colic execution engine tailored for hybrid fuzzing,” in 27th USENIX Security Symposium (USENIX Security 18) , 2018, pp. 745–761. [110] S. Yao and D. She, “Empc: effective path prioritization for symbolic execution with path cover,” in 2025 IEEE Symposium on Security and Privacy (SP) . IEEE Computer Society, 2025, pp. 2772–2790. [111] J. He, G. Sivanrupan, P. Tsankov, and M. Vechev, “Learning to explore paths for symbolic execution,” in Proceedings of the 2021 ACM SIGSAC Conference on Computer and Communications Security .ACM, 2021, pp. 2526–2540. [112] Q. Yi, Y. Yu, and G. Yang, “Compatible branch coverage driven symbolic execution for efficient bug finding,” in Proc. ACM Program. Lang. , vol. 8, no. PLDI, 2024, pp. 213:1633–213:1655. [113] Y. Sun, G. Yang, S. Lv, Z. Li, and L. Sun, “Concrete constraint guided symbolic execution,” in Proceedings of the IEEE/ACM 46th International Conference on Software Engineering . ACM, 2024, pp. 1–12. [114] Y. Li, Z. Su, L. Wang, and X. Li, “Steering symbolic execution to less traveled paths,” in Proceedings of the 2013 ACM SIGPLAN international conference on Object oriented programming systems languages & applications . ACM, 2013, pp. 19–32. [115] H. Tu, S. Lee, Y. Li, P. Chen, L. Jiang, and M. Böhme, “ Cottontail: Large Language Model-Driven Concolic Execution for Highly Struc-tured Test Input Generation ,” in 2026 IEEE Symposium on Security and Privacy (SP) . IEEE Computer Society, 2026, pp. 2047–2065. [116] Z. Luo, H. Zhao, D. Wolff, C. Cadar, and A. Roychoudhury, “Agentic Concolic Execution,” in 2026 IEEE Symposium on Security and Privacy (SP) . IEEE Computer Society, 2026, pp. 1–19. [117] Y. Li, R. Meng, and G. J. Duck, “Large language model powered symbolic execution,” Proceedings of the ACM on Programming Languages , vol. 9, no. OOPSLA2, pp. 3148–3176, 2025. [118] Google, “syzkaller: an unsupervised coverage-guided kernel fuzzer,” https://github.com/google/syzkaller, 2024. [119] libsdl-org, “libtiff,” https://github.com/libsdl-org/libtiff, n.d. [120] L. De Moura and N. Bjørner, “Z3: An efficient smt solver,” in 
+
+International conference on Tools and Algorithms for the Construction and Analysis of Systems . Springer, 2008, pp. 337–340. [121] C. Gomes and M. Sellmann, “Streamlined constraint reasoning,” in 
+
+International Conference on Principles and Practice of Constraint Programming . Springer, 2004, pp. 274–289. [122] A. Sharma, “Openevolve: an open-source evolutionary coding agent,” 2025. [123] M. Böhme, V.-T. Pham, M.-D. Nguyen, and A. Roychoudhury, “Di-rected greybox fuzzing,” in Proceedings of the 2017 ACM Sigsac Conference on Computer and Communications Security . ACM, 2017, pp. 2329–2344. [124] F. Busse, M. Nowack, and C. Cadar, “Running symbolic execution forever,” in Proceedings of the 29th ACM SIGSOFT International Symposium on Software Testing and Analysis . Association for Computing Machinery, 2020, pp. 63–74. [125] J. Metzman, L. Szekeres, L. Simon, R. Sprabery, and A. Arya, “FuzzBench: an open fuzzer benchmarking platform and service,” in Proceedings of the 29th ACM Joint Meeting on European Soft-ware Engineering Conference and Symposium on the Foundations of Software Engineering . Association for Computing Machinery, 2021, pp. 1393–1403. [126] K. Keahey, J. Anderson, Z. Zhen, P. Riteau, P. Ruth, D. Stanzione, M. Cevik, J. Colleran, H. S. Gunawi, C. Hammock, J. Mambretti, A. Barnes, F. Halbach, A. Rocha, and J. Stubbs, “Lessons learned from the chameleon testbed,” in Proceedings of the 2020 USENIX Annual Technical Conference (USENIX ATC ’20) . USENIX Association, 2020. [127] L. De Moura and N. Bjørner, “Z3: an efficient smt solver,” in Pro-ceedings of the Theory and Practice of Software, 14th International Conference on Tools and Algorithms for the Construction and Analysis of Systems . Springer-Verlag, 2008, p. 337–340. [128] OWI Team, “Seamless bug-finding for c, c++, go, rust, wasm and zig,” https://github.com/OCamlPro/owi, 2025. [129] CrossHair Team, “An analysis tool for python that blurs the line between testing and type systems.” https://github.com/pschanely/ crosshair, 2025. [130] A. D. Bruni, T. Disney, and C. Flanagan, “A peer architecture for lightweight symbolic execution,” Universidad de California, Santa Cruz , 2011. 
+
+17 [131] J. H. Siddiqui and S. Khurshid, “Scaling symbolic execution using ranged analysis,” in Proceedings of the ACM international conference on Object oriented programming systems languages and applications ,2012, pp. 523–536. [132] D. Trabish, A. Mattavelli, N. Rinetzky, and C. Cadar, “Chopped sym-bolic execution,” in Proceedings of the 40th International Conference on Software Engineering , 2018, pp. 350–360. [133] G. Yang, C. S. Păsăreanu, and S. Khurshid, “Memoized symbolic execution,” in Proceedings of the 2012 International Symposium on Software Testing and Analysis , 2012, pp. 144–154. [134] J. Xu, J. Xu, T. Chen, and X. Ma, “Symbolic execution with test cases generated by large language models,” in 2024 IEEE 24th International Conference on Software Quality, Reliability and Security (QRS) . IEEE, 2024, pp. 228–237. [135] Y. Wu, X. Zhou, A. Humayun, M. A. Gulzar, and M. Kim, “Generating and understanding tests via path-aware symbolic execution with llms,” 
+
+arXiv preprint arXiv:2506.19287 , 2025. [136] S. Xia, M. He, S. Shao, T. Yu, Y. Zhang, N. Yoshida, and L. Song, “SymGPT: Auditing smart contracts via combining symbolic execu-tion with large language models,” in Proc. ACM Program. Lang. ,vol. 10, no. OOPSLA1. Association for Computing Machinery, 2026. [137] Y. Yang, S. Yao, J. Chen, and W. Lee, “Hybrid language processor fuzzing via llm-based constraint solving,” in Proceedings of the 34th USENIX Conference on Security Symposium . USENIX Association, 2025. [138] Z. Luo, M. Zafar, D. Wolff, and A. Roychoudhury, “Code-augur: Agentic vulnerability detection via specification inference,” arXiv preprint arXiv:2606.18619 , 2026. [139] J. Zhang, S. Hu, C. Lu, R. Lange, and J. Clune, “Darwin godel machine: Open-ended evolution of self-improving agents,” arXiv preprint arXiv:2505.22954 , 2025. [140] C. S. Xia, Z. Wang, Y. Yang, Y. Wei, and L. Zhang, “Live-swe-agent: Can software engineering agents self-evolve on the fly?” arXiv preprint arXiv:2511.13646 , 2025. 
+
+## Appendix A. KLEE Command-Line Configuration 
+
+The evaluation uses the following KLEE options: 
+
+--solver-backend=z3 --max-memory=32768 --watchdog \ --only-output-states-covering-new --posix-runtime \ --libc=uclibc --dump-states-on-halt=false \ --write-kqueries --write-smt2s --write-cov 
+
+## Appendix B. Projects for Evaluating Generalization 
+
+Table 10 details the projects behind the per-language results in Table 9, with their versions and sources. 
+
+Table 10: Projects used to evaluate cross-language general-ization (Table 9). 
+
+Language Project Source 
+
+Rust semver (1.0.28) crates.io/crates/semver 
+
+humantime (2.1.0) crates.io/crates/humantime 
+
+Python tomllib (stdlib) docs.python.org/3/library/tomllib 
+
+json (stdlib) docs.python.org/3/library/json 
+
+JavaScript mathjs (15.2.0) www.npmjs.com/package/mathjs 
+
+css (3.0.0) www.npmjs.com/package/css 
+
+## Appendix C. Sample Transformations 
+
+Symbolon ’s offline learning phase (Section 3.1) ends up with 211 transformation rules, each of which is packaged as an agent skill that records a natural-language trigger, the transformation it performs, the reason it helps symbolic execu-tion, and a verified before/after C example. We present a few representative rules below. Interestingly, some of them have also been found useful in recent work [90], yet Symbolon discovered them through automated learning without relying on any human expert. 
+
+Name: avoid-nonlinear-symbolic-constraints 
+
+Trigger: A branch condition is a nonlinear function of symbolic inputs, such as a product or square of symbolic variables. 
+
+Transformation: Offload the nonlinear term to a concrete computation so the residual comparison is effectively linear in the symbolic inputs. 
+
+Rationale: KLEE’s SMT backend models such nonlinear arithmetic imprecisely or times out on it. 
+
+Before 1 long long a, b, c;      
+
+> 2scanf("%lld%lld%lld", &a, &b, &c);
+> 3if (4 * a * b < (c - a - b) * (c - a - b) && c - a - b > 0)
+> 4puts("Yes");
+> 5else
+> 6puts("No");
+
+After 1 int a, b, c;   
+
+> 2scanf("%d%d%d", &a, &b, &c);
+> 3puts(a + 2 * sqrtl((long long) a * b) + b < c ? "Yes" : "No");
+
+Name: precompute-recursion-to-table 
+
+Trigger: A value is computed by multi-way (branching) recursion that is re-evaluated for each input. 
+
+Transformation: Precompute the recurrence into a table once, reducing each query to a concrete, constant-index lookup. 
+
+Rationale: The per-input recursion multiplies path con-straints and explodes the call tree. 
+
+Before 1 int fn(int n) {       
+
+> 2if (n == 0)
+> 3return 1;
+> 4if (n < 0)
+> 5return 0;
+> 6return fn(n - 1) + fn(n - 2) + fn(n - 3);
+> 7}
+
+After 1 int dp[31];      
+
+> 2dp[0] = dp[1] = 1;
+> 3dp[2] = 2;
+> 4for (i = 3; i < 31; i++)
+> 5dp[i] = dp[i - 1] + dp[i - 2] + dp[i - 3];
+> 6// per query: use dp[n] in place of fn(n)
+
+18 Name: lower-symbolic-lookup-to-dataflow 
+
+Trigger: A symbolic value indexes a constant table whose entry encodes which class the value falls into, and a branch then tests that entry. 
+
+Transformation: Recast the lookup as data flow: a single branchless arithmetic predicate over the index (bitwise 
+
+&/|, never || /&& ) evaluated on one path. 
+
+Rationale: Symbolic indexing is control flow in disguise; KLEE must encode the entire table through the SMT theory of arrays. 
+
+Before 1 // b64[c] >= 0 iff c is a base64 character  
+
+> 2
+
+signed char b64[256] = {[0 ... 255] = -1,  
+
+> 3
+
+[43] = 62,  
+
+> 4
+
+[47] = 63,  
+
+> 5
+
+[48 ... 57] = 52,  
+
+> 6
+
+[65 ... 90] = 0,  
+
+> 7
+
+[97 ... 122] = 26};  
+
+> 8
+
+scanf("%c", &c); // c symbolic  
+
+> 9
+
+if (b64[c] >= 0)  
+
+> 10
+
+puts("base64"); // 256-entry array-theory query 
+
+After 1 scanf("%c", &c); // c symbolic  
+
+> 2
+
+int ok = (c == 43) | ((c >= 47) & (c <= 57)) |  
+
+> 3
+
+((c >= 65) & (c <= 90)) | ((c >= 97) & (c <= 122));  
+
+> 4
+
+if (ok)  
+
+> 5
+
+puts("base64"); // branchless, one query 
+
+Name: avoid-large-fixed-arrays 
+
+Trigger: A large fixed-size array is pre-allocated and pop-ulated as scratch storage, then accessed at input-dependent indices. 
+
+Transformation: Replace the array with on-the-fly com-putation of each value when it is needed, removing the bulk storage. 
+
+Rationale: The large array creates complex symbolic memory constraints and many symbolic-indexed accesses. 
+
+Before 1 int box[55555] = {};  
+
+> 2
+
+for (i = 2; i < 55555; i++)  
+
+> 3
+
+box[i] = 1;  
+
+> 4
+
+for (i = 2; i < 55555; i++)  
+
+> 5
+
+if (box[i]) {  
+
+> 6
+
+if (i % 10 == 1)  
+
+> 7
+
+a[cnt++] = i;  
+
+> 8
+
+for (j = i; j < 55555; j += i)  
+
+> 9
+
+box[j] = 0;  
+
+> 10
+
+if (cnt == n)  
+
+> 11
+
+break;  
+
+> 12
+
+}
+
+After 1 for (i = 3;; i += 2) {  
+
+> 2
+
+k = 0;  
+
+> 3
+
+for (j = 3; j <= sqrt(i); j += 2)  
+
+> 4
+
+if (i % j == 0) {  
+
+> 5
+
+k = 1;  
+
+> 6
+
+break;  
+
+> 7
+
+} 
+
+> 8
+
+if (k == 0 && i % 5 == 1) {  
+
+> 9
+
+printf("%d ", i);  
+
+> 10
+
+if (++l == n)  
+
+> 11
+
+break;  
+
+> 12
+
+} 
+
+> 13
+
+}
+
+Name: bitmask-instead-of-array-flags 
+
+Trigger: Set membership or per-element boolean flags are stored in an auxiliary array and queried by indexed lookups, often inside a loop. 
+
+Transformation: Encode the set as bits of an integer and test membership with a single branchless bitwise AND .
+
+Rationale: KLEE forks on every symbolic-indexed load and data-dependent branch. 
+
+Before 1 int D[10];  
+
+> 2
+
+for (i = 0; i < K; i++) {  
+
+> 3
+
+scanf("%d", &h);  
+
+> 4
+
+D[h] = 1;  
+
+> 5
+
+} 
+
+> 6
+
+do {  
+
+> 7
+
+flag = 0;  
+
+> 8
+
+temp = N;  
+
+> 9
+
+while (temp != 0)  
+
+> 10
+
+if (D[temp % 10]) {  
+
+> 11
+
+flag = 1;  
+
+> 12
+
+break;  
+
+> 13
+
+} else  
+
+> 14
+
+temp /= 10;  
+
+> 15
+
+if (flag)  
+
+> 16
+
+N++;  
+
+> 17
+
+} while (flag); 
+
+After 1 int bit(int x) {  
+
+> 2
+
+int r = 0;  
+
+> 3
+
+while (x) {  
+
+> 4
+
+r |= 1 << (x % 10);  
+
+> 5
+
+x /= 10;  
+
+> 6
+
+} 
+
+> 7
+
+return r;  
+
+> 8
+
+} 
+
+> 9
+
+while (K--) {  
+
+> 10
+
+scanf("%d", &x);  
+
+> 11
+
+b |= 1 << x;  
+
+> 12
+
+} 
+
+> 13
+
+while (bit(N) & b)  
+
+> 14
+
+N++; 
+
+19

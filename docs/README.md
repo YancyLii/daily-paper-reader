@@ -6,94 +6,58 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-01
-- 运行时间：2026-07-01 20:35:53 UTC
+- 最新运行日期：2026-07-02
+- 运行时间：2026-07-02 19:24:48 UTC
 - 运行状态：成功
-- 本次总论文数：24
-- 精读区：11
-- 速读区：13
+- 本次总论文数：12
+- 精读区：8
+- 速读区：4
 
 ### 今日简报（AI）
-AI安全与智能体控制成今日焦点，24篇研究覆盖从多模态防御到代码智能体的深度优化。  
-最值得关注：多模态基础模型Yuvion VL专攻对抗内容与AI安全，以及用确定性控制平面驯服LLM编码智能体的“野生”行为。  
-建议读者优先阅读这两篇9分精读，并结合投机解码安全性速读，构建兼顾效率与风险的AI落地思维。
-- 详情：[/202607/01/README](/202607/01/README)
+今日精读聚焦于为AI智能体戴上操作系统级的“紧箍咒”（ActPlane），并揭穿了LLM写C++代码比人类更安全的假象（The Illusion of Safety）。  
+最值得看的是：9分论文表明，Agent的行为约束必须从模型层下沉到OS层进行可编程强制，而且AI生成的代码在多层验证下仍会暴露人类不易犯的致命缺陷。  
+面向普通开发者的建议：在将AI Agent接入敏感环境前，请务必叠加系统层安全护栏，别只信模型的自律。
+- 详情：[/202607/02/README](/202607/02/README)
 
 ### 精读区论文标签
-1. [Yuvion VL: A Multimodal Foundation Model for Adversarial Content and AI Safety](/202607/01/2606.25034v2-yuvion-vl-a-multimodal-foundation-model-for-adversarial-content-and-ai-safety)  
+1. [ActPlane: Programmable OS-Level Policy Enforcement for Agent Harnesses](/202607/02/2606.25189v2-actplane-programmable-os-level-policy-enforcement-for-agent-harnesses)  
    标签：评分：9.0/10、query:agsec
-   evidence：面向对抗内容和AI安全的多模态基础模型
-2. [A Deterministic Control Plane for LLM Coding Agents](/202607/01/2606.26924v1-a-deterministic-control-plane-for-llm-coding-agents)  
-   标签：评分：9.0/10、query:agsec
-   evidence：提出确定性控制平面管理LLM编码代理的权限，实现安全控制
-3. [Agent Safety Is Action Alignment](/202607/01/2606.28739v1-agent-safety-is-action-alignment)  
-   标签：评分：9.0/10、query:agsec
-   evidence：主张智能体安全应聚焦行动对齐而非内容拒绝
-4. [Understanding Binary Code Similarity for Real-World Vulnerability Detection: A Large-Scale Empirical Study](/202607/01/2606.28870v1-understanding-binary-code-similarity-for-real-world-vulnerability-detection-a-large-scale-empirical-study)  
+   evidence：为代理 harness 提供 OS 级策略执行，弥合自然语言安全策略与具体系统行动之间的差距
+2. [The Illusion of Safety: Multi-Tier Verification of AI vs. Human C++ Code](/202607/02/2607.00107v1-the-illusion-of-safety-multi-tier-verification-of-ai-vs-human-c-code)  
    标签：评分：9.0/10、query:vuldet
-   evidence：利用二进制代码相似性进行固件漏洞检测的大规模实证研究
-5. [From Tool Connection to Execution Control: Benchmarking Security Invariants in MCP-Style Agent Runtimes](/202607/01/2606.29073v1-from-tool-connection-to-execution-control-benchmarking-security-invariants-in-mcp-style-agent-runtimes)  
+   evidence：多层级验证检测AI生成C++代码中的漏洞
+3. [Managed Autonomy at Runtime: Gear-Based Safety and Governance for Single- and Multi-Agent Cyber-Physical Systems](/202607/02/2607.00334v1-managed-autonomy-at-runtime-gear-based-safety-and-governance-for-single--and-multi-agent-cyber-physical-systems)  
    标签：评分：9.0/10、query:agsec
-   evidence：在代理运行时中强制执行安全不变量
-6. [Divergence-based Safety Measure for Large Language Models via Rational Inattention](/202607/01/2606.29081v1-divergence-based-safety-measure-for-large-language-models-via-rational-inattention)  
+   evidence：提出基于档位的智能体安全治理控制系统
+4. [Beyond the Prompt: Jailbreaking Function-Calling LLMs via Simulated Moderation Traces](/202607/02/2607.00481v1-beyond-the-prompt-jailbreaking-function-calling-llms-via-simulated-moderation-traces)  
    标签：评分：9.0/10、query:agsec
-   evidence：提出基于散度的安全度量，量化嵌入输入攻击下的输出约束，作为内容与行为安全约束
-7. [Symbolon: Symbolic Execution by Learning Code Transformation](/202607/01/2606.29108v1-symbolon-symbolic-execution-by-learning-code-transformation)  
+   evidence：利用函数调用上下文中交织的结构漏洞进行令牌流攻击
+5. [HARC: Coupling Harmfulness and Refusal Directions for Robust Safety Alignment](/202607/02/2607.00572v1-harc-coupling-harmfulness-and-refusal-directions-for-robust-safety-alignment)  
+   标签：评分：9.0/10、query:agsec
+   evidence：分析有害与拒绝表征以构建鲁棒安全对齐
+6. [Antaeus: Hunting Repository-Level Logic Vulnerabilities via Context-Grounded LLM Reasoning](/202607/02/2607.01138v1-antaeus-hunting-repository-level-logic-vulnerabilities-via-context-grounded-llm-reasoning)  
    标签：评分：9.0/10、query:vuldet
-   evidence：用于漏洞检测和安全测试的符号执行框架，通过学习代码变换提升可扩展性
-8. [Defending Against Harmful Supervision Hidden in Benign Samples](/202607/01/2606.30263v1-defending-against-harmful-supervision-hidden-in-benign-samples)  
+   evidence：基于LLM的逻辑漏洞检测
+7. [Adversarial Pragmatics for AI Safety Evaluation: A Benchmark for Instruction Conflict, Embedded Commands, and Policy Ambiguity](/202607/02/2607.01153v1-adversarial-pragmatics-for-ai-safety-evaluation-a-benchmark-for-instruction-conflict-embedded-commands-and-policy-ambiguity)  
    标签：评分：9.0/10、query:agsec
-   evidence：针对微调数据投毒中隐藏有害监督的防御方法，属于LLM安全控制策略
-9. [Words Speak Louder Than Code: Investigating Cognitive Heuristics in LLM-Based Code Vulnerability Detection](/202607/01/2606.30587v1-words-speak-louder-than-code-investigating-cognitive-heuristics-in-llm-based-code-vulnerability-detection)  
-   标签：评分：9.0/10、query:vuldet
-   evidence：首次系统研究认知启发式偏见对LLM漏洞检测的影响
-10. [AgentBound: Verifiable Behavioral Governance for Autonomous AI Agents](/202607/01/2606.30970v1-agentbound-verifiable-behavioral-governance-for-autonomous-ai-agents)  
-   标签：评分：9.0/10、query:agsec
-   evidence：具备可验证行为监督的运行时治理框架用于自主智能体
-11. [A Lifecycle and Application-Stack Survey of Large Language Model Vulnerabilities: Attacks, Risks, Defenses, and Open Problems](/202607/01/2606.31639v1-a-lifecycle-and-application-stack-survey-of-large-language-model-vulnerabilities-attacks-risks-defenses-and-open-problems)  
-   标签：评分：9.0/10、query:agsec
-   evidence：综述涵盖智能体和工具的LLM漏洞，直接涉及安全控制策略
+   evidence：用于评估指令冲突、嵌入命令和政策模糊性下模型行为的基准和协议，解决行为安全约束问题
+8. [Capability Gates Are Not Authorization: Confused-Deputy Failures in LLM Agent Frameworks](/202607/02/2606.28679v1-capability-gates-are-not-authorization-confused-deputy-failures-in-llm-agent-frameworks)  
+   标签：评分：8.0/10、query:agsec
+   evidence：审计LLM智能体框架的授权失败并提出了按调用授权的ScopeGate
 
 ### 速读区论文标签
-1. [Speculative Decoding at Temperature Zero: A Scoped Safety-Invariance Screen with a 48,072-Sample Expansion](/202607/01/2606.25097v1-speculative-decoding-at-temperature-zero-a-scoped-safety-invariance-screen-with-a-48072-sample-expansion)  
+1. [Breaking the Rounding Trap: Securing LLMs against Quantization-Conditioned Backdoors](/202607/02/2606.29239v1-breaking-the-rounding-trap-securing-llms-against-quantization-conditioned-backdoors)  
    标签：评分：8.0/10、query:agsec
-   evidence：推测解码的安全不变性筛选
-2. [Reinforcement Learning for Software Vulnerability Analysis: A Systematic Review with Emphasis on C/C++ Source Code and Static Analysis](/202607/01/2606.28403v1-reinforcement-learning-for-software-vulnerability-analysis-a-systematic-review-with-emphasis-on-cc-source-code-and-static-analysis)  
+   evidence：针对量化条件后门的主动预量化防御，一种大语言模型安全控制策略
+2. [Rise From The Ashes: LLM-based Static Analysis for Deep Learning Framework Bugs](/202607/02/2607.00555v1-rise-from-the-ashes-llm-based-static-analysis-for-deep-learning-framework-bugs)  
    标签：评分：8.0/10、query:vuldet
-   evidence：系统梳理强化学习在漏洞分析中的应用，包括自动化检测
-3. [FlipGuard: Defending Large Language Models Against Quantization-Conditioned Backdoor Attacks](/202607/01/2606.28962v1-flipguard-defending-large-language-models-against-quantization-conditioned-backdoor-attacks)  
-   标签：评分：8.0/10、query:agsec
-   evidence：防御LLM中由量化触发的后门攻击的主动框架
-4. [Linguistic Firewall: Geometry as Defense in Multi-Agent Systems Routing](/202607/01/2606.30555v1-linguistic-firewall-geometry-as-defense-in-multi-agent-systems-routing)  
-   标签：评分：8.0/10、query:agsec
-   evidence：使用基于几何的防御来保护多智能体路由，防止恶意代理虚假陈述能力。
-5. [Safe and Generalizable Hierarchical Multi-Agent RL via Constraint Manifold Control](/202607/01/2606.24010v1-safe-and-generalizable-hierarchical-multi-agent-rl-via-constraint-manifold-control)  
-   标签：评分：7.0/10、query:agsec
-   evidence：通过约束流形实现分层多智能体强化学习的硬安全约束
-6. [Tracing Target Answers in Poisoned Retrieval Corpora via Token Influence Attribution](/202607/01/2606.25721v1-tracing-target-answers-in-poisoned-retrieval-corpora-via-token-influence-attribution)  
-   标签：评分：7.0/10、query:agsec
-   evidence：通过Token影响归因检测RAG语料投毒，增强LLM安全性
-7. [Formal Security Analysis of Agent Protocol Composition](/202607/01/2606.28690v1-formal-security-analysis-of-agent-protocol-composition)  
-   标签：评分：7.0/10、query:agsec
-   evidence：对代理协议组合进行形式安全分析以强化安全性
-8. [Toward Secure and Reliable PDDL Formalization of Large Language Models with Planner-in-the-Loop Feedback](/202607/01/2606.29700v1-toward-secure-and-reliable-pddl-formalization-of-large-language-models-with-planner-in-the-loop-feedback)  
-   标签：评分：7.0/10、query:agsec
-   evidence：LLM规划的安全可靠PDDL形式化，安全控制
-9. [Entity Binding Failures in Tool-Augmented Agents](/202607/01/2606.30531v1-entity-binding-failures-in-tool-augmented-agents)  
-   标签：评分：7.0/10、query:agsec
-   evidence：研究工具增强代理中的实体绑定失败作为独特的安全问题
-10. [IntentTester: Intent-Driven Multi-agent Framework for Cross-Library Test Migration](/202607/01/2606.25588v1-intenttester-intent-driven-multi-agent-framework-for-cross-library-test-migration)  
+   evidence：基于LLM的静态分析检测DL框架缺陷
+3. [CoCoMUT: A Tool for Code-Context Mining and Automated Dataset Generation](/202607/02/2606.31971v1-cocomut-a-tool-for-code-context-mining-and-automated-dataset-generation)  
    标签：评分：6.0/10、query:libfuz
-   evidence：意图驱动的测试迁移框架，可为库合成可执行测试，类似自动化fuzzing harness生成
-11. [How Much Static Structure Do Code Agents Need? A Study of Deterministic Anchoring](/202607/01/2606.26979v1-how-much-static-structure-do-code-agents-need-a-study-of-deterministic-anchoring)  
-   标签：评分：6.0/10、query:libfuz
-   evidence：使用静态分析为代码代理提供结构锚点，可迁移到模糊测试驱动生成
-12. [An Empirical Evaluation of Prompt Injection Vulnerabilities in Large Language Models Across Multilingual and Obfuscated Attack Scenarios](/202607/01/2606.29602v1-an-empirical-evaluation-of-prompt-injection-vulnerabilities-in-large-language-models-across-multilingual-and-obfuscated-attack-scenarios)  
-   标签：评分：6.0/10、query:agsec
-   evidence：对LLM在多语言和混淆攻击下提示注入漏洞的实证评估
-13. [An Empirical Study of Security Calibration in Large Language Models for Code](/202607/01/2606.31159v1-an-empirical-study-of-security-calibration-in-large-language-models-for-code)  
+   evidence：代码上下文提取工具含调用图用于API依赖建模
+4. [Detecting Adversarial Evasion Attacks Against Autoencoder-Based Network Intrusion Detection Systems](/202607/02/2607.01194v1-detecting-adversarial-evasion-attacks-against-autoencoder-based-network-intrusion-detection-systems)  
    标签：评分：6.0/10、query:vuldet
-   evidence：对LLM生成代码的安全校准进行大规模研究
+   evidence：检测针对网络入侵检测系统的对抗逃逸攻击，提升检测模型对抗鲁棒性，方法可迁移至漏洞检测领域。
 
 
 <div class="dpr-home-promo-card">

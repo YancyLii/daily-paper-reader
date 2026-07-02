@@ -1,0 +1,520 @@
+Title: Rise From The Ashes: LLM-based Static Analysis for Deep Learning Framework Bugs
+
+URL Source: https://arxiv.org/pdf/2607.00555v1
+
+Published Time: Thu, 02 Jul 2026 00:39:11 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# Rise From The Ashes: LLM-based Static Analysis for Deep Learning Framework Bugs 
+
+Shaoyu Yang ∗, Haifeng Lin ∗, Chunrong Fang ∗#, Xiang Chen †, Wei Cheng ‡, Jiawei Liu ∗,Yiyu Zhang ∗, Hongyu Liu §, Zhenyu Chen ∗∗State Key Laboratory for Novel Software Technology, Nanjing University, China 
+
+†School of Artificial Intelligence and Computer Science, Nantong University, China 
+
+‡College of Computer Science and Technology/College of Software, Nanjing University of Aeronautics and Astronautics, China 
+
+§Beijing Academy of Artificial Intelligence, China shaoyuyang@gmail.com, linhaifeng0716@163.com, fangchunrong@nju.edu.cn, xchencs@ntu.edu.cn, chengweii@nuaa.edu.cn, jwliu@nju.edu.cn, zhangyy0721@smail.nju.edu.cn, hyliu@baai.ac.cn, zychen@nju.edu.cn 
+
+> #
+
+Corresponding author 
+
+Abstract —Deep learning (DL) frameworks are critical AI infrastructures that often hide bugs with serious security implica-tions. While dynamic approaches such as fuzzing are effective in uncovering these bugs, they require real test execution and incur high computational costs. Static analysis is a natural complement because it can detect bugs without runtime execution, offering fast and scalable testing. Unfortunately, there is still limited work targeting static analysis for DL frameworks due to their multilingual architectures and tensor-related program state. We present PHOENIX , the first LLM-based static analysis technique for DL frameworks. Our key insight is that cross-language tensor flows in DL frameworks can be modeled, to-gether with concrete code context, as a structured semantic bridge intermediate representation (SBIR) that LLMs can analyze for potential bugs in tensor semantic propagation. We implement this insight through a multi-agent workflow. A summarization agent first distills bug summaries from historical bug-fix patches and CWE rules. Guided by each summary, an extraction agent identifies bug-relevant repository symbols for code retrieval, and a generation agent synthesizes grounded SBIRs from the retrieved context. Finally, an analysis agent is leveraged to check SBIRs and report potential bugs. Our evaluation shows that PHOENIX is a practical complement to dynamic DL framework testing for bug finding. To date, P HOENIX has found 31 real new bugs in PyTorch for different heterogeneous hardware backends (Intel CPU, NVIDIA CUDA, and Apple MPS). Among them, 20 submitted bug-fixing patches have been merged into upstream. 
+
+Index Terms —Deep learning frameworks, static analysis, large language models 
+
+I. I NTRODUCTION 
+
+Deep learning (DL) frameworks, such as PyTorch [33], JAX [4], and TVM [6], are now critical infrastructure for building, optimizing, and deploying DL and large language model (LLM) applications [19], [51]. Their correctness affects downstream systems in safety-sensitive domains, including autonomous driving [40], biometric recognition [38], and financial services [29]. A framework bug can therefore propa-gate beyond an ordinary library failure because an inconsistent tensor contract, an unsafe backend assumption, or a missing runtime check may silently corrupt numerical results, crash production systems, or expose memory-safety risks [12], [5]. Dynamic testing is a standard software testing paradigm for finding faults through program execution [1], [18]. In DL frameworks, fuzz testing (fuzzing) techniques [31], [45], [15], [27], [24], [25] generate or mutate DL programs, ex-ecute them against a framework or compiler, and report bugs through crash, differential, numerical, or metamorphic oracles [24], [47]. Recent fuzzers using LLMs further improve test generation by using LLM knowledge about API syntax and tensor constraints [10], [47]. Despite these advances, dynamic techniques still need to construct an executable test that reaches the buggy path and triggers an observable fail-ure. This requirement becomes increasingly costly in modern DL systems, where bug-triggering inputs may depend on large models, heterogeneous backends, or specific Python, C++/CUDA execution paths [12]. Static analysis [9], [37] is a natural complement because it can inspect implementation logic before a concrete failure-inducing input is found. However, existing static analyz-ers [32], [39] do not directly fit DL frameworks. General tools are usually designed for single programming language or a narrow set of local syntactic rules, while DL framework bugs often arise from inconsistent tensor semantics across Python APIs, C++ dispatchers, and CUDA kernels. Consequently, the community still lacks a practical static analysis technique for detecting DL framework bugs whose root causes lie in cross-language inconsistencies in tensor semantics. The key challenge is that many DL framework bugs live be-tween language layers rather than inside a single function. As the motivating example in § II shows, a frontend API may de-fine a tensor-rank contract, while the backend implementation may consume the same tensor metadata under a different or missing assumption. A Python analyzer can miss the backend consequence, whereas a C/C++ analyzer can miss the frontend contract. Detecting such bugs therefore requires reasoning 1
+
+> arXiv:2607.00555v1 [cs.SE] 1 Jul 2026
+
+about how tensor semantics propagate across Python, C++, and CUDA code, which poses two technical challenges: 
+
+(C1 ) Hybrid multilingual architectures. High-level Python APIs, C++ dispatchers, CUDA kernels, and back-end implementations are connected through foreign function interfaces (FFIs) and framework dispatch mechanisms [30]. Once control crosses these boundaries, a static analyzer must preserve the source-language contract and the target-language implementation context. Otherwise, the bug-relevant relation disappears and cross-language semantics are lost. 
+
+(C2 ) Tensor-centric program state. The relevant program state is tensor-centric rather than scalar-centric. A tensor carries shape, dtype, stride, device, aliasing, layout, allo-cation, and runtime-state information, and these attributes evolve through framework operators. Bugs often occur when a backend implementation consumes one of these attributes under an assumption that was not established or preserved by earlier layers. Hand-writing rules would require substantial domain-specific expertise and would be difficult to scale across thousands of framework APIs and backend paths [24], [37]. These challenges lead to a central question: Can we reason about DL framework bugs at the level of cross-language tensor transfers, rather than at the level of language-specific syntax? Our insight is that although DL framework imple-mentations are multilingual and stateful, many bug-relevant contracts reduce to how tensor attributes and guard conditions move from a source entity to a target entity. This transfer-level abstraction helps alleviate the two aforementioned challenges. It bridges language boundaries while retaining tensor-centric state. We therefore introduce a semantic bridge intermediate representation (SBIR), which records cross-language semantic transfers together with tensor attributes and repository code context. SBIR abstracts away language-specific syntax while preserving the information needed to reason about shape, dtype, stride, device, aliasing, and guard-state consistency. Based on SBIR, we present P HOENIX , an LLM-based static analysis technique for DL frameworks. Rather than asking an LLM to scan the whole codebase, P HOENIX constrains LLM reasoning around semantic bridges grounded in repository code. This design lets LLMs use their cross-language code understanding ( addressing C1 ) where it is most useful [46], [17], while keeping the analysis focused on concrete tensor contracts and semantic inconsistencies ( addressing C2 ). In summary, this paper makes the following contributions.  
+
+> •
+
+Perspective. We introduce a static analysis perspective for DL framework testing and formulate cross-language tensor-semantic inconsistency as the central bug pattern to be detected without runtime execution.  
+
+> •
+
+Technique. We design P HOENIX , an LLM-based static analysis workflow that combines bug pattern summa-rization, SBIR generation augmented by retrieval, and semantic analysis over SBIR to detect framework bugs.  
+
+> •
+
+Evaluation. We evaluate P HOENIX on PyTorch and show that it detects 31 real bugs with substantially fewer false positives than traditional static analyzers. The results also show that P HOENIX is complementary to LLM-based DL framework fuzzers, finding 30 bugs not detected by the dynamic baselines.  
+
+> •
+
+Impact. Among the 31 bugs reported by P HOENIX , 26 have been confirmed by maintainers, and 20 patches we submitted have been merged into the PyTorch repository. II. B ACKGROUND AND MOTIVATION 
+
+A. Tensor Safety in DL Frameworks 
+
+Modern DL frameworks, such as PyTorch [33] and JAX [4], adopt a hybrid language architecture to balance usability and performance [30]. A high-level language, typically Python, exposes flexible APIs for model construction, while low-level C++/CUDA backends implement dispatching, memory management, and performance-critical kernels. 
+
+Tensors as semantic carriers. The central object crossing these layers is the tensor [30], [4]. In DL frameworks, a tensor is not merely a multidimensional array. It also carries semantic metadata such as shape, dtype, stride, device, layout, and runtime state. During framework execution, Python APIs prepare or transform this metadata, C++ dispatchers route the operation to backend implementations, and CUDA or device-specific kernels consume the resulting attributes to perform computation. Correct execution, therefore, depends on preserving tensor semantics across language boundaries. 
+
+Safety risks from broken tensor contracts. However, this architecture creates a security-relevant semantic gap. The frontend often specifies API-level contracts, such as valid tensor ranks, compatible dtypes, or layout requirements. The backend, optimized for performance, may assume that these contracts have already been checked before it performs pointer arithmetic, memory access, indexing, or device-specific syn-chronization [30], [12]. Bugs arise when a contract established or implied at one layer is not preserved at another layer. In such cases, invalid tensor metadata can reach backend code that is locally plausible but globally unsafe. The resulting fail-ures may include out-of-bounds access, invalid memory-state consumption, or crashes under rare backend configurations. 
+
+B. Motivation Example 
+
+Fig. 1: An example of a cross-language bug in PyTorch. Fig. 1 shows a simplified real-world PyTorch bug pattern involving EmbeddingBag [35], [34]. The bug is rooted in 2a broken tensor-rank contract across the Python and C++ boundary. At the API level, EmbeddingBag.forward(...) 
+
+defines a semantic relation between input and offsets ,where offsets is meaningful for one-dimensional input 
+
+only under a corresponding one-dimensional rank constraint. This relation is part of the operator semantics, not a superficial input format preference. In the buggy backend path, the native C++ implementation fails to enforce the same contract in 
+
+> EmbeddingBag.cpp
+
+. As a result, inconsistent tensor metadata can flow from the frontend into the backend path. Once the backend continues execution under assumptions that only hold for valid 1D/2D inputs and 1D offsets, the operation no longer has a valid semantic basis. A correct backend implementation therefore needs explicit dimension checks that preserve the documented operator contract [34]. This case confirms that the failure is not a local syntax issue, but a missing preservation of tensor semantics across language layers .
+
+Why dynamic testing is not sufficient? Dynamic DL frame-work testing can expose such bugs when it generates an input that reaches the bug-triggering backend path and triggers an observable failure. However, this depends on constructing the right tensor-rank combination, routing it through the relevant API and dispatch path, and observing a failure under a specific runtime configuration. Many tensor-semantic bugs are latent as they encode inconsistent assumptions that may not crash immediately or may only surface under unusual backend states [12]. This motivates a complementary static view that can inspect semantic preservation without first constructing a concrete failure-inducing test. 
+
+Why existing static analyzers miss it? Bandit [32] and CSA [39] fail on this case for different reasons. Bandit is limited to the Python frontend. It can inspect the API-level code, but it cannot verify whether the rank contract is preserved after execution enters the native backend. CSA can analyze the C++ implementation, but it does not know the frontend semantic contract that input should be 1D/2D and that offsets should be 1D in the 1D-input case. Thus, Bandit loses the backend consequence, while CSA loses the frontend semantics. The bug lies in the transfer between these views. 
+
+Design challenges. The example suggests three requirements for DL framework static analysis. First, the analysis should represent tensor metadata, not only variable names or scalar values. Second, it should connect source and target entities across Python, C++, CUDA, and backend-specific code. Third, it should stay grounded in repository code context, because unconstrained reasoning over a large codebase can easily in-vent plausible but unsupported code paths. Such requirements motivate the design of P HOENIX in § III. III. P HOENIX APPROACH 
+
+Overview. Fig. 2 shows the workflow of P HOENIX , which uses a curated bug dataset as external knowledge and coor-dinates four LLM agents across three phases. The workflow is centered on SBIR, a domain-specific intermediate represen-tation that captures the cross-language propagation of tensor semantics in DL frameworks. In the first phase, a summary 
+
+TABLE I: Bug dataset used by P HOENIX for bug-pattern summarization.                        
+
+> Source Bug or weakness type # Items
+> Bug-fix PRs Tensor metadata and layout contract violations 10 Predicate and API-contract validation errors 10 Resource, pointer, and runtime-state errors 10 Heterogeneous backend and concurrency errors 10 CWE rules Missing Authorization (CWE-862) 1Out-of-bounds Write (CWE-787) 1Path Traversal (CWE-22) 1Use After Free (CWE-416) 1Out-of-bounds Read (CWE-125) 1OS Command Injection (CWE-78) 1Code Injection (CWE-94) 1Classic Buffer Overflow (CWE-120) 1Dangerous file upload (CWE-434) 1NULL Pointer Dereference (CWE-476) 1Deserialization of Untrusted Data (CWE-502) 1Heap-based Buffer Overflow (CWE-122) 1Incorrect Authorization (CWE-863) 1Improper Input Validation (CWE-20) 1Improper Access Control (CWE-284) 1Unbounded resource allocation (CWE-770) 1Total 56
+
+agent normalizes bug knowledge into reusable bug summaries. In the second phase, an extraction agent and a generation agent retrieve code context from the repository and synthesize SBIR. In the third phase, an analysis agent reasons over SBIR to report candidate bugs. The preceding dataset construction step prepares the knowledge source used by these phases. We introduce each component in the following subsections. 
+
+A. Bug Dataset Collection 
+
+PHOENIX requires bug knowledge to guide both SBIR construction and semantic analysis. However, existing public datasets are mostly designed for general-purpose software or single-language programs [3], [14], [52]. They rarely capture bugs specific to DL frameworks. We therefore build a dedi-cated bug dataset as the knowledge source of P HOENIX .We collect the dataset from two complementary sources. The first source is historical bug-fix PRs from the PyTorch repository [36]. The first and second authors searched PyTorch PRs with the keyword tensor , screened the merged PRs for tensor-related bug fixes, and removed changes that do not rep-resent bug fixes, including documentation updates, formatting changes, pure refactoring, and pure feature modifications. The retained PRs were grouped into four common tensor bug types that repeatedly appear in DL framework implementations. These types are tensor metadata and layout contract viola-tions, predicate and API contract validation errors, resource, pointer, and runtime state contract errors, and heterogeneous backend or concurrency state errors. For each type, we ordered candidate PRs by time and selected ten PRs following this chronological order. This process yields 40 bug-fix PRs, which is sufficient for generating enough SBIRs. The second source is the 2025 CWE Top 25 Most Dangerous Software Weaknesses [28]. CWE entries provide general secu-rity knowledge that may not have appeared in our collected 3LLM-based    
+
+> Summarizer
+> Bug Fix PRs
+> (Specific knowledge)
+> CWE Rules
+> (Generic Knowledge)
+> Bug Summaries
+> Bug desription:
+> Shape Mismatch;
+> Constraint:
+> t1.shape == t2.shape
+> LLM-based
+> Extractor
+> LLM-based
+> Analyzer Simulate
+> Expert Review
+> Formal definition:
+> ...
+> PyTorch
+> Codebase
+> Identifiers
+> LLM-based
+> Generator
+> Retrived
+> Code Context
+> Semantic Bridge
+> IR (SBIR)
+> Phase 1:LLM-based Bug Summarization Phase 2: LLM-based SBIR Generation Phase 3: LLM-based SBIR Analysis
+> Retrieve
+
+Fig. 2: Overview of P HOENIX 
+
+PyTorch patches but can still guide the search for security-relevant risks. We retain 16 CWE rules that can be mapped to DL framework implementation risks and discard weakness categories that are difficult to relate to tensor semantics, such as database-specific injection issues. Table I summarizes the final dataset. These items are not treated as detection results. Instead, they are used as source knowledge for the summarizer, which uses an LLM to convert heterogeneous PR and CWE descriptions into normalized bug patterns. 
+
+B. Semantic Bridge IR 
+
+Design scope and extensibility. SBIR is designed as a lightweight semantic abstraction rather than a complete pro-gram IR 1. Its goal is not to encode every execution detail of PyTorch, but to preserve tensor-level contracts that are relevant to cross-language bugs. P HOENIX therefore focuses on recurring semantic transfer types, including data propaga-tion, aliasing, dispatch, guard checking, control dependency, metadata conversion, mutation, and allocation. These types are sufficient to express the bug patterns studied in this work, including missing dimension checks, dtype/device inconsis-tencies, unsafe layout assumptions, and backend precondition violations. SBIR is intentionally extensible, so new transfer types and metadata keys can be added when P HOENIX is applied to new framework components or new bug classes. 
+
+Formal definition. Formally, a PyTorch program execution is represented as a sequence of semantic bridges that model how a source-language tensor entity is mapped to a target-language entity together with its transferred semantic attributes and code context. The formal syntax of the semantic bridge IR is given below. 
+
+> 1
+
+We use the term “IR” in the compiler sense because this semantic carrier is an internal artifact in the workflow, rather than a user-visible input or output. 
+
+⟨P⟩ ::= ⟨B∗⟩ ⟨B⟩ ::= ⟨ ⟨ Esrc ⟩, ⟨Edst ⟩, ⟨T⟩, ⟨Φ⟩, ⟨Γ⟩ ⟩ ⟨E⟩ ::= ⟨ℓ⟩.⟨e⟩[ .⟨f⟩ ]
+
+⟨ℓ⟩ ::= Python | CPP | CUDA 
+
+⟨T⟩ ::= data | alias | grad dispatch | guard | control metadata | mutation | allocation 
+
+⟨Φ⟩ ::= ⟨ϕ∗⟩ ⟨ϕ⟩ ::= ⟨k⟩ = ⟨v⟩⟨k⟩ ::= dtype | shape | stride layout | device | req_grad alias | capacity | state 
+
+⟨e⟩ ::= id 
+
+⟨f⟩ ::= id 
+
+⟨v⟩ ::= id | num | bool | [num ∗]expr | pred 
+
+⟨Γ⟩ ::= ⟨γ∗⟩ ⟨γ⟩ ::= filename = code 
+
+A program P is a sequence of semantic bridges B. Each bridge B is a five-tuple ⟨Esrc , Edst , T, Φ, Γ⟩ that describes one semantic transfer from a source entity to a destination entity. The fields Esrc and Edst are instances of the entity nonterminal 
+
+E. An entity E has the form ℓ. e[.f], where ℓ identifies the language layer, e denotes a program object such as an API, function argument, tensor, pointer, kernel parameter, or class instance, and the optional f denotes the specific member, property, or metadata item of interest, such as shape, dtype, device, size, data pointer, index, or bounds. If the analysis concerns the object as a whole, f is omitted. The language-layer nonterminal ℓ ranges over the terminals Python , CPP ,and CUDA . The nonterminal T records the transfer type, such as data propagation, alias propagation, gradient forward-ing, dispatch, guard checking, control dependency, metadata conversion, mutation, or allocation. Φ is a set of semantic constraints. Each constraint ϕ has the form k = v, where k is 4# Output     
+
+> [OUTPUT_BUG_SUMMARY]
+> # Role
+> You are a seasoned expert in deep learning framework security...
+> # Task
+> You will be provided with:
+> 1. **Defect Data Source**: A CWE vulnerability rule or a specific defect fix patch...
+> Your task is to perform chain thinking and reasoning, to identify the root cause that triggers
+> the defect and summarize it into a structured semantic vulnerability pattern summary.
+> For different data sources, strictly implement differentiated extraction strategies:
+> **CWE rules (downward concretization)**: Narrow down the broad general security rules...
+> **PR patches (upward generalization)**: Abstract the underlying logical errors upwards...
+> #Input bug data
+> [INPUT_BUG_DATA]
+
+Fig. 3: Prompt template for bug-pattern summarization. an attribute key and v is an attribute value. The value v can be a literal, identifier, numeric vector, symbolic expression, or predicate, which lets SBIR represent both tensor metadata and code-derived constraints such as capacity expressions and guard conditions. These keys record tensor properties and runtime states that should be preserved or intentionally changed during propagation, including shape, dtype, stride, layout, device, aliasing status, capacity, and state. Γ is a set of code-context entries. Each entry γ has the terminal form 
+
+filename = code and stores the repository code context of the bridge. This context lets the analyzer interpret the bridge with its surrounding PyTorch implementation. 
+
+Advantages of SBIR Design. SBIR records only bug-relevant semantic transfers rather than full program behavior. This choice keeps the abstraction compact enough for rea-soning with LLMs while retaining the tensor attributes, guard conditions, and repository context needed for bug analysis. SBIR gives P HOENIX a common analysis surface across the language layers modeled in this work, namely Python, C++, and CUDA. Instead of asking the analyzer to compare hetero-geneous code fragments directly, P HOENIX checks whether the semantic contracts encoded in SBIR are preserved as tensor information moves across these language layers. 
+
+C. LLM-based Bug Summarization 
+
+The raw bug dataset described in § III-A is useful as external knowledge, but it is not directly suitable for SBIR construc-tion. Bug-fix PRs contain concrete patches and development context, but they are often verbose and tied to one specific implementation [41]. CWE rules provide general weakness knowledge, but they are too abstract to directly identify tensor-level contracts in DL frameworks. Feeding these raw sources into later stages would make retrieval unstable and would leave the generator with ambiguous bug intent. PHOENIX therefore first normalizes each source item into a structured bug summary. Fig. 3 shows the summarization prompt. The prompt assigns the LLM the role of a DL frame-work security expert and asks it to summarize the root cause that triggers the bug. Importantly, the prompt uses different abstraction directions for different data sources. For CWE rules, LLM performs downward concretization by narrowing a general weakness into a semantic pattern for DL frameworks. # Output   
+
+> [OUTPUT_IDENTIFIER]
+> # Task
+> You will be provided with:
+> 1. **Bug Data Source**: Either a CWE vulnerability rule OR a bug fix patch
+> 2. **Bug Summary**: A description of the bug pattern
+> Your task is to extract the single most precise "Code Identifier" in the codebase...
+> #Input bug data
+> [INPUT_BUG_DATA]
+> #Input bug summary
+> [INPUT_BUG_SUMMARY]
+> # Role
+> You are an expert code analyst specialized in .. .
+
+Fig. 4: Prompt template for identifier extraction. 
+
+Algorithm 1: ERG Strategy for SBIR Generation  
+
+> 1
+
+Function IRGen( bugData ,bugSummary ,codebase ): 
+
+> 2
+
+attempts , contextSet ← 0, ∅ 
+
+> 3
+
+while attempts < 3 AN D contextSet = ∅ do  
+
+> 4
+
+// Identifier extraction with LLMs  
+
+> 5
+
+identifier ← Extract( bugData ,bugSummary ) 
+
+> 6
+
+contextSet ←
+
+CodebaseRetrieve( identifier ,codebase ) 
+
+> 7
+
+attempts ← attempts + 1  
+
+> 8
+
+if contextSet = ∅ then  
+
+> 9
+
+return N ull  
+
+> 10
+
+// SBIR generation with LLMs  
+
+> 11
+
+SBIR ← Gen( bugData ,bugSummary ,contextSet ) 
+
+> 12
+
+return SBIR 
+
+For PR patches, LLM performs upward generalization by abstracting the concrete patch into a reusable bug pattern. The output [OUTPUT_BUG_SUMMARY] records the bug type, trigger condition, violated semantic constraint, and relevant tensor or code entities. This summary becomes the semantic anchor for both identifier extraction and SBIR generation. 
+
+D. LLM-based SBIR Generation 
+
+After bug summarization, P HOENIX needs to construct an SBIR that connects the bug pattern to actual code in the target repository. A direct strategy would ask an LLM to locate relevant code and generate SBIR in one pass. This strategy is unreliable because the LLM must simultaneously search a large multilingual codebase and synthesize a formal abstraction. In our preliminary investigation, this often led to hallucinated code contexts [50], such as non-existent file paths, unsupported tensor attributes, or bridges that were not grounded in the repository. To avoid this failure mode, PHOENIX separates code grounding from SBIR generation through an Extract-Retrieve-Generate (ERG) strategy. Algorithm 1 gives the procedure. Given raw bug data, a normalized bug summary, and the target codebase, ERG first retrieves repository code contexts and then allows SBIR generation only when such contexts are available. Algorithm 1 starts by initializing the retry counter and the retrieved context set (Line 2). While no code context has been found and the retry budget has not been exhausted (Line 3), the extractor predicts one identifier from the raw 5# Output        
+
+> [OUTPUT_SBIR]
+> # Role
+> You are an expert in PyTorch cross-language dataflow analysis...
+> #Formal Definition of Semantic Bridge IR
+> ...
+> #Input bug data
+> [INPUT_BUG_DATA]
+> #Input bug summary
+> [INPUT_BUG_SUMMARY]
+> #Input code context
+> [INPUT_CODE_CONTEXT]
+> # Task
+> You will be provided with:
+> 1. **Bug Data**: Either a CWE vulnerability description OR a bug fix patch
+> 2. **Bug Summary**: A high-level description of the bug pattern
+> 3. **Code Context**: Function-level code snippets retrieved from the codebase .
+> Your task is to analyze these inputs and construct a complete Semantic Bridge IR (SBIR) in
+> JSON format that captures the cross-language dataflow and semantic propagation...
+
+Fig. 5: Prompt template for SBIR generation. bug data and its summary (Line 5). The extractor prompt in Fig. 4 asks the LLM to output the single most precise 
+
+[OUTPUT_IDENTIFIER] for repository search. This identifier can be a Python API, C++ function, CUDA kernel, helper rou-tine, or other concrete symbol in the target codebase. For a bug item like the EmbeddingBag case in § II, the extractor con-verts the summarized bug intent into an operator- or backend-related search symbol, which confines retrieval to relevant code contexts instead of reasoning over the whole repository. PHOENIX then passes the identifier to CodebaseRetrieve 
+
+to obtain function-level code contexts (Line 6). If retrieval fails, the loop increments the retry counter (Line 7) and tries another identifier. This retry logic gives the extractor a bounded chance to recover from an unresolved or overly broad identifier. If no context is retrieved after the budget is exhausted, P HOENIX returns Null (Lines 8–9). This failure branch is important because it prevents the generator from synthesizing SBIR without retrieved repository code context. Only when contextSet is non-empty does the generator receive the bug data, bug summary, and retrieved context to generate SBIR (Line 11), which is then returned to the downstream analyzer (Line 12). Fig. 5 shows the generation prompt, where the gener-ator receives the formal definition of SBIR, the original bug data, the normalized bug summary, and the retrieved 
+
+[INPUT_CODE_CONTEXT] . It then outputs [OUTPUT_SBIR] 
+
+in JSON format to describe bug-relevant semantic bridges. This design is intentionally constrained because the generator does not search the codebase by itself and only abstracts from retrieved contexts at function granularity, which keeps the generated SBIR grounded in the actual PyTorch codebase. 
+
+E. LLM-based SBIR Analysis 
+
+The final stage decides whether a generated SBIR indicates a real bug. Although SBIR is structured, analyzing it with manual rules is still difficult. DL framework bugs often depend on how several constraints interact across language boundaries, such as shape checks in Python, layout assumptions in C++, and runtime states in CUDA code. Encoding all such combina-# Output    
+
+> [OUTPUT_BUG_REPORT]
+> # Role
+> You are a PyTorch security analysis expert...
+> #Formal Definition of Semantic Bridge IR
+> ...
+> #Input SBIR
+> [INPUT_SBIR]
+> # Task
+> You will be provided with:
+> 1. **Specific SBIR representation**: A pre-generated specific SBIR representation
+> Your task is to combine various constraint components in the SBIR, analyze and determine
+> whether there are potential bugs in the code context. If there are, indicate the type of the bug,
+> its specific symptoms, and the suggested fix method; otherwise, simply output "No bug".
+
+Fig. 6: Prompt template for bug analysis over SBIR. tions as deterministic rules would require substantial domain effort and would still miss context-dependent logic errors. PHOENIX uses an LLM-based analyzer over SBIR as a semantic trace. As shown in Fig. 6, the prompt provides the formal SBIR definition and the concrete [INPUT_SBIR] .The analyzer examines whether the semantic constraints in 
+
+Φ are consistently preserved from ⟨Esrc ⟩ to ⟨Edst ⟩ under the code context ⟨Γ⟩. If a violation is found, it outputs 
+
+[OUTPUT_BUG_REPORT] with the bug type, concrete symp-tom, and suggested fix. If the SBIR is consistent, the analyzer is instructed to output No bug . This conservative output keeps the final report focused on semantic inconsistencies with high confidence rather than unconstrained LLM speculation. IV. E VALUATION 
+
+A. Experiment Setup 
+
+We design the following research questions (RQs) to eval-uate the effectiveness of P HOENIX :
+
+RQ1. Can P HOENIX outperform static approaches? 
+
+RQ2. Is P HOENIX orthogonal to dynamic approaches? 
+
+RQ3. What kinds of bugs can P HOENIX detect? 
+
+RQ4. How does each component contribute to P HOENIX ?
+
+Systems under test. e use PyTorch [33] as the target system because it is a widely used DL framework with a hybrid Python/C++/CUDA architecture, heterogeneous backends, and an active bug-fix history. These properties make it a representa-tive subject for studying cross-language tensor-semantic bugs, and we evaluate P HOENIX on its nightly version. 
+
+Metrics. As we evaluate our approach on the real-world 
+
+PyTorch codebase, we use two evaluation metrics. (i) False positive measures the proportion of analysis reports that are not actual bugs, reflecting the precision of each method. (ii) Bug detection counts the number of new PyTorch bugs detected by PHOENIX and baselines. 
+
+Baselines. We organize the baselines into static techniques for RQ1 and dynamic techniques for RQ2. 
+
+Static techniques. Since there is no existing static analyzer designed specifically for DL framework tensor-semantic bugs, we compare P HOENIX with two traditional static analysis tools that cover different language layers. Bandit [32] is a Python-oriented static analysis tool that inspects source code 6TABLE II: Comparison with traditional static analysis tools.             
+
+> Technique # Bugs # False Alarms (%) # Alarms
+> PHOENIX 31 5 (13.89%) 36
+> Bandit 1171 (99.41%) 172 CSA 0218 (100.00%) 218
+
+for common security issues, making it suitable for the Python frontend components of PyTorch where high-level API logic is implemented. Clang Static Analyzer (CSA) [39] is a path-sensitive static analysis framework for C/C++ and also sup-ports CUDA, making it suitable for native operators, backend kernels, and low-level control-flow or memory checks. We run both tools as full scans on the language they support. 
+
+Dynamic techniques. To study orthogonality between static reasoning and dynamic testing, we compare P HOENIX with two DL fuzzers that use LLMs. TITAN FUZZ [10] uses LLMs to generate DL programs by constructing seed programs and filling API parameters with context-aware values. WHITE -FOX [47] is a white-box fuzzer that inspects compiler source code, extracts optimization patterns with an analysis LLM, and uses these patterns to guide test generation. For a fair comparison, we follow the default configurations in their respective papers and replace their base LLM with the same default LLM used by P HOENIX .
+
+Ablation variants. We design four ablation variants of PHOENIX for our ablation studies.  
+
+> •
+
+w/o CWE. This variant excludes the general weakness patterns derived from CWE. By relying solely on histor-ical PRs, we assess the necessity of high-level, generic weakness patterns in guiding the discovery of bug types.  
+
+> •
+
+w/o PR. This variant discards the bug fix PRs. It relies exclusively on CWE rules, allowing us to evaluate the im-portance of leveraging evolution and historical regression patterns specific to DL frameworks.  
+
+> •
+
+w/o summary. This variant omits the bug summarization step. Consequently, the subsequent SBIR generation and keyword search phases operate without the semantic guid-ance provided by natural language summaries, testing the value of abstracting code changes into semantic intents.  
+
+> •
+
+w/o ERG. This variant removes retrieved repository code contexts and directly asks the LLM generator to synthesize SBIRs from the bug data and summary. It evaluates whether generating SBIR without real code context causes hallucinated contexts and substantially more false positives. 
+
+LLM and repetition settings. We use GPT-5.4 as the default LLM backend. To reduce the effect of LLM nondeterminism during SBIR construction, each PR or CWE item is processed 10 times, producing 10 SBIRs for subsequent analysis. 
+
+Environment configuration. Our experiments were con-ducted on Ubuntu 20.04 LTS with 2 NVIDIA V100 GPUs. 
+
+B. RQ1. Superiority over static methods 
+
+We compare P HOENIX against two representative traditional static analysis tools, Bandit [32] for Python and CSA [39] for C/C++ and CUDA. Table II summarizes the results. P HOENIX 
+
+reports 36 alarms, among which 31 are real PyTorch bugs. This corresponds to only 5 false alarms and a false positive rate of 13.89%. In contrast, Bandit reports 172 alarms but only one of them is a real bug, leading to 171 false alarms and a false positive rate of 99.41%. CSA reports 218 alarms, all of which are false positives after manual validation. 
+
+Alarm precision. The results show that traditional static tools produce many alarms but provide little useful signal for DL framework bug detection. Bandit is designed for Python secu-rity auditing, so it frequently flags syntactic patterns that are harmless in the PyTorch execution context, such as framework-internal command construction or configuration handling. CSA reasons over low-level C/C++ and CUDA code, but it does not understand the tensor-level contracts established by the Python frontend and the dispatcher. As a result, it flags many local memory or control-flow risks that are either unreachable under framework invariants or unrelated to tensor semantic bugs. Such high false positive rates make it impractical to use these traditional static tools for DL framework analysis. In contrast, PHOENIX ’s design based on SBIR allows it to focus on cross-layer semantic constraints that are more directly related to real bugs, leading to a much lower false positive rate. 
+
+Bug detection. Beyond precision, P HOENIX also detects sub-stantially more real bugs than the traditional tools. Bandit finds only one real bug, and CSA finds none. In comparison, PHOENIX detects 31 real bugs. This gap comes from the fact that many PyTorch bugs are not isolated single-language rule violations. They arise when tensor semantics ( e.g., shape and dtype) are transferred across Python, C++, and CUDA code. By representing these transfers with SBIR, P HOENIX can check whether backend implementations preserve the semantic constraints expected by higher-level framework logic. This makes P HOENIX better suited to DL framework analysis than directly applying general-purpose static analyzers. 
+
+Answer to RQ1. PHOENIX substantially outperforms tradi-tional static analyzers on PyTorch. It detects 31 real bugs with a 13.89% false positive rate, whereas Bandit and CSA find at most one real bug and produce nearly all false alarms. 
+
+C. RQ2. Orthogonality to dynamic methods 
+
+To investigate whether P HOENIX merely reproduces the findings of existing dynamic testing tools or contributes a complementary perspective, we conduct an orthogonality analysis against state-of-the-art DL fuzzers that use LLMs (T ITAN FUZZ [10] and W HITE FOX [47]). The goal of this RQ is not to show that static analysis should replace dynamic test-ing. Instead, we study whether static reasoning over SBIR and dynamic fuzzing expose different parts of the DL framework bug space. We analyze the results from two perspectives. 
+
+1) Bug overlap analysis: Fig. 7 shows a small overlap be-tween P HOENIX and the dynamic baselines. P HOENIX detects 31 bugs, while T ITAN FUZZ and W HITE FOX detect 12 and 15 bugs, respectively. The two dynamic baselines together cover 20 distinct bugs, among which 7 are shared by both dynamic methods. In contrast, only one bug overlaps between 7Fig. 7: Bug overlap among P HOENIX and dynamic baselines. Phoenix TitanFuzz WhiteFox 0 2 4 6 8 10 # Bugs        
+
+> Predicate / validation logic 8
+> Missing / misplaced precondition 789
+> Semantic formula / numeric repr. 546
+> API / config / schema contract 4
+> Diagnostics / metadata mismatch 3
+> Resource / pointer contract 2
+> Unsafe command construction
+> 1
+> Algorithmic inefficiency 1
+
+Fig. 8: Root-cause distribution of bugs detected by P HOENIX 
+
+and dynamic baselines. PHOENIX and either dynamic baseline, and this bug is found by all three methods. As a result, 30 of the 31 bugs detected by PHOENIX are unique, while 19 bugs detected by the dynamic baselines are not detected by P HOENIX . This result directly supports the orthogonality between the two testing paradigms. Dynamic fuzzers are effective when they can generate an input that reaches the buggy path and exposes an observable failure. PHOENIX instead reasons over source-level semantic transfers encoded in SBIR, allowing it to flag inconsistencies without constructing executable tests. The two designs therefore favor different regions of the bug space, rather than one simply subsuming the other. 
+
+2) Bug type distribution analysis: We further analyze the detected bugs based on their root causes, as illustrated in Fig. 8. The dynamic baselines are concentrated in two cate-gories ( i.e., missing or misplaced preconditions , and semantic formula or numeric representation errors ). This concentration is expected because dynamic testing relies on runtime ora-cles [2], [7]. It is naturally strong at exposing bugs that lead to crashes, exceptions, or incorrect numerical results. In contrast, PHOENIX covers a wider range of root causes, including pred-icate and validation logic, API and schema contracts, diagnos-TABLE III: Bug reports, confirmed bugs, and merged fixes produced by P HOENIX .                  
+
+> Backend / Component # Reported # Confirmed # Fixed
+> CPU 975CUDA 755MPS 222Other components 13 12 8
+> Total 31 26 20
+
+tic metadata, resource or pointer contracts, unsafe command construction, and algorithmic inefficiency. These bugs often involve inconsistent semantic assumptions across framework layers, and their symptoms may depend on rare configurations, backend-specific states, or contracts that are difficult to express as dynamic oracles. The distribution therefore explains the limited overlap in Fig. 7. Dynamic methods provide concrete failure-inducing tests, while P HOENIX contributes a static view that identifies latent semantic inconsistencies. 
+
+Answer to RQ2. PHOENIX is complementary to existing dynamic DL framework testing methods. It contributes 30 bugs not found by the dynamic baselines, while the dynamic baselines contribute 19 bugs not found by P HOENIX . Together, the three methods cover 50 distinct bugs in our study. This confirms that static analysis over SBIR and dynamic fuzzing should be viewed as mutually reinforcing techniques for DL framework bug detection. 
+
+D. RQ3. Bug study 
+
+PyTorch supports multiple backends and framework compo-nents, where tensor semantics are consumed by very different implementations such as CPU runtime code, CUDA kernels, and MPS backend code. Overall, PHOENIX has produced 31 bug reports for PyTorch. Among them, 26 have been confirmed by maintainers. After detecting these bugs, we submitted patches to the upstream PyTorch repository to fix them directly, and 20 patches have been merged. Table III summarizes the reported, confirmed, and fixed bugs across backends and components. The results show that the detected bugs are not concentrated in one implementation layer. This distribution supports our claim that SBIR provides an ab-straction for analyzing cross-layer tensor semantics without depending on a specific backend. Because P HOENIX does not execute PyTorch workloads during detection, it can inspect heterogeneous backend code without requiring access to every corresponding hardware device. 
+
+CPU backend. Fig. 9a shows a patch submitted by us for the AvgPool3d backward kernel in the Channels Last layout. The kernel computes a pointer into grad_output_data 
+
+for the n-th sample. In the Channels Last 3D layout, the batch stride should preserve the full logical shape 
+
+(D, H, W, C ), namely output_depth * output_height * output_width * channels . However, the original im-plementation used only output_height * output_width * channels , omitting the depth dimension. In SBIR, this case is represented as a shape/layout bridge from the tensor 8--- a/aten/src/ATen/native/cpu/AvgPoolKernel.cpp       
+
+> +++ b/aten/src/ATen/native/cpu/AvgPoolKernel.cpp
+> @@ -1012,7 +1012,7 @@ void cpu_avg_pool3d_backward_channels_last(
+> at::parallel_for(0, nbatch, 0, [&](int64_t begin, int64_t end) {
+> for (const auto n : c10::irange(begin, end)) {
+> scalar_t* grad_input_ptr = grad_input_data + n * input_depth * input_height *
+> input_width * channels;
+> -scalar_t* grad_output_ptr = grad_output_data + n * output_height * output_width
+> * channels;
+> +scalar_t* grad_output_ptr = grad_output_data + n * output_depth * output_height
+> * output_width * channels;
+> for (const auto od : c10::irange(output_depth)) {
+> for (const auto oh : c10::irange(output_height)) {
+> CPU Backend
+
+(a) Patch for an incorrect batch stride in AvgPool3d backward --- a/torch/csrc/distributed/c10d/symm_mem/CUDASymmetricMemory.cu       
+
+> +++ b/torch/csrc/distributed/c10d/symm_mem/CUDASymmetricMemory.cu
+> @@ -169,7 +169,7 @@ void check_channel(int channel, int world_size) {
+> channel,
+> ")");
+> const size_t num_channels = c10d::symmetric_memory::get_signal_pad_size() /
+> -sizeof(uint32_t) * world_size;
+> +(sizeof(uint32_t) * world_size);
+> TORCH_CHECK(
+> static_cast<size_t>(channel) < num_channels,
+> "The maximum supported channel for barrier(), put_signal() and wait_signal() is ",
+> CUDA Backend
+
+(b) Patch for an operator-precedence error in channel validation --- a/aten/src/ATen/mps/MPSStream.mm       
+
+> +++ b/aten/src/ATen/mps/MPSStream.mm
+> @@ -280,10 +280,10 @@ @interface MPSGraphExecutionDescriptor ()
+> void MPSStream::checkLastError() {
+> auto msgs = reinterpret_cast<c10::metal::ErrorMessages*>([_errorBuffer contents]);
+> -const auto& msg = msgs->msg[0];
+> if (!msgs) {
+> return;
+> }
+> +const auto& msg = msgs->msg[0];
+> unsigned int count = 0;
+> std::swap(count, msgs->count);
+> if (!count) {
+> MPS Backend
+
+(c) Patch for dereference before validating runtime state 
+
+Fig. 9: Representative patches submitted by us after P HOENIX 
+
+detected bugs across heterogeneous backends. metadata of the pooling output to the backend pointer offset expression. The analyzer checks whether the address calcu-lation preserves all dimensions in Φ. Since output_depth 
+
+is dropped when constructing the target pointer, the backend violates the consistency constraint between shape and address calculation. Our patch adds the missing depth factor to pre-serve the tensor layout semantics. Such a bug is particularly dangerous because it may not crash immediately. Instead, it can silently read gradients from the wrong batch region and produce incorrect results. 
+
+CUDA backend. Fig. 9b presents a patch submitted by us for the distributed symmetric-memory implementation. The function check_channel validates whether a channel index falls within the number of supported signal-pad channels. The intended capacity is computed by dividing the signal-pad size by the per-world-size storage cost ( i.e., sizeof(uint32_t) * world_size ). The original code missed the parenthe-ses and was evaluated as get_signal_pad_size() /sizeof(uint32_t) * world_size , which can substan-tially overestimate the number of valid channels. SBIR cap-tures this case as an allocation/capacity bridge from the symmetric-memory buffer layout to the CUDA-side bounds check. The violated constraint is that the maximum legal chan-nel must be derived from the same physical buffer partitioning used by all participating processes. Our patch adds the missing parentheses so the capacity check follows the actual buffer partitioning. When this constraint is broken, the check can accept channels beyond the real per-rank capacity, creating a risk of invalid access in distributed CUDA synchronization code. This case also illustrates the complementarity of static reasoning. Dynamically triggering it requires a specific CUDA distributed-memory configuration. 
+
+MPS backend. Fig. 9c shows a patch submitted by us for 
+
+MPSStream::checkLastError . The original implementa-tion creates msgs from the MPS error buffer and immedi-ately binds msgs->msg[0] before validating whether msgs 
+
+is null and before checking whether the buffer contains any messages. The patch moves the reference after the null check and count extraction. In SBIR, this bug is modeled as a control-dependency and memory-state bridge. The target entity 
+
+msg[0] is safe to access only when the source runtime state satisfies msgs != null and contains at least one valid message. The original code consumes the target field before these constraints are established, violating the guard-before-dereference invariant. Compared with above two examples, this case is not a tensor shape mismatch, but it still follows the same SBIR principle. A backend implementation consumes a semantic state before preserving the required guard. 
+
+Answer to RQ3. PHOENIX detects diverse real-world bugs across heterogeneous backend implementations. These cases demonstrate that SBIR is not merely a textual summary of code snippets. It provides a common representation for checking whether backend computations preserve higher-level semantic constraints, including tensor layout, buffer capacity, and runtime memory state. 
+
+E. RQ4. Ablation study 
+
+To understand which design choices are responsible for PHOENIX ’s effectiveness, we run the four ablation variants defined in § IV-A. Table IV reports the number of real bugs, false alarms, and total alarms produced by each setting. TABLE IV: Comparison with ablation variants. 
+
+Technique # Bugs # False Alarms (%) # Alarms 
+
+PHOENIX 31 5 (13.89%) 36 w/o CWE 8 3 (27.27%) 11 w/o PR 23 2 (8.00%) 25 w/o summary 27 3 (10.00%) 30 w/o ERG 17 26 (60.47%) 43 
+
+1) Effectiveness of bug knowledge sources: The two knowl-edge sources provide complementary guidance. The w/o CWE variant finds only 8 bugs, a 74.19% reduction from P HOENIX ,showing that general weakness knowledge helps expand the search space beyond the exact patterns already observed in PyTorch patches. Without CWE patterns, the variant depends more heavily on historical fixes and misses security-relevant bugs that are not close to previously collected PyTorch PRs. In contrast, the w/o PR variant finds 23 bugs, a 25.81% reduction. Its false positive rate is lower than the full configuration, but this should not be read as an improvement because the variant raises fewer alarms and misses more bugs. This contrast indicates that the two heterogeneous data sources are com-plementary, with CWE contributing broad weakness coverage and bug-fix PRs providing framework-specific instances that make these weaknesses concrete in PyTorch. 92) Effectiveness of bug summary: The w/o summary variant finds 27 bugs, losing 4 bugs compared with the full P HOENIX .Its false positive rate is 10.00%, slightly lower than the full configuration, because it also produces fewer alarms. Raw PR diffs and CWE descriptions often contain noisy implementa-tion details or generic weakness language. The summary step normalizes them into a concise, DL-framework-specific pattern before identifier extraction and SBIR generation. Without this semantic anchor, retrieval and generation still work in many cases, but they miss some bug-relevant attributes such as shape, dtype, layout, or guard conditions. This explains why the variant remains relatively precise yet detects fewer bugs. 
+
+3) Effectiveness of ERG: ERG is the main guardrail against hallucinated code context during SBIR generation. Without retrieved repository context, the LLM directly synthesizes SBIRs from the bug data and summary. This variant reports 43 alarms but detects only 17 bugs, raising the false positive rate to 60.47%, compared with 13.89% for the full P HOENIX .The result shows that SBIR generation needs real code con-text. Otherwise, the LLM may produce plausible but invalid bridges, such as incorrect file contexts. 
+
+Answer to RQ4. All four components contribute to P HOENIX .CWE knowledge provides broad security knowledge, bug-fix PRs supply framework-specific bug patterns, summaries turn noisy source data into semantic patterns ready for analysis, and ERG is essential for keeping SBIR generation valid. V. R ELATED WORK 
+
+A. DL Framework Testing 
+
+Testing DL frameworks for reliability and security has become an active research topic. Based on the difference in test generation, existing approaches can be categorized into traditional techniques [31], [45], [15], [27], [24], [25] and techniques using LLMs [10], [11], [47], [22], [49]. Traditional techniques adopt grammar driven methods to generate test cases for dynamic execution. CRADLE [31] is the first DL framework testing technique to directly run real-world models on different backends of Keras [8]. LEMON [45] and AUDEE [15] are subsequently proposed to mutate these real-world models to detect more bugs. GraphFuzz [27] con-structs computational graphs via Monte Carlo Tree Search and alleviates the tensor shape mismatch problem through padding/slicing operations. NNSmith [24] models each oper-ator’s symbolic constraint to generate valid and diverse DL models with gradient-based search. NeuRI [25] automates operator specification generation through inductive rule infer-ence, enriching test diversity significantly. In recent years, LLMs have been introduced into DL frame-work testing [10], [11], [47], [22], [49]. The core idea behind these techniques is that LLMs can learn implicit DL program constraints during pretraining and infer valid and diverse DL programs. T ITAN FUZZ [10] is a pioneering work that adopts two LLMs to generate and fill DL APIs, respectively. FUZZ GPT [11] generates edge test cases for fuzzing through fine tuning and in-context learning. WHITE FOX [47] first leverages LLMs to extract optimization patterns in compilers and generate tests targeting these patterns. FUTURE [22] uses LLMs to mine bug patterns with API documents from old DL frameworks to detect similar bugs for new DL frameworks. FUEL [49] utilizes an analysis LLM to distill feedback infor-mation into valuable guidance, thereby helping the generation LLM produce more diverse and valid DL models. Unlike above fuzzing approaches, P HOENIX is the first static technique to detect bugs in the PyTorch codebase, opening a new direction for DL framework testing. 
+
+B. Static Analysis with LLMs 
+
+Recent static analysis techniques using LLMs can be grouped by how they couple LLM reasoning with conventional analyzers. Early systems such as LLift [20] use LLMs as contextual triagers for unresolved Linux kernel static analysis reports. Path-sensitive and taint-oriented systems use LLMs to supply missing specifications or reduce false positives. IRIS [23] infers Java taint specifications and filters CodeQL data-flow paths, Artemis [16] combines LLM-assisted taint reasoning with inter-procedural path-sensitive analysis for server-side request forgery detection, BugLens [21] targets taint-style Linux kernel bug detection, and LATTE [26] ex-tends LLM-guided taint reasoning to static binary analysis. Other recent systems use LLMs to construct or generalize analysis facts. LLMDFA [42] decomposes data-flow analysis into source/sink identification, function summarization, and path-feasibility checking without compilation; INFERROI [43] infers resource-management intentions for resource-leak de-tection; and Vul-RAG [13] retrieves vulnerability knowledge from CVE and fix examples to guide code-level vulnerability reasoning. A further line directly synthesizes analyzer artifacts, with KNighter [48] generating Clang Static Analyzer checkers for Linux kernel bugs and QLCoder [44] synthesizing CodeQL queries for security vulnerabilities. These studies show that LLMs can complement static analyzers by providing triage decisions, specifications, se-mantic facts, or analysis rules, but they are still designed around single-language programs, binaries, system software, or analyzer-specific artifacts. In contrast, P HOENIX uses SBIR to make tensor semantics explicit across Python, C++, and CUDA, enabling static reasoning with LLMs over multilingual DL framework code rather than over isolated warnings, paths, or checker/query templates. VI. T HREATS TO VALIDITY 
+
+Internal validity. The main internal threats come from manual decisions, baseline configuration, and LLM nondeterminism. To reduce manual bias, the first and second authors inspected the collected PRs, CWE types, and reported alarms based on their experience in bug reporting. For baseline and LLM effects, we follow the default settings in their original papers, use the same LLM backend when comparing with fuzzers that use LLMs, and process each bug or weakness item 10 times to generate multiple SBIRs before downstream analysis. 
+
+External validity. Our evaluation focuses on PyTorch, so the results may not directly generalize to all DL frameworks or 10 software systems. However, PyTorch is a widely used DL framework with Python, C++, and CUDA code, heterogeneous backends, and a large real-world bug history, making it a rep-resentative target for studying cross-language tensor-semantic bugs. Our bug knowledge sources may also miss some bug types, so we combine historical PyTorch PRs with CWE rules to cover both framework-specific patterns and broader security-oriented weaknesses. VII. C ONCLUSION 
+
+We present P HOENIX , a static analysis technique using LLMs to detect cross-language bugs in tensor semantics for DL frameworks. P HOENIX introduces SBIR to capture how tensor attributes, guards, and runtime states propagate across Python, C++, and CUDA code, and uses LLM agents to construct and analyze these semantic bridges. Our evaluation on PyTorch shows that P HOENIX detects 31 real bugs from 36 alarms, including 30 bugs missed by DL fuzzers using LLMs. Among them, 26 bugs have been confirmed and 20 patches have been merged upstream. These results demonstrate that LLM static analysis guided by SBIR is a promising complement to existing DL framework testing techniques. REFERENCES [1] Paul Ammann and Jeff Offutt. Introduction to software testing . Cam-bridge University Press, 2017. [2] Earl T Barr, Mark Harman, Phil McMinn, Muzammil Shahbaz, and Shin Yoo. The oracle problem in software testing: A survey. IEEE transactions on software engineering , 41(5):507–525, 2014. [3] Tim Boland and Paul E Black. Juliet 1. 1 c/c++ and java test suite. 
+
+Computer , 45(10):88–90, 2012. [4] James Bradbury, Roy Frostig, Peter Hawkins, Matthew James Johnson, Chris Leary, Dougal Maclaurin, and Skye Wanderman-Milne. JAX: Composable transformations of Python+NumPy programs, 2018. https: //github.com/jax-ml/jax. [5] Simin Chen, Jinjun Peng, Yixin He, Junfeng Yang, and Baishakhi Ray. Your compiler is backdooring your model: Understanding and exploiting compilation inconsistency vulnerabilities in deep learning compilers. 
+
+arXiv preprint arXiv:2509.11173 , 2025. [6] Tianqi Chen, Thierry Moreau, Ziheng Jiang, Lianmin Zheng, Eddie Yan, Haichen Shen, Meghan Cowan, Leyuan Wang, Yuwei Hu, Luis Ceze, et al. Tvm: An automated end-to-end optimizing compiler for deep learning. In 13th USENIX symposium on operating systems design and implementation (OSDI 18) , pages 578–594, 2018. [7] Tsong Yueh Chen, Fei-Ching Kuo, Huai Liu, Pak-Lok Poon, Dave Towey, TH Tse, and Zhi Quan Zhou. Metamorphic testing: A review of challenges and opportunities. ACM Computing Surveys (CSUR) ,51(1):1–27, 2018. [8] Franc ¸ois Chollet et al. Keras, 2015. https://keras.io. [9] Patrick Cousot and Radhia Cousot. Abstract interpretation: a unified lattice model for static analysis of programs by construction or approx-imation of fixpoints. In Proceedings of the 4th ACM SIGACT-SIGPLAN symposium on Principles of programming languages , pages 238–252, 1977. [10] Yinlin Deng, Chunqiu Steven Xia, Haoran Peng, Chenyuan Yang, and Lingming Zhang. Large language models are zero-shot fuzzers: Fuzzing deep-learning libraries via large language models. In Proceedings of the 32nd ACM SIGSOFT international symposium on software testing and analysis , pages 423–435, 2023. [11] Yinlin Deng, Chunqiu Steven Xia, Chenyuan Yang, Shizhuo Dylan Zhang, Shujing Yang, and Lingming Zhang. Large language models are edge-case generators: Crafting unusual programs for fuzzing deep learning libraries. In Proceedings of the 46th IEEE/ACM international conference on software engineering , pages 1–13, 2024. [12] Xiaoting Du, Yulei Sui, Zhihao Liu, and Jun Ai. An empirical study of fault triggers in deep learning frameworks. IEEE Transactions on Dependable and Secure Computing , 20(4):2696–2712, 2022. [13] Xueying Du, Geng Zheng, Kaixin Wang, Yi Zou, Yujia Wang, Wentai Deng, Jiayi Feng, Mingwei Liu, Bihuan Chen, Xin Peng, et al. Vul-rag: Enhancing llm-based vulnerability detection via knowledge-level rag. 
+
+ACM Transactions on Software Engineering and Methodology , 2024. [14] Jiahao Fan, Yi Li, Shaohua Wang, and Tien N Nguyen. Ac/c++ code vulnerability dataset with code changes and cve summaries. In 
+
+Proceedings of the 17th international conference on mining software repositories , pages 508–512, 2020. [15] Qianyu Guo, Xiaofei Xie, Yi Li, Xiaoyu Zhang, Yang Liu, Xiaohong Li, and Chao Shen. Audee: Automated testing for deep learning frameworks. In Proceedings of the 35th IEEE/ACM international conference on automated software engineering , pages 486–498, 2020. [16] Yuchen Ji, Ting Dai, Zhichao Zhou, Yutian Tang, and Jingzhu He. Artemis: Toward accurate detection of server-side request forgeries through llm-assisted inter-procedural path-sensitive taint analysis. Pro-ceedings of the ACM on Programming Languages , 9(OOPSLA1):1349– 1377, 2025. [17] Carlos E Jimenez, John Yang, Alexander Wettig, Shunyu Yao, Kexin Pei, Ofir Press, and Karthik Narasimhan. Swe-bench: Can language models resolve real-world github issues? In International Conference on Learning Representations , volume 2024, pages 54107–54157, 2024. [18] Paul C Jorgensen. Software testing: a craftsman’s approach . Auerbach Publications, 2013. [19] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gonzalez, Hao Zhang, and Ion Stoica. Efficient memory management for large language model serving with pagedattention. In Proceedings of the 29th symposium on operating systems principles , pages 611–626, 2023. [20] Haonan Li, Yu Hao, Yizhuo Zhai, and Zhiyun Qian. Enhancing static analysis for practical bug detection: An llm-integrated approach. Pro-ceedings of the ACM on Programming Languages , 8(OOPSLA1):474– 499, 2024. [21] Haonan Li, Hang Zhang, Kexin Pei, and Zhiyun Qian. Towards more accurate static analysis for taint-style bug detection in linux kernel. In 
+
+2025 40th IEEE/ACM International Conference on Automated Software Engineering (ASE) , pages 380–392. IEEE, 2025. [22] Zhiyuan Li, Jingzheng Wu, Xiang Ling, Tianyue Luo, Zhiqing Rui, and Yanjun Wu. The seeds of the future sprout from history: Fuzzing for unveiling vulnerabilities in prospective deep-learning libraries. In 2025 IEEE/ACM 47th International Conference on Software Engineering (ICSE) , pages 1616–1627. IEEE, 2025. [23] Ziyang Li, Saikat Dutta, and Mayur Naik. Iris: Llm-assisted static anal-ysis for detecting security vulnerabilities. In International Conference on Learning Representations , volume 2025, pages 35735–35758, 2025. [24] Jiawei Liu, Jinkun Lin, Fabian Ruffy, Cheng Tan, Jinyang Li, Aurojit Panda, and Lingming Zhang. Nnsmith: Generating diverse and valid test cases for deep learning compilers. In Proceedings of the 28th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2 , pages 530–543, 2023. [25] Jiawei Liu, Jinjun Peng, Yuyao Wang, and Lingming Zhang. Neuri: Diversifying dnn generation via inductive rule inference. In Proceedings of the 31st ACM Joint European Software Engineering Conference and Symposium on the Foundations of Software Engineering , pages 657–669, 2023. [26] Puzhuo Liu, Chengnian Sun, Yaowen Zheng, Xuan Feng, Chuan Qin, Yuncheng Wang, Zhenyang Xu, Zhi Li, Peng Di, Yu Jiang, et al. Llm-powered static binary taint analysis. ACM Transactions on Software Engineering and Methodology , 34(3):1–36, 2025. [27] Weisi Luo, Dong Chai, Xiaoyue Ruan, Jiang Wang, Chunrong Fang, and Zhenyu Chen. Graph-based fuzz testing for deep learning inference engines. In 2021 IEEE/ACM 43rd International Conference on Software Engineering (ICSE) , pages 288–299. IEEE, 2021. [28] MITRE. 2025 CWE Top 25 Most Dangerous Software Weaknesses, 2025. https://cwe.mitre.org/top25/archive/2025/2025 cwe top25.html. [29] Ahmet Murat Ozbayoglu, Mehmet Ugur Gudelek, and Omer Berat Sezer. Deep learning for financial applications: A survey. Applied soft computing , 93:106384, 2020. [30] Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Brad-bury, Gregory Chanan, Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, et al. Pytorch: An imperative style, high-performance deep learning library. Advances in Neural Information Processing Systems ,32, 2019. [31] Hung Viet Pham, Thibaud Lutellier, Weizhen Qi, and Lin Tan. Cradle: cross-backend validation to detect and localize bugs in deep learning 
+
+11 libraries. In 2019 IEEE/ACM 41st International Conference on Software Engineering (ICSE) , pages 1027–1038. IEEE, 2019. [32] Python Code Quality Authority. Bandit: Security linter for python source code, 2026. https://bandit.readthedocs.io/. [33] Pytorch, 2018. http://pytorch.org. [34] PyTorch. PyTorch documentation: torch.nn.functional.embedding bag, 2026. https://pytorch.org/docs/stable/generated/torch.nn.functional.em bedding bag.html. [35] PyTorch Contributors. PyTorch issue #106362: Calling ops.aten.embedding bag() function got silent crash, 2023. https://github.com/pytorch/pytorch/issues/106362. [36] PyTorch Contributors. PyTorch pull requests matching tensor, 2026. https://github.com/pytorch/pytorch/pulls?q=is:pr+tensor. [37] Caitlin Sadowski, Jeffrey Van Gogh, Ciera Jaspan, Emma Soderberg, and Collin Winter. Tricorder: Building a program analysis ecosystem. In 2015 IEEE/ACM 37th IEEE International Conference on Software Engineering , volume 1, pages 598–608. IEEE, 2015. [38] Yaniv Taigman, Ming Yang, Marc’Aurelio Ranzato, and Lior Wolf. Deepface: Closing the gap to human-level performance in face veri-fication. In Proceedings of the IEEE conference on computer vision and pattern recognition , pages 1701–1708, 2014. [39] The Clang Team. Clang static analyzer, 2026. https://clang-analyzer.ll vm.org/. [40] Yuchi Tian, Kexin Pei, Suman Jana, and Baishakhi Ray. Deeptest: Automated testing of deep-neural-network-driven autonomous cars. In 
+
+Proceedings of the 40th international conference on software engineer-ing , pages 303–314, 2018. [41] Michele Tufano, Cody Watson, Gabriele Bavota, Massimiliano Di Penta, Martin White, and Denys Poshyvanyk. An empirical investigation into learning bug-fixing patches in the wild via neural machine translation. In Proceedings of the 33rd ACM/IEEE international conference on automated software engineering , pages 832–837, 2018. [42] Chengpeng Wang, Wuqi Zhang, Zian Su, Xiangzhe Xu, Xiaoheng Xie, and Xiangyu Zhang. Llmdfa: analyzing dataflow in code with large language models. Advances in Neural Information Processing Systems ,37:131545–131574, 2024. [43] Chong Wang, Jianan Liu, Xin Peng, Yang Liu, and Yiling Lou. Boosting static resource leak detection via llm-based resource-oriented intention inference. In 2025 IEEE/ACM 47th International Conference on Soft-ware Engineering (ICSE) , pages 2905–2917. IEEE, 2025. [44] Claire Wang, Ziyang Li, Saikat Dutta, and Mayur Naik. Qlcoder: A query synthesizer for static analysis of security vulnerabilities, 2025. [45] Zan Wang, Ming Yan, Junjie Chen, Shuang Liu, and Dongdi Zhang. Deep learning library testing via effective model generation. In Proceed-ings of the 28th ACM joint meeting on european software engineering conference and symposium on the foundations of software engineering ,pages 788–799, 2020. [46] Weixiang Yan, Haitian Liu, Yunkun Wang, Yunzhe Li, Qian Chen, Wen Wang, Tingyu Lin, Weishan Zhao, Li Zhu, Hari Sundaram, et al. Codescope: An execution-based multilingual multitask multidimensional benchmark for evaluating llms on code understanding and generation. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 5511–5558, 2024. [47] Chenyuan Yang, Yinlin Deng, Runyu Lu, Jiayi Yao, Jiawei Liu, Rey-haneh Jabbarvand, and Lingming Zhang. Whitefox: White-box compiler fuzzing empowered by large language models. Proceedings of the ACM on Programming Languages , 8(OOPSLA2):709–735, 2024. [48] Chenyuan Yang, Zijie Zhao, Zichen Xie, Haoyu Li, and Lingming Zhang. Knighter: Transforming static analysis with llm-synthesized checkers. In Proceedings of the ACM SIGOPS 31st Symposium on Operating Systems Principles , pages 655–669, 2025. [49] Shaoyu Yang, Chunrong Fang, Haifeng Lin, Xiang Chen, Jia Liu, and Zhenyu Chen. May the feedback be with you! unlocking the power of feedback-driven deep learning framework fuzzing via llms. arXiv preprint arXiv:2506.17642 , 2025. [50] Yue Zhang, Yafu Li, Leyang Cui, Deng Cai, Lemao Liu, Tingchen Fu, Xinting Huang, Enbo Zhao, Yu Zhang, Yulong Chen, et al. Siren’s song in the ai ocean: A survey on hallucination in large language models. 
+
+Computational Linguistics , 51(4):1373–1418, 2025. [51] Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Sun, Jeff Huang, Cody H Yu, Shiyi Cao, Christos Kozyrakis, Ion Stoica, Joseph E Gonzalez, et al. Sglang: Efficient execution of structured language model programs. Advances in Neural Information Processing Systems ,37:62557–62583, 2024. [52] Yaqin Zhou, Shangqing Liu, Jingkai Siow, Xiaoning Du, and Yang Liu. Devign: Effective vulnerability identification by learning comprehensive program semantics via graph neural networks. Advances in Neural Information Processing Systems , 32, 2019. 
+
+12

@@ -1,0 +1,548 @@
+Title: Antaeus: Hunting Repository-Level Logic Vulnerabilities via Context-Grounded LLM Reasoning
+
+URL Source: https://arxiv.org/pdf/2607.01138v1
+
+Published Time: Thu, 02 Jul 2026 01:19:06 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# Antaeus: Hunting Repository-Level Logic Vulnerabilities via Context-Grounded LLM Reasoning 
+
+Michele Armillotta 
+
+University College London University of Bologna 
+
+Nicol` o Romandini 
+
+University of Bologna 
+
+Rebecca Montanari 
+
+University of Bologna 
+
+Lorenzo Cavallaro 
+
+University College London 
+
+Abstract —LLM-based vulnerability detectors have shown promising results in identifying memory-safety bugs and well-established vulnerability classes, where violations can often be expressed in terms of established security properties such as unsafe data propagation, bounds violations, or invalid memory accesses. Logic vulnerabilities, however, pose a fundamentally different challenge, as their identification requires inferring application-specific security invariants and often relies on implicit assumptions about intended behavior. Even frontier agentic models struggle in this setting, despite their ability to inspect and traverse large repositories, because the security invariants relevant to these vulnerabilities are often implicit and buried among large amounts of unrelated code. Moti-vated by this gap, we present A NTAEUS , a framework for detecting logic vulnerabilities that grounds LLM reasoning in repository-level code context. A NTAEUS follows a repository-scale pipeline that combines function prioritization, context-grounded reasoning, comparative validation, and structured reporting. First, it ranks functions using lightweight repository-wide security signals, directing costly LLM analysis toward the most relevant code regions and reducing model calls, cost, and triage effort. For each prioritized function, A NTAEUS grounds the model in explicit repository evidence, combining local code context with a repository-level view of the application’s functionality, security-relevant resources, and trust boundaries. This grounded input enables the model to reason about how the function is executed within the broader application rather than as an isolated snippet. A NTAEUS then identifies security-sensitive sinks, derives the safety conditions required for safe execution, and checks whether those conditions are locally satisfied. Candidate findings are subjected to comparative vali-dation, which prunes concerns that reflect project-wide norms rather than distinctive violations. Finally, A NTAEUS reports the sinks, the violated safety conditions, and the supporting evidence, making findings specific, actionable, and traceable. We evaluate ANTAEUS on 28 real-world repositories with confirmed logic vulnerabilities and compare it against both function-level LLM analysis and frontier agentic models, in-cluding Opus 4.8 Agentic and Codex 5.4. A NTAEUS detects and explains 15 vulnerabilities, substantially outperforming state-of-the-art baselines while maintaining a comparable token usage and cost budget. 
+
+1. Introduction 
+
+Logic vulnerabilities arise from failures to enforce the application-specific security invariants that govern intended program behavior [1]. Unlike memory-safety bugs, which often manifest through invalid memory accesses, or dataflow vulnerabilities, which can often be expressed as propaga-tion from sources to sinks, logic vulnerabilities stem from missing, misplaced, or incorrectly composed enforcement of application-specific security invariants [2], [3]. These invari-ants define who may perform an operation, which resources may be accessed, what information may be exposed, and under which workflow conditions an action is safe. Their detection depends on reconstructing the intended security invariants implicitly encoded by the surrounding codebase, rather than matching local code against known dangerous patterns. Logic vulnerabilities have long been recognized as an important but comparatively underexplored class of software defects [4]. Most automated vulnerability-detection techniques have focused on bug classes with clearer syn-tactic or semantic anchors, such as memory-safety errors, injection flaws, or tainted source-to-sink flows. Traditional pattern-based and taint-based tools, such as CodeQL [5] and Semgrep [6], are effective when a vulnerability can be tied to a recurring code shape, a known dangerous operation, or a traceable source-to-sink flow. For logic vulnerabilities, however, there is often no universal source, canonical sink, or distinguished value to track. Although project-specific analyses can sometimes encode these invariants manually, building and maintaining them requires substantial expertise and does not scale across repositories. Existing work on logic vulnerabilities has made impor-tant progress, but it has largely studied web applications [7], [8]. White-box approaches [1] infer application invariants from normal executions and check whether alternate pro-gram paths violate them, while black-box approaches [9], [10] infer behavioral models from HTTP traces and gener-ate tests that break observed workflow or data-propagation patterns. These works show that logic vulnerabilities vary by application and that detection depends on recovering intended security invariants rather than matching fixed code patterns. However, their assumptions remain tied to the web domain. They ground the analysis in requests, sessions, forms, URLs, navigation graphs, database-backed state, and 
+
+> arXiv:2607.01138v1 [cs.CR] 1 Jul 2026
+
+user workflows. The problem remains less explored for repository-level C and C++ software. In this setting, security invariants are harder to recover because they are often distributed across large codebases and encoded through APIs, callbacks, flags, resource handles, configuration interfaces, and project-specific conventions. The evidence needed to judge a func-tion is rarely contained in the local code alone. A function may look benign in isolation, while its safety depends on repository conventions, trust boundaries, or checks enforced by comparable code. Detecting logic vulnerabilities in this setting, therefore, requires recovering security invariants from code structure and repository context, rather than from web interaction semantics. Recent work applies Large Language Models (LLMs) to vulnerability detection [11], [12], including agentic systems that can inspect repositories, navigate code, and produce natural-language explanations. These systems are promising because frontier models can reason about program intent, integrate heterogeneous evidence, and discover real vul-nerabilities when appropriately scaffolded [13], [14]. The limitation is not the intrinsic model’s incapability, but the way evidence is selected, structured, and budgeted during reasoning [15]. Function-level analysis provides too little context, forcing the model to infer project-specific secu-rity invariants from an isolated code fragment. Exhaus-tive repository exploration, on the other hand, can provide the missing evidence, but only by spending a substantial analysis budget on large amounts of irrelevant code. Even when effective, such search-heavy strategies are difficult to scale and can still cause the model to lose focus on the specific semantic facts needed to assess a candidate operation. The key issue is therefore context quality and cost, not simply context quantity. LLM-based vulnerability reasoning remains breakable without structured program-semantic support [16], [17], especially when interprocedural dependencies and vulnerability-triggering constraints must be inferred from raw code alone. At the same time, recent systems show that LLMs can be effective when embedded in pipelines that select relevant context, structure the reasoning task, and validate candidate findings [18]. Yet effectiveness cannot be measured only by whether a model eventually finds a bug. Recent work [19] argues that the relevant cost includes the full path from candidate generation to valida-tion, impact assessment, remediation packaging, and main-tainer triage. Cheap candidate generation can therefore shift the bottleneck toward review and remediation rather than eliminating the cost of vulnerability discovery. For logic vulnerabilities, this means providing sufficient repository evidence to recover application-specific security invariants, without so much unfiltered code that the model loses focus or consumes an impractical analysis budget. We argue that repository-level logic vulnerability detec-tion requires context grounding, where model reasoning is anchored in explicit evidence about how the project defines principals, resources, trust boundaries, and security-sensitive operations. Without this grounding, model-based detectors risk relying on local syntax or generic security priors, which are insufficient for vulnerabilities whose defining property is a project-specific security invariant violation. In our setting, context grounding denotes the process of recovering evi-dence necessary to reconstruct repository-specific security invariants. This notion differs from simply increasing the amount of repository context available to the model. Addi-tional context is useful only insofar as it helps explain why a particular security check exists, under what assumptions it operates, and which repository components collectively en-force the underlying security invariant. We therefore frame repository-level logic vulnerability detection as an invariant-recovery problem rather than a pure retrieval or reasoning problem. The central question is not how much repository context can be supplied to a model, but whether that context can be used to reconstruct the security assumptions under which the repository is intended to operate, and then to judge a candidate operation against them. Based on this observation, we present ANTAEUS , a repository-level framework for detecting C and C++ logic vulnerabilities through context-grounded model reasoning. It incrementally recovers repository-specific security invariants from local and project-wide evidence and evaluates each candidate violation against the invariants it has reconstructed rather than against generic priors or local syntax alone. Rather than analyzing every function in isolation, A NTAEUS 
+
+organizes detection as a staged pipeline. It first performs lightweight repository-wide prioritization to identify func-tions likely to involve security-relevant behavior, reducing the cost and triage burden of model analysis. It then con-structs a grounded context for each prioritized function, combining local code augmentation with a stable repository-level security summary. Next, it asks the model to produce structured findings in terms of security-sensitive sinks, re-quired safety conditions, and whether those conditions are locally satisfied. Finally, it applies comparative validation across similar sinks in the same repository, pruning findings that reflect recurring project-wide norms rather than distinc-tive violations. The final output is a triage-oriented report that exposes the sink, the violated safety condition, and the supporting repository evidence, so that each finding can be inspected, justified, and addressed by a human reviewer. We evaluate A NTAEUS on 28 real-world C and C++ repositories containing confirmed CWE-200 and CWE-284 logic vulnerabilities and compare it against both function-level LLM analysis and frontier agentic baselines, including Opus 4.8 Agentic [20] and Codex 5.4 [21]. A NTAEUS iden-tifies 15 vulnerabilities and provides structured explanations for the missing security conditions, substantially outper-forming the comparison baselines. These results show that targeted context grounding can recover repository-specific security invariants more effectively than broader agentic exploration, while staying within a comparable token-usage and cost budget. In summary, we make the following contributions:  
+
+> •
+
+We characterize repository-level logic vulnerabil-ity detection as evidence-grounded security-invariant checking, where the main challenge is recover-ing application-specific safety conditions from dis-tributed code context.  
+
+> •
+
+We present A NTAEUS , a staged framework that com-bines repository-wide prioritization, local code aug-mentation, repository-level security context, struc-tured model reasoning, and comparative validation across analogous code.  
+
+> •
+
+We evaluate ANTAEUS on 28 real-world C and C++ repositories containing confirmed CWE-200 and CWE-284 logic vulnerabilities. The results show that context-grounded reasoning detects vulnerabili-ties missed by function-level LLM analysis and fron-tier agentic baselines, while preserving a practical token-usage and cost budget. 
+
+2. Motivation 
+
+2.1. Why These Classes Resist Detection 
+
+To illustrate the underlying challenges of logic vul-nerability detection, we use CVE-2020-10701, a CWE-284 access-control flaw in libvirt, as a motivating ex-ample because it compactly captures the difficulties this class poses. As shown in Listing 1, the pre-patch body of 
+
+virDomainAgentSetResponseTimeout is the public entry point for configuring how long libvirt waits for QEMU guest-agent replies. It validates the domain handle, retrieves the connection, dispatches to the per-driver callback, and handles errors through the usual path. Every line is lo-cally correct. The vulnerability is the absence of a sin-gle guard, virCheckReadOnlyGoto(conn->flags, error) , which would reject read-only callers. Without it, a read-only client can set the timeout to zero and induce a denial-of-service. While a human auditor connects this missing check to libvirt’s read-only connection model and the conventions of comparable APIs, automating the same judgment requires recovering invariants that the function body never states. The following subsections detail three challenges that motivate context grounding in A NTAEUS .
+
+2.1.1. Non-Local Security Invariants. Many logic vul-nerabilities are not confined to the function under anal-ysis. The defining evidence lives in the repository around it. The safety of a function depends not on its local syntax, but on invariants the codebase as awhole is meant to enforce. As Listing 1 illustrates, 
+
+virDomainAgentSetResponseTimeout reads as a standard libvirt API wrapper, and no line within it signals that a read-only check is missing. The violated invariant, that write-privileged public APIs must reject read-only callers, is encoded in libvirt’s connection model and in how sibling APIs guard the same boundary, not in any artifact reachable by reading the function alone. Connecting the operation to the policy it violates requires reconstructing repository-level conventions, evidence that local context cannot supply. 
+
+2.1.2. Absence of Syntactic and Dataflow Anchors. 
+
+Tracking the conditions under which an operation is un-                              
+
+> 1int virDomainAgentSetResponseTimeout(virDomainPtr domain,
+> int timeout, unsigned int flags)
+> 2{
+> 3virConnectPtr conn;
+> 4VIR_DOMAIN_DEBUG(domain, "timeout=%i, flags=0x%x",
+> 5timeout, flags);
+> 6virResetLastError();
+> 7virCheckDomainReturn(domain, -1);
+> 8conn = domain->conn;
+> 9if (conn->driver->domainAgentSetResponseTimeout) {
+> 10 if (conn->driver->domainAgentSetResponseTimeout(
+> 11 domain, timeout, flags) < 0)
+> 12 goto error;
+> 13 return 0;
+> 14 }
+> 15 virReportUnsupportedError();
+> 16 error:
+> 17 virDispatchError(conn);
+> 18 return -1;
+> 19 }
+
+Listing 1: Simplified pre-patch body of 
+
+virDomainAgentSetResponseTimeout from 
+
+src/libvirt-domain.c in libvirt (CVE-2020-10701). safe requires first knowing which operations are security-sensitive and where to look. For memory-safety and dataflow bugs, a detector has a stable scaffolding. There is a danger-ous operation to flag, a tainted source to trace from, a sink to trace to, and a flow that links them. For logic bugs, none of these anchors exists. In Listing 1, there is no tainted input to track and no dataflow trail that walks toward the defect. The security-relevant operation is a configuration mutation that changes an agent timeout, which becomes sensitive only once the repository’s classification of it as a write operation is recovered. The evidence required to judge the function is thus a semantic classification the codebase assigns rather than a syntactic property a detector can pattern-match. 
+
+2.1.3. Distinguishing Violations from Project Norms. 
+
+Detecting a logic vulnerability requires determining not only that a safety condition is unmet, but whether the unmet condition is a genuine anomaly rather than a repository-wide convention. An LLM model evaluating a function locally is usually assertive [22], [23]. Shown a sensitive-looking operation, it tends to raise the safety conditions appropriate to that kind of operation, regardless of whether the surrounding codebase already addresses them. Across a repository, this yields a characteristic false-positive pattern, in which the same unsatisfied condition is reported for many structurally similar sinks, often in similar phrasing. A genuine logic vulnerability, by contrast, is an anomaly [24], [25], a deviation from how comparable code in the same project handles the same operation. When many similar operations are handled uniformly, that uniformity is the norm rather than a defect, and a model that raises the same concern across all of them is flagging the norm rather than a distinctive violation. As Listing 1 shows, the missing read-only check is meaningful only relative to the sibling APIs that do enforce the boundary. A suspected violation, therefore, remains only a hypothesis until it can be set against the project’s enforced pattern. 2.2. Insights for Context-Grounded Logic Vulner-ability Detection 
+
+The challenges above motivate context grounding, which constrains model reasoning to explicit evidence about how a repository defines its security invariants rather than letting the model fall back on local syntax and generic priors. Grounding combines two complementary layers. Local pro-gram evidence ties claims about a function to concrete repository artifacts, and repository-level context supplies the application-specific invariants against which a local opera-tion must be judged. This perspective leads to three design insights. Insight 1 : Prioritize candidates before grounding. Because logic vulnerabilities admit no syntactic anchor, every function is a nominal candidate, but grounding each one is impractical. Detection should begin with repository-wide prioritization that surfaces functions likely to involve security-relevant behavior, spending the analysis budget only where a policy violation could plausibly occur. Insight 2 :Pair local evidence with repository context. The information needed to judge a function lies outside it, so the model should reason over both layers simultaneously. Local code, callees, macros, constants, and types anchor claims to con-crete artifacts, while a repository-level security summary of the application’s purpose, protected objects, and trust topology supplies the invariants the operation must satisfy. Insight 3 : A missing safety condition is meaningful only relative to how comparable code in the same repository han-dles the same operation. Each flagged condition should be validated against analogous sinks, discarding those that recur uniformly as project norms and retaining those that set the target apart. These insights shape the design of A NTAEUS ,a staged framework that grounds LLM-based logic vulnera-bility detection in repository evidence. A repository-wide prioritizer narrows the candidate set to security-relevant functions; a grounding stage pairs local code augmentation with a stable repository-level security summary; a structured reasoning stage produces findings in terms of security-sensitive sinks and their required safety conditions; and a comparative validator confirms genuine violations by setting each finding against analogous code. The following section details each stage. 
+
+2.3. Threat model 
+
+We consider an adversary who interacts with the target software through its intended interfaces, such as API calls, configuration options, files, command-line arguments, or network requests. The adversary cannot modify the program code, but can choose inputs, parameters, call sequences, and execution contexts to violate security-relevant assumptions made by the application. We focus on logic vulnerabilities in which the executed code is syntactically valid, but an operation is performed under semantically unsafe condi-tions. A NTAEUS assumes access to the source repository under analysis, but does not assume exploit inputs, runtime traces, or an execution environment. Its goal is to stati-cally detect and explain candidate logic vulnerabilities by linking security-sensitive code to the repository context that determines whether its use is safe. Memory-safety bugs and purely syntactic defects are out of scope. 
+
+3. Design 
+
+The design follows directly from the insights identified in Section 2.2. A NTAEUS is a five-stage repository-level pipeline, shown in Figure 1: function prioritization, context-grounding, structured reasoning, comparative validation, and reporting. These stages also reflect recent state-of-the-art practice in LLM-based vulnerability detection [14], [18]. First, function prioritization ranks functions using lightweight repository-wide security signals, focusing LLM analysis on the most relevant code regions. Second, context-grounding supplies the model with local code augmentation and a repository-level security summary, tying its reasoning to concrete repository evidence. Third, structured reasoning prompts the model to identify security-sensitive sinks to-gether with the safety conditions required for their safe use, and to record whether each condition is locally satisfied. Fourth, comparative validation checks whether a flagged condition is distinctive with respect to similar sinks in the same repository, pruning conditions that recur as project norms. Finally, reporting presents the retained findings as actionable, evidence-grounded explanations. The remainder of this section examines each stage in detail. 
+
+3.1. Prioritization 
+
+At repository scale, the first challenge is deciding where to apply expensive LLM analysis. As discussed in Sec-tion 2.2, exhaustive repository exploration spends most of the budget on irrelevant code, while letting an agentic model search unaided does not guarantee that every security-relevant function is examined and may lead it to rely on superficial cues rather than repository evidence. ANTAEUS therefore begins with a lightweight, high-recall prioritization stage. The goal of this stage is not to classify functions as vulnerable, but to reduce the repository to a ranked set of functions that are most likely to contain logic-relevant behavior. This lets the later LLM stages oper-ate at the repository level while keeping the number of de-tailed analyses tractable. The prioritization stage first prunes the codebase, retaining only C/C++ source and header files. It then applies broad keyword-based heuristics to remove functions that are unlikely to involve authorization, access control, trust-boundary enforcement, configuration changes, or other security-sensitive operations. These heuristics are intentionally loose: they are designed to remove clearly irrelevant functions while preserving recall for functions that expose even weak security signals. After this initial pruning, A NTAEUS compresses the remaining repository into a lightweight function-level representation. For each retained function, it removes the internal implementation logic and keeps only the function signature together with the callees invoked inside the function body, as illustrated in Listing 2. This abstraction is deliberately simple. It discards Record 
+
+> Evidence
+> Check Local
+> Satisfaction
+
+1 PRIORITIZATION  2 CONTEXT 
+
+GROUNDING  3 STRUCTURED 
+
+REASONING  4 VALIDATION  5 REPORTING         
+
+> Repo
+> Keyword-Based
+> Pruning
+> Compressed
+> Representation
+> func(args)
+> callee1()
+> callee2()
+> ...
+> Agentic Ranking
+> Top-K Prioritized
+> Functions
+> Local Code Augmentation
+> (per function)
+> Repository-Level Bundle
+> Function Body
+> Callees
+> Macros
+> Constants
+> Imports #def
+> System
+> Purpose
+> Principal
+> Model
+> Trust
+> Topology
+> Information
+> Outputs
+> LLM Reasoning
+> Identify Sinks
+> Infer Safety
+> Conditions
+> Output (per function)
+> Sink Safety
+> Condition Locally
+> Satisfied
+> sink_A() Caller must be
+> authenticated false
+> sink_B() Input must be
+> validated true
+> Retrieve
+> Similar Sinks
+> Compare Condition
+> Uniqueness
+> Not
+> Distinct Distinct
+> Retain Discard
+> Structured Report
+> (per sink)
+> Signature
+> Rationale
+> Unsatisfied Safety
+> Conditions
+
+# Antaeus Figure 1. Overview of the A NTAEUS five-stage pipeline: prioritization, context-grounding, structured reasoning, validation, and reporting.  
+
+> 1
+
+func1(args)  
+
+> 2
+
+{ 
+
+> 3
+
+callee1(args);  
+
+> 4
+
+callee2(args);  
+
+> 5
+
+...  
+
+> 6
+
+} 
+
+> 7
+
+...  
+
+> 8
+
+funcN(args)  
+
+> 9
+
+{ 
+
+> 10
+
+callee1(args);  
+
+> 11
+
+...  
+
+> 12
+
+}
+
+Listing 2: Compressed repository representation used during prioritization. Function bodies are reduced to signatures and callees, omitting internal implementation logic. local implementation detail, but preserves the repository-wide call and naming signals that are useful for identifying security-relevant code regions. In particular, it allows the model to see many more functions and callees than would fit if full function bodies were provided. The compressed repository is then split into chunks that fit within the model’s context budget, with each chunk represented as a single line aggregating the functions it contains. These chunks are passed to an agentic LLM, which ranks the functions by their relevance to the target logic vulnerability classes. This design serves two purposes. First, it gives the pri-oritization model a global view of the repository’s security signals. Rather than inspecting a small subset of files or relying on its training-time knowledge of popular projects, the model receives a compact representation of the func-tions that remain after high-recall pruning. This makes it more likely to identify functions whose names, callees, or surrounding API structure indicate relevance to CWE-284 or CWE-200. Second, it limits the cost of the subsequent analysis. The detailed context-grounded reasoning stage is applied only to prioritized functions, reducing model calls, token usage, and the number of candidate reports that must be reviewed by a human auditor. 
+
+3.2. Contextual Grounding 
+
+The contextual grounding stage constructs the evidence needed to interpret a function in its repository context. The unit of analysis is a single function, but a function does not stand alone. Its meaning depends on the types of values it receives, the bodies of the functions it calls, the expansion of the macros it uses, the constants it references, and the headers and imports that determine the names in scope. Asking an LLM to reason about a function in isolation forces it to fill in these blanks from general knowledge or from patterns seen during training. In real C/C++ projects, this is unreliable. A project-specific macro may not expand to what the model assumes, a wrapper API may not behave like the closest public-library analog, and a constant may be defined to a value that changes the meaning of a check. For this reason, each function is enriched with a local augmentation bundle extracted from the repository. We build this bundle with a lightweight static analysis pass based on Tree-sitter. The parser identifies function definitions, call sites, macro and constant references, and includes relation-ships, from which we construct a repository-level graph that links each analyzed function to the program artifacts needed to interpret it. This graph is not intended to be a complete semantic model of the program; rather, it provides an efficient index for retrieving nearby evidence across the repository without requiring full compilation or heavyweight whole-program analysis. The local augmentation bundle contains the signatures of direct callees at depth one, the bodies of those callees when they are defined within the project, the textual definitions of macros and constants referenced in the function, and the relevant typedefs and imports in scope. This material is supplied as explicit program evidence rather than left to the model. Claims about what an identifier denotes, what a callee does, or what a constant means can therefore be cross-checked against supplied code. The choice of depth one is deliberate. Expanding the call graph further increases prompt size and dilutes the model’s attention, yet still fails to guarantee complete interprocedural coverage. In our setting, one level is sufficient to disambiguate the immediate seman-tics of the function and its directly invoked project APIs, while keeping the input within budget. Deeper semantic dependencies are instead captured, when relevant, through the repository context bundle. Local augmentation pins down what each line of the function means, but it does not explain what the program is for. Logic CWE-284 and CWE-200 vulnerabilities depend on repository-level semantics. Deciding whether a sink is safe requires understanding the kind of artifact the project implements, who interacts with it, the resources it mediates, the information it returns, and where its trust boundaries lie. None of this is reliably recoverable from a single function, even with depth-one expansion. We therefore compute, once per repository, a structured context bundle that summarizes the project at the level needed to interpret individual func-tions. The bundle is produced by a repository-level LLM agent before function-level analysis. The agent is given the complete repository and is asked to extract a stable descrip-tion of the project’s purpose, actors, resources, outputs, and exposed interfaces. Its task is not to decide whether any function is vulnerable, but to provide the shared repository context that subsequent function-level prompts can rely on. Each item in the bundle is associated with repository-relative paths and short code excerpts, so that later reasoning can be tied back to concrete evidence rather than to the model’s general prior knowledge. The bundle contains five sections. The system purpose 
+
+section describes what kind of artifact the repository imple-ments, its deployment context, and its primary consumers. The principal model section identifies the actors or callers that the code appears to distinguish, together with how their identity is established and through which interfaces they reach the system. The protected objects section records repository objects that appear security-relevant, such as configuration state, service handles, credentials, filesystem paths, or shared state tables, without deciding which prin-cipals are allowed to access them. The information outputs 
+
+section summarizes externally observable outputs, including functional responses, errors, status information, configura-tion data, and internal state exposed through return paths or response builders. Finally, the trust topology section records the interfaces exposed by the project and the structural boundaries they create, such as library APIs, IPC channels, local sockets, filesystem interfaces, or network-facing entry points. This shared bundle gives each function-level query the same repository-level frame while avoiding repeated re-discovery of the project’s purpose, actors, resources, outputs, and trust boundaries. 
+
+3.3. Structured LLM Reasoning 
+
+The structured LLM reasoning stage uses the grounded input to produce a function-level finding. The LLM is not asked to return an unconstrained vulnerability label. Instead, it is queried for a fixed-format finding whose elements must be tied to observable code or to explicit repository evidence. This design also aligns with prior observations that explana-tions should be grounded in verifiable evidence rather than unconstrained post-hoc rationalizations [26]. This output format determines what the contextual grounding stage must provide: enough local and repository-level evidence for the model to identify security-sensitive operations and state whether the required safety properties are satisfied by the analyzed function. For each function analyzed, the model first identifies a set of sinks . A sink is an operation syntactically present in the function whose execution is potentially sensitive to the CWE under consideration. For CWE-284, a sink is any operation that affects a protected resource, such as a privileged system call, a write to a resource exposed across a trust boundary, or a state update performed on behalf of a principal. For CWE-200, a sink is any operation that emits data across a trust boundary into a region observable by a less privileged principal, such as returning data through an API, writing to a network channel, logging sensitive information, or exposing internal state through an externally visible interface. For each sink, the model then derives a set of safety conditions . A safety condition is a predicate over the sur-rounding code, local checks, or relevant calling context that must hold for the sink to be safe in this repository. Each safety condition carries a locally_satisfied flag and a short justification. Both must be tied to specific code in the function or to explicit material supplied by the contextual grounding stage. A function is reported as a candidate vulnerability when at least one safety condition of at least one sink is not locally satisfied. This scheme has three purposes. First, it anchors the model’s reasoning in concrete evidence. By committing to specific sinks and checkable predicates, the model cannot hide a vague intuition behind generic prose, which mitigates the unfaithfulness of free-form LLM rationales. Second, the resulting output is directly useful to an auditor. The auditor is told which operation is security-sensitive and which predicate must be verified, rather than being handed a binary verdict to validate from scratch. Third, the format enables sharper evaluation. In fact, a finding is only accepted when both the vulnerability judgment and the supporting reasoning are accurate. Findings whose final label is correct but whose justification is inconsistent with the grounded evidence are discarded as incorrectly reasoned. 
+
+3.4. Comparative Validation 
+
+The comparative validation stage operationalizes the ob-servation in Section 2.1.3, that a genuine logic vulnerability is an anomaly relative to its peers while a recurring concern reflects a project norm. It reframes false-positive elimination as anomaly detection over the structured findings produced by the LLM. For each flagged condition, the stage compares the target against structurally similar sinks in the same repository, retaining the condition when it sets the target apart from its peers and discarding it when the same concern recurs uniformly across them. To decide whether an unsatisfied safety condition is distinctive or merely a recurring pattern, the validation stage compares the target sink against similar sinks from the same repository. Similarity is computed in two steps. First, each sink is represented by its sink identifier , i.e., the code fragment that corresponds to the security-sensitive operation reported by the model. We embed these sink identifiers with UniXcoder [27] and use cosine similarity to build a neighborhood of sinks that are syntactically or semanti-cally close at the code level. This step compares opera-tions, not model explanations. Second, validation compares the unsatisfied safety conditions attached to those sinks. Safety conditions are natural-language predicates produced by the model, so we embed them with all-MiniLM-L6-v2 sentence-transformer model and compare them using cosine similarity. A target condition is considered repeated when enough neighboring sinks have an unsatisfied condition that is semantically similar to it. In that case, the condition is treated as a repository-wide recurring pattern rather than as evidence of a distinctive logic violation. Both comparisons require a notion of similar enough .We avoid fixed global thresholds because similarity distribu-tions vary across repositories: some codebases contain many near-duplicate API wrappers, while others are more hetero-geneous. We therefore calibrate thresholds per repository using the empirical distribution of similarities observed in that repository. For a sample S, each threshold is defined as 
+
+τ = μ(S) + n · σ(S). (1) The strictness parameter n is set independently for each threshold. Lower values favor recall by accepting more neighbors and more repeated conditions; higher values make pruning more conservative. The validation stage instantiates four thresholds:  
+
+> •
+
+τsink is the minimum UniXcoder cosine similarity for two sink identifiers to be considered neighboring sinks. Its sample S is the set of similarities over sink pairs in the repository.  
+
+> •
+
+τcond is the minimum sentence-transformer cosine similarity for two unsatisfied safety conditions to be considered the same condition. Its sample S is the set of similarities over condition pairs in the repository.  
+
+> •
+
+τmaj is the minimum fraction of neighboring sinks that must contain a similar unsatisfied condition for the target condition to be considered recurring.  
+
+> •
+
+τmin is the minimum number of neighboring sinks required before a pruning decision is allowed. These thresholds define a single pruning rule. For a target sink s with an unsatisfied safety condition c, let N (s)
+
+be the set of neighboring sinks selected using τsink . Let 
+
+C(v) be the set of unsatisfied safety conditions reported for a neighboring sink v. The coverage of c is the fraction of neighboring sinks that contain at least one sufficiently similar condition:                                                                   
+
+> cov( c) = |{ v∈N(s)| ∃ cv∈C(v) : sim cond (c, c v)≥τcond }| |N(s)|.
+> (2)
+> 1{
+> 2"cwe": <weakness class>,
+> 3"function_name": <name>,
+> 4"file": <path>,
+> 5"lines": <range>,
+> 6"function id": <function id>
+> 7"sinks": [
+> 8{
+> 9"sink_id": <security-sensitive operation>,
+> 10 "sink_description": <why it crosses a trust or exposure boundary>,
+> 11 "required_conditions": [
+> 12 {
+> 13 "id": <invariant name>,
+> 14 "description": <invariant the operation depends on>,
+> 15 "locally_satisfied": <true |false>,
+> 16 "justification": <code evidence supporting the judgment>
+> 17 }
+> 18 ]
+> 19 }
+> 20 ]
+> 21 }
+
+Listing 3: Schema of a structured report entry. A function appears only when at least one sink has a required condition with locally_satisfied set to false; that condition and its justification constitute the reported vulnerability ev-idence. The condition is pruned when the neighborhood is large enough and the condition is repeated across a sufficient fraction of that neighborhood: 
+
+prune( c) ≡ | N (s)| ≥ τmin ∧ cov( c) ≥ τmaj . (3) Intuitively, a finding is retained when its unsatisfied condition is anomalous among similar sinks. If many similar sink identifiers in the same repository trigger the same un-satisfied condition, the condition is likely to reflect a model bias or a project-wide coding pattern rather than a specific logic flaw. If the condition appears only at the target sink, or only in too small a neighborhood, validation keeps it for reporting. This repository-local comparison gives A NTAEUS 
+
+a signal that isolated function analysis cannot use: whether the alleged violation is distinctive relative to analogous operations in the same codebase. 
+
+3.5. Reporting 
+
+The final stage emits the findings retained after com-parative validation as structured, evidence-grounded reports rather than free-form natural language. The report contains one entry per flagged function, where a function is flagged when it contains at least one security-sensitive sink with a required condition that is not locally satisfied. Functions whose sinks all meet their required conditions are not re-ported. This structure makes every claim auditable against concrete repository artifacts and exposes the results in a machine-readable form suitable for downstream triage and aggregation. As shown in Listing 3, an entry identifies the analyzed function by its name, file, line range, and a function 
+
+id . For each function, it enumerates the security-sensitive sinks identified within it. A sink names the operation and gives a short description of why it crosses a trust or exposure boundary. Each sink carries a list of required conditions, where every condition states the invariant the operation depends on, whether that invariant is locally satisfied, and a justification grounded in the code that supports the judg-ment. An unsatisfied condition, together with its justifica-tion, constitutes the reported vulnerability evidence, and the presence of at least one such condition is what causes the function to appear in the report. This design is consistent with recommendations from the explainable security literature, which stresses that ex-planations for security applications should support analyst decision-making while remaining auditable, understandable, and grounded in the evidence used to produce them [26]. 
+
+4. Evaluation 
+
+The central question is whether structuring repository-level context the way A NTAEUS does actually helps an LLM uncover logic vulnerabilities, and whether the gains are worth their cost. We break this down into four research questions:  
+
+> •
+
+RQ1 (Effectiveness). Can a multi-step LLM frame-work detect logic vulnerabilities at the repository level?  
+
+> •
+
+RQ2 (Comparison). How does A NTAEUS compare against state-of-the-art agentic LLMs and function-level baselines?  
+
+> •
+
+RQ3 (Ablation). Which components drive the gains, and by how much?  
+
+> •
+
+RQ4 (Cost). What is the cost of running A NTAEUS ,and how does it compare to alternatives? 
+
+4.1. Experimental Setup 
+
+Datasets: We draw our evaluation targets from Re-posVul [28], a repository-level vulnerability dataset built from NVD CVE records and their patch commits, span-ning thousands of open-source projects across multiple lan-guages. ReposVul annotates each entry at the repository, file, function, and line levels, and ships every CVE with its full repository, allowing us to analyze each vulnerability in its real project context. From this dataset, we select 28 CVEs, comprising 12 CWE-200 and 16 CWE-284 logic vulnerabilities, each paired with its repository and used as ground truth. 
+
+Models: We run ANTAEUS with two frontier models and refer to the resulting configurations by the reason-ing model they use: A NTAEUS O4.7 (Claude Opus 4.7) and ANTAEUS G5.4 (GPT-5.4). We additionally report recall for ANTAEUS O4.8 (Claude Opus 4.8). All analyses run through model APIs and require no local compute.                                    
+
+> TABLE 1. A GGREGATE PRUNING AND PRIORITIZATION STATISTICS ACROSS THE 28 REPOSITORIES ,PER CWE PASS .Files IS THE TOTAL SOURCE AND HEADER FILES ;Retained THOSE KEPT AFTER HEURISTIC PRUNING ;In-scope THE FUNCTIONS THEY CONTAIN ;Analyzed THE FUNCTIONS THE AGENT PASSES TO DETAILED ANALYSIS .Reduction IS THE RATIO OF IN -SCOPE TO ANALYZED FUNCTIONS .
+> Pass Files Retained In-scope Analyzed Reduction CWE-284 44,142 5,548 66,952 2,320 28.9 ×
+> CWE-200 44,142 10,161 82,806 2,539 32.6 ×
+> Combined –15,709 149,758 4,859 30.8 ×
+
+Evaluation Procedure: A repository is given to A NTAEUS 
+
+without any prior indication of which vulnerability, if any, it contains, since in a realistic setting, the class of a latent flaw is unknown. To reflect this, we run A NTAEUS over each repository in two independent passes, one targeting CWE-284 and one targeting CWE-200. Each pass instantiates the pipeline with the sink and safety-condition definitions appropriate to its class, so that prioritization, structured rea-soning, and validation are all specialized to the vulnerability type under consideration rather than to the specific CVE. The two passes are otherwise identical and operate on the same repository. Unless stated otherwise, the per-repository figures we report aggregate both passes. 
+
+Metrics: We report the number of true positives (TPs) and false positives (FPs). Scoring recall for logic vulnerabilities is nontrivial, since a tool may flag the right function for the wrong reason, and a binary vulnerable versus non-vulnerable match would overstate how well the underlying flaw was understood. We therefore exploit A NTAEUS ’s structured out-put. Because each finding names a security-sensitive sink together with the conditions under which it is safe, we count a detection as a true positive only when the reported sink and its conditions actually explain the CVE, rather than when the flagged function merely overlaps with the vulnerable one. Concretely, a vulnerability is counted as detected when the pass corresponding to its CWE class reports a finding that explains it, while the opposing pass contributes only to the false-positive count for that repository. The number of false positives is then the count of reported findings that do not correspond to a real flaw. 
+
+Comparisons: We compare A NTAEUS against two families of baselines. The first is function-level detection , where each function is analyzed in isolation with no repository-level context, using the same models as A NTAEUS (Opus 4.7 or GPT5.4) to separate the contribution of context from that of the underlying model. The second is agentic detection ,where a model autonomously explores the repository, for which we use Claude Opus 4.8, Claude Opus 4.7, and Codex 5.4. 
+
+4.2. Prioritization Statistics 
+
+Both passes operate on a prioritized subset of each codebase rather than on every function. Table 1 reports the aggregate effect of this stage across the 28 reposito-ries. Starting from 44,142 source and header files, heuristic TABLE 2. D ETECTION EFFECTIVENESS OF ANTAEUS IN ITS TWO CONFIGURATIONS . Fns IS THE TOTAL NUMBER OF ANALYZED FUNCTIONS .
+
+ANTAEUS O4.7 ANTAEUS G5.4 
+
+CVE Fns TPs FPs TPs FPs CVE-2011-3177 180 ✓ 71 ✗ 159 CVE-2014-4668 49 ✓ 35 ✗ 55 CVE-2014-9773 93 ✗ 50 ✗ 68 CVE-2015-2141 133 ✗ 7 ✗ 47 CVE-2016-10030 781 ✓ 319 ✓ 536 CVE-2016-10130 63 ✗ 21 ✓ 39 CVE-2016-3698 15 ✓ 1 ✗ 10 CVE-2016-5104 18 ✓ 5 ✓ 17 CVE-2016-6255 73 ✓ 17 ✓ 51 CVE-2017-5940 137 ✓ 94 ✓ 114 CVE-2017-5985 104 ✓ 83 ✓ 107 CVE-2017-6594 72 ✗ 24 ✗ 56 CVE-2018-19045 175 ✗ 46 ✗ 161 CVE-2018-20145 217 ✗ 30 ✗ 122 CVE-2019-12209 16 ✗ 5 ✗ 19 CVE-2019-12210 17 ✓ 6 ✓ 18 CVE-2019-12589 107 ✗ 44 ✗ 82 CVE-2019-25016 31 ✗ 7 ✗ 18 CVE-2019-3816 107 ✓ 48 ✓ 103 CVE-2020-10701 265 ✓ 15 ✓ 48 CVE-2020-14093 1212 ✓ 74 ✗ 365 CVE-2020-14976 122 ✗ 46 ✗ 118 CVE-2020-15078 54 ✗ 25 ✗ 44 CVE-2020-29074 136 ✓ 91 ✓ 133 CVE-2020-35517 391 ✗ 82 ✗ 255 CVE-2022-24976 124 ✓ 72 ✓ 78 CVE-2022-25643 41 ✓ 20 ✗ 28 CVE-2023-27478 126 ✗ 7 ✓ 67 
+
+Total 4859 15/28 1345 12/28 2918 
+
+pruning and agent ranking reduce the in-scope functions to the set actually analyzed, yielding roughly a 29 × reduction for the CWE-284 pass and a 33 × reduction for the CWE-200 pass. Detailed LLM reasoning is therefore applied to a few thousand prioritized functions rather than to the full codebases, while still recovering the majority of detected vulnerabilities. That detection holds under such a reduced budget indicates that prioritization preserves the relevant security signal while bounding the amount of code that must be analyzed and later triaged. The per-repository breakdown is given in Appendix A. 
+
+4.3. RQ1: Detection Effectiveness 
+
+Having reduced the analysis space by roughly 31 × on average, we now evaluate whether the remaining functions are sufficient to recover real logic vulnerabilities. Table 2 reports the end-to-end effectiveness of A NTAEUS on the 28 repositories in our benchmark, using Opus 4.7 and GPT-5.4 as the reasoning model respectively. We discuss each in turn. With Opus 4.7, A NTAEUS detects and explains 15 out of 28 confirmed logic vulnerabilities, producing for each a structured finding that names the security-sensitive sink and the unsatisfied safety condition behind the detection. Detection spans repositories of widely varying size, from a few dozen functions to several hundred, indicating that the approach does not depend on a particular scale of project. Comparative validation accounts for a meaningful share of the reported precision. It removes 337 false positives from the initial output, reducing the total from 1,682 to 1,345 while leaving every true positive intact, which confirms that validation prunes a substantial fraction of recurring, non-distinctive findings rather than acting as a cosmetic post-processing step. With GPT-5.4, A NTAEUS detects 12 out of 28 vulnerabilities, with validation reducing false positives from 3,927 to 2,918. The pipeline behavior is consistent with the Opus 4.7 run, high recall over prioritized functions followed by substantial validation pruning, while the set of detected vulnerabilities differs in part. This suggests that the two models surface partially complementary findings under the same framework, and that the gains of A NTAEUS are not tied to a single reasoning model. 
+
+4.4. RQ2: Comparison with SoTA 
+
+We compare A NTAEUS against two families of baselines, function-level detection (Claude Opus 4.7 and GPT-5.4, each function analyzed without repository context) and agentic detection, in which the model autonomously explores the repository. The agentic baselines are run both over our prioritized function set and over the raw repository without prioritization, using Opus 4.8, Opus 4.7, and Codex (GPT-5.4) in each setting. Table 3 summarizes recall and false positives across all configurations. A NTAEUS substantially outperforms every comparison on recall. With Opus 4.7, it recovers 15 of 28 vulnerabilities, and with GPT-5.4, 12 of 28, against 4 of 28 for the strongest baseline. The gain holds across model families, since the same pipeline lifts both Claude and GPT well above their function-level and agentic counterparts, indicating that the improvement comes from how A NTAEUS structures and grounds repository context rather than from any single underlying model. Recall is also stable across Claude generations. Although Table 3 reports A NTAEUS with Opus 4.7, we additionally ran the full pipeline with Opus 4.8 and again recovered 15 of 28 vul-nerabilities, indicating the gains are not tied to a particular model version. A NTAEUS reports more false positives than the agentic baselines, but this reflects how much code each method examines rather than weaker reasoning. A NTAEUS 
+
+and the function-level baseline both analyze every function under consideration, so they surface the full set of candi-date findings, whereas the agentic baselines inspect only a subset of functions. This holds even when we hand them our prioritized set. Given the same 4,859 ranked functions, Opus 4.7 agentic reasons over only 1,379 of them and Opus 4.8 agentic over only 588, applying its own internal prioritization on top of ours rather than examining the full set. Supplying the ranking also raises their false positives rather than their recall. The Opus 4.7 agentic baseline goes from 545 to 967 false positives once given our prioritized TABLE 3. C OMPARISON OF ANTAEUS AGAINST A FUNCTION -LEVEL BASELINE AND AGENTIC (A G.) BASELINES , WITH AND WITHOUT OUR PRIORITIZATION RANKING (R K.), FOR OPUS 4.7 AND OPUS 4.8 ON CLAUDE AND THE FUNCTION -LEVEL BASELINE ON GPT.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         
+
+> Claude GPT
+> ANTAEUS O4.7 Func. 4.7 Ag. 4.7 Ag.+Rk. 4.8 Ag. 4.8 Ag.+Rk. ANTAEUS G5.4 Func. CVE TPs FPs TPs FPs TPs FPs TPs FPs TPs FPs TPs FPs TPs FPs TPs FPs CVE-2011-3177 ✓71 ✗130 ✗23 ✗104 ✗13 ✗22 ✗159 ✗303 CVE-2014-4668 ✓35 ✗37 ✗30 ✗25 ✗12 ✗23 ✗55 ✗43 CVE-2014-9773 ✗50 ✗46 ✗15 ✗19 ✗14 ✗17 ✗68 ✗106 CVE-2015-2141 ✗7✗6✗19 ✗42 ✗1✗11 ✗47 ✗79 CVE-2016-10030 ✓319 ✓230 ✗28 ✗71 ✗12 ✗58 ✓536 ✓835 CVE-2016-10130 ✗21 ✗6✗27 ✓36 ✗8✗8✓39 ✗25 CVE-2016-3698 ✓1✗0✗6✗10 ✓0✗2✗10 ✗14 CVE-2016-5104 ✓5✗9✓12 ✗16 ✓4✓7✓17 ✗19 CVE-2016-6255 ✓17 ✓9✓13 ✗44 ✓5✓11 ✓51 ✓57 CVE-2017-5940 ✓94 ✗38 ✗17 ✓36 ✗4✗6✓114 ✗101 CVE-2017-5985 ✓83 ✗35 ✗18 ✗13 ✓8✓19 ✓107 ✗88 CVE-2017-6594 ✗24 ✗25 ✗19 ✗12 ✗5✗11 ✗56 ✗82 CVE-2018-19045 ✗46 ✗48 ✗18 ✗96 ✗9✗17 ✗161 ✗412 CVE-2018-20145 ✗30 ✗38 ✗23 ✗64 ✗8✗6✗122 ✗280 CVE-2019-12209 ✗5✗7✗15 ✗15 ✗1✗10 ✗19 ✗35 CVE-2019-12210 ✓6✓6✗14 ✗6✗2✗7✓18 ✓38 CVE-2019-12589 ✗44 ✗35 ✗15 ✗14 ✗5✗4✗82 ✗120 CVE-2019-25016 ✗7✗0✓13 ✗7✗2✗5✗18 ✗31 CVE-2019-3816 ✓48 ✗65 ✗26 ✗28 ✗8✗15 ✓103 ✗101 CVE-2020-10701 ✓15 ✗4✗21 ✓14 ✓3✗6✓48 ✗40 CVE-2020-14093 ✓74 ✗64 ✗17 ✗44 ✗9✗12 ✗365 ✗897 CVE-2020-14976 ✗46 ✗28 ✗22 ✗72 ✗18 ✗20 ✗118 ✗217 CVE-2020-15078 ✗25 ✓26 ✗20 ✗18 ✗5✗14 ✗44 ✗54 CVE-2020-29074 ✓91 ✓173 ✗30 ✗48 ✗5✗16 ✓133 ✓209 CVE-2020-35517 ✗82 ✗53 ✗47 ✗10 ✗6✗8✗255 ✗514 CVE-2022-24976 ✓72 ✗52 ✗7✗35 ✗13 ✗22 ✓78 ✗133 CVE-2022-25643 ✓20 ✗17 ✗14 ✗21 ✗4✓6✗28 ✗38 CVE-2023-27478 ✗7✗10 ✗16 ✗47 ✗6✗4✓67 ✗100
+> Total 15 1345 51197 3545 3967 5190 4367 12 2918 44971
+
+set, and Opus 4.8 from 190 to 367, the latter while detecting one fewer vulnerability. The ranking appears to nudge the models toward examining more candidates, but they still curtail the search internally, so the extra effort surfaces additional spurious findings without reaching the functions that carry the flaw. The right way to weigh these false positives is against the detections they accompany, that is, by discovery yield rather than raw count. A NTAEUS (Opus 4.7) confirms one vulnerability for roughly every 90 reported findings (15 of 1,345, a TP/FPs ratio of 0.011), against one in 182 for the Opus 4.7 agentic baseline (3 of 545, 0.006). The unranked Opus 4.8 agentic baseline attains a higher ratio (5 of 190, 0.026) but only by detecting a third as many vulnerabilities, since its narrow coverage keeps both its findings and its detections low. This is the central trade-off: aggressive internal prioritization improves the apparent signal-to-noise ratio while suppressing overall discovery, whereas A NTAEUS sustains a far higher detection rate at a yield that still keeps triage tractable. Viewed through a bugonomics lens [19], A NTAEUS converts analyst triage effort into confirmed vulnerabilities more effectively than the agentic baselines, improving the return on validation while preserving substantially higher discovery capability. The meaningful comparison is therefore with the function-level baseline, which matches A NTAEUS ’s breadth of anal-ysis: there the false-positive counts are comparable while ANTAEUS ’s recall is several times higher, so A NTAEUS 
+
+turns the same breadth into many more detections without a corresponding rise in false positives. We omit Codex (GPT-5.4) from Table 3 because it fails to recover a single vulner-ability in either the prioritized or the raw-repository setting, achieving 0 of 28 across both settings, so its column would add nothing to the comparison. Across all configurations we tested, no baseline exceeds 4 of 28, while A NTAEUS 
+
+reaches 12-15 of 28, depending on the model. The agentic baselines keep false positives low only by analyzing less code, even when given our ranking, and the function-level baseline matches A NTAEUS ’s breadth but not its recall. ANTAEUS ’s advantage is therefore not a tuning artifact but a property of pairing exhaustive analysis of prioritized code with structured, context-grounded reasoning. 
+
+4.5. RQ3: Contribution of Context and FP-Pruning (Ablation) 
+
+We isolate the contribution of three components of ANTAEUS , namely the function-level local augmentation (–Local), the repository-level context bundle (–Repo), and the comparative validation that prunes false positives. We ablate each by disabling it and re-measuring detection and TABLE 4. P ER -CVE DETECTION UNDER CONTEXT ABLATIONS . −Local  
+
+> REMOVES THE LOCAL AUGMENTATION AND
+
+−Repo REMOVES THE REPOSITORY -LEVEL CONTEXT BUNDLE .
+
+Claude GPT CVE −Local −Repo −Local −Repo CVE-2011-3177 ✗ ✗ ✗ ✗
+
+CVE-2014-4668 ✗ ✗ ✗ ✗
+
+CVE-2014-9773 ✗ ✗ ✗ ✗
+
+CVE-2015-2141 ✗ ✗ ✗ ✗
+
+CVE-2016-10030 ✓ ✓ ✓ ✓
+
+CVE-2016-10130 ✗ ✗ ✗ ✗
+
+CVE-2016-3698 ✗ ✗ ✗ ✗
+
+CVE-2016-5104 ✓ ✓ ✓ ✓
+
+CVE-2016-6255 ✓ ✓ ✓ ✓
+
+CVE-2017-5940 ✓ ✓ ✓ ✓
+
+CVE-2017-5985 ✓ ✓ ✓ ✓
+
+CVE-2017-6594 ✗ ✗ ✗ ✗
+
+CVE-2018-19045 ✗ ✗ ✗ ✗
+
+CVE-2018-20145 ✗ ✗ ✗ ✗
+
+CVE-2019-12209 ✗ ✓ ✗ ✗
+
+CVE-2019-12210 ✗ ✗ ✗ ✗
+
+CVE-2019-12589 ✗ ✗ ✗ ✗
+
+CVE-2019-25016 ✗ ✗ ✗ ✗
+
+CVE-2019-3816 ✓ ✗ ✓ ✓
+
+CVE-2020-10701 ✓ ✗ ✓ ✗
+
+CVE-2020-14093 ✗ ✗ ✗ ✗
+
+CVE-2020-14976 ✗ ✗ ✗ ✓
+
+CVE-2020-15078 ✗ ✗ ✗ ✗
+
+CVE-2020-29074 ✓ ✓ ✗ ✗
+
+CVE-2020-35517 ✗ ✗ ✗ ✗
+
+CVE-2022-24976 ✓ ✓ ✓ ✗
+
+CVE-2022-25643 ✗ ✓ ✗ ✗
+
+CVE-2023-27478 ✗ ✗ ✗ ✗
+
+Total 9 9 8 7
+
+false positives. Removing either context source substantially lowers recall (see Table 4). Under Opus 4.7, detections fall from 15 to 9 when local augmentation is withheld (–Local) and to 9 when the repository bundle is withheld (–Repo). Under GPT-5.4, they fall from 12 to 8 and 7, respectively. Either ablation roughly halves the vulnerabilities A NTAEUS 
+
+recovers, confirming that neither source is redundant and that the reasoning stage relies on both the local grounding around a function and the project-wide semantics that situate it. The two sources are also not interchangeable. CVE-2020-10701, for example, is detected only when the repository-level context is present, matching the intuition from our running example, where the safety of the operation could be judged only once the model knew how the surrounding application exercised it. Local augmentation alone leaves that judgment underdetermined. Removing comparative val-idation increases false positives at no change to recall, since the stage operates entirely on embeddings and prunes only spurious conditions (see Table 5). With it enabled, false positives fall from 1,682 to 1,345 under Opus 4.7, a 20% reduction, and from 3,927 to 2,918 under GPT-5.4, a 26% reduction in both cases, without dropping any true positives. The effect is larger for GPT-5.4, consistent with its more aggressive flagging behavior, which leaves more spurious conditions for the pruning stage to catch. This stage is therefore a meaningful contributor to precision rather than a 
+
+TABLE 5. E FFECT OF COMPARATIVE VALIDATION ON FALSE POSITIVES ACROSS THE 28 LOGIC -VULNERABILITY REPOSITORIES . FP pre AND 
+
+FP post ARE FP S BEFORE AND AFTER AUDITING .ANTAEUS O4.7 ANTAEUS G5.4                                                                                                                                                                                     
+
+> CVE TPs FP pre FP post TPs FP pre FP post
+> CVE-2011-3177 ✓84 71 ✗187 159 CVE-2014-4668 ✓40 35 ✗63 55 CVE-2014-9773 ✗53 50 ✗89 68 CVE-2015-2141 ✗77✗72 47 CVE-2016-10030 ✓426 319 ✓768 536 CVE-2016-10130 ✗27 21 ✓55 39 CVE-2016-3698 ✓11✗10 10 CVE-2016-5104 ✓75✓22 17 CVE-2016-6255 ✓22 17 ✓65 51 CVE-2017-5940 ✓116 94 ✓154 114 CVE-2017-5985 ✓101 83 ✓148 107 CVE-2017-6594 ✗28 24 ✗75 56 CVE-2018-19045 ✗61 46 ✗218 161 CVE-2018-20145 ✗37 30 ✗163 122 CVE-2019-12209 ✗55✗24 19 CVE-2019-12210 ✓66✓24 18 CVE-2019-12589 ✗50 44 ✗109 82 CVE-2019-25016 ✗87✗31 18 CVE-2019-3816 ✓65 48 ✓141 103 CVE-2020-10701 ✓21 15 ✓69 48 CVE-2020-14093 ✓87 74 ✗447 365 CVE-2020-14976 ✗56 46 ✗181 118 CVE-2020-15078 ✗32 25 ✗59 44 CVE-2020-29074 ✓107 91 ✓180 133 CVE-2020-35517 ✗113 82 ✗334 255 CVE-2022-24976 ✓91 72 ✓121 78 CVE-2022-25643 ✓24 20 ✗36 28 CVE-2023-27478 ✗77✓82 67
+> Total 15/28 1682 1345 12/28 3927 2918
+
+cosmetic pass. Each component contributes a distinct gain. The local and repository context together drive the recall improvement that separates A NTAEUS from the baselines, and comparative validation recovers precision lost to over-flagging. Removing any one degrades a different axis of the result, which is why all three are retained in the full pipeline. 
+
+4.6. RQ4: Cost Analysis 
+
+We report cost both as token usage and as estimated API spend at list prices. Raw token counts alone are not directly comparable across methods, because the agentic baseline relies heavily on prompt caching, where cache reads are billed at a tenth of the input rate, so its raw total is dominated by cheap reuse rather than fresh computation. ANTAEUS instead issues uncached prompts whose size is driven by the repository context it embeds, and generates very little output. Table 6 and Table 7 report token usage for the two settings, and Table 8 the resulting cost. Per-CVE breakdowns are in Appendix B. Three observations summarize the picture. First, ANTAEUS operates in the same cost regime as the agentic baseline, on the order of a few hundred dollars across all 28 repositories, despite analyzing every prioritized function rather than a self-selected subset. The added spend over the function-level baseline is the direct price of the context TABLE 6. A GGREGATE TOKEN USAGE IN MILLIONS OF TOKENS .                          
+
+> Configuration In Out Opus 4.7 ANTAEUS 83.97 0.68 Func. Level 5.58 0.20 GPT 5.4 ANTAEUS 82.34 1.26 Func. Level 4.79 0.64
+> TABLE 7. T OKEN USAGE FOR THE OPUS 4.7 AGENTIC BASELINE ,IN MILLIONS OF TOKENS .
+> Baseline Input Cache Output Total Write Read Opus 4.7 Ag. 0.004 8.81 251.75 0.69 261.25
+
+ANTAEUS supplies, since both the function-level grounding and the repository-level bundle dominate its prompt size, and it is what the recall gains in RQ2 and RQ3 buy. Second, this spend is well justified by the difference in coverage. ANTAEUS detects roughly five times as many vulnerabilities as the agentic baseline, so its cost per detected vulnerability, around $30, is less than half the agentic baseline’s, near $80. Third, the function-level baseline is cheapest per run but reaches only the most accessible vulnerabilities, detecting 5 of 28, so its low unit cost reflects limited coverage rather than efficiency. The comparative validation stage adds no LLM cost, operating entirely on embeddings. 
+
+5. Discussion 
+
+Our aim is not a complete or formally sound vulnerability-analysis framework, but a practical method for recovering repository-specific security invariants under realistic analysis budgets. A NTAEUS deliberately trades ex-haustive coverage for tractability at repository scale, and we therefore make no claim of exhaustive detection, com-pleteness over all logic vulnerabilities, or formal correctness of the invariants it infers. The results should be read as evidence that repository-grounded invariant recovery can materially improve discovery effectiveness in practice. In the rest of this section we examine what this trade buys, where its boundaries currently lie, and how the design posi-tions A NTAEUS to extend past them, with those boundaries understood in that light rather than as failures to meet a guarantee we never set out to provide. 
+
+Depth of local grounding. The local augmentation bundle expands the call graph to depth one, which keeps prompts within budget. The consequence is that a safety condition whose justification lives two or more levels away may be judged on incomplete evidence. The repository-level con-text bundle partially offsets this by supplying project-wide semantics, though as a summary it does not restore arbitrary interprocedural reach. How deep to expand the call graph is a tunable point in the design rather than a fixed limit, and deeper grounding can be traded against prompt budget where a target repository warrants it.                      
+
+> TABLE 8. E STIMATED API COST WITH OPUS 4.7 AT LIST PRICES .VALUES ARE APPROXIMATE .
+> Configuration TPs Total ($) $/CVE $/TPs ANTAEUS O4.7 15 ∼440 ∼16 ∼30 Opus 4.7 Agentic 3∼230 ∼8∼77 Func. Level 5∼33 ∼1∼7
+
+Reliance on model judgment. Sink identification and safety-condition derivation come from an LLM, and al-though the structured output ties each claim to supplied code, the model can still omit a relevant sink, propose a spurious condition, or offer reasoning that is plausible but unfaithful [23]. Comparative validation mitigates this by pruning conditions that recur across peers, but it operates on what the reasoning stage reports and cannot recover a sink the model never surfaced. This is the central reason ANTAEUS favors structured, evidence-linked output over free-form verdicts: making each claim inspectable is what allows downstream validation, and what lets a human re-viewer audit a finding rather than take it on trust. 
+
+Role of prioritization. Detection examines only the func-tions that survive prioritization, so this stage bounds what the reasoning stage can ever see. It rests on both keyword heuristics for initial pruning and the agent’s ranking of the survivors, either of which may overlook code whose relevance is not evident from its name, callees, or structure. We keep the heuristics deliberately high-recall, but surfacing security-relevant code at repository scale without exhaustive analysis is an open problem in its own right. We therefore treat prioritization as a pluggable component, and A NTAEUS 
+
+stands to benefit directly from advances along this line. 
+
+Sensitivity to prompt design. Each LLM stage is driven by prompts, and the space of formulations is effectively unbounded. We iterated on the prompts for prioritization, context extraction, and structured reasoning to obtain reli-able, well-structured outputs, but make no claim of opti-mality: a different phrasing, ordering, or level of instruction could move the results either way. The numbers we report should be read as the outcome of one carefully chosen, not exhaustively searched, configuration, which also means there is likely headroom a more systematic prompt search could recover. 
+
+Calibration of validation. Comparative validation cali-brates its thresholds per repository from the empirical sim-ilarity distribution. Where comparable sinks are few, the neighborhood may be too small for the pruning rule to fire, and the stage defaults to retaining the finding, a conserva-tive choice that favors recall over precision. The strictness parameters expose this trade-off directly, giving an operator a knob to tune toward precision or recall according to how a given deployment weighs missed findings against review effort. 
+
+Generality of the evaluation. Our study covers 28 real-world C and C++ repositories with confirmed CWE-200 and CWE-284 vulnerabilities. Labeled logic vulnerabilities of this kind are scarce, so assembling even this many is non-trivial, and the set is substantial relative to what is available for the class. The sample is nonetheless small in absolute terms, which limits statistical power and may not capture the full diversity of C and C++ conventions; results may likewise not transfer directly to other languages, to pro-prietary codebases with different norms, or to vulnerability classes beyond the two we target. We see broadening across languages and CWE classes as the natural next step, and the language-agnostic structure of the pipeline, prioritize, augment, reason, validate, is intended to make that extension straightforward. 
+
+6. Related Work 
+
+6.1. Traditional Approaches to Logic Vulnerabili-ties 
+
+The earliest systematic treatments of logic flaws come from the web domain. Felmetsger et al. derive likely in-variants from observed executions and report paths that contradict them [1], an approach later extended by black-box techniques that learn behavioral models from request traces and synthesize inputs to break them [9], [10]. Domain-specific systems specialize this idea further to application workflows and e-commerce checkout logic [7], [8]. These works establish that the violated property is defined by the application rather than by a fixed code pattern, but the signals they rely on, such as sessions, forms, and navigation structure, have no analog in systems software. A separate tradition infers correctness rules from the code itself and treats violations as defects. Engler et al. extract implicit programming rules from systems code and surface statis-tical outliers as candidate bugs [24], and Chucky identi-fies missing security checks by contrasting a function with structurally comparable code and reporting the omissions that stand out [25]. For the invariants we target, none of these anchors is available, and project-specific rules can encode them only at a manual cost that does not scale across repositories. A NTAEUS retains the anomaly-based intuition of the missing-check line of work, but applies it over structured, model-produced findings. 
+
+6.2. LLM- and Agentic-Based Approaches. 
+
+A growing body of work applies language models to vul-nerability detection. Many systems operate at the function level, presenting a single function and asking for a label or report [12], [22]. A line of work augments the model with external knowledge, retrieving distilled vulnerability descriptions or CWE references at inference time to steer the judgment [29], [30]. A complementary direction couples models with program analysis so that reasoning is anchored to extracted facts rather than raw text. IRIS infers taint spec-ifications with an LLM and drives a static analyzer over the whole repository [31], LLift and the interleaving approach of Chapman et al. embed model queries inside a static-analysis loop and feed the answers back into subsequent analysis [32], [33], and LLMxCPG compresses a code prop-erty graph into compact slices that let a model reason over segments spanning multiple functions [34]. These systems anchor on a tainted source, a specification, or a graph path, the kind of scaffold that logic flaws do not provide. A further line moves detection from the function to the repository. Benchmarking efforts show that inter-procedural detection is a distinct and largely open problem, and supply call-graph dependencies as the bridge from intra- to inter-procedural reasoning [35]. Autonomous auditing agents instead traverse a repository to locate and explain defects [11]. Both rely on a dependency or anchor to follow, which the CWE-284 and CWE-200 issues lacks, leaving open-ended search prone to both wasted budget and drift. A NTAEUS instead fixes a bounded sequence of steps. It narrows the candidate set, attaches targeted evidence, and prunes by comparison. Recent results show that frontier models can uncover real vulnerabilities when given sufficient scaffolding and com-pute [14]. The open question is therefore not whether the capability exists, but how to harness it at repository scale without making the analysis prohibitively expensive [19]. To the best of our knowledge, A NTAEUS is the first system to address this challenge for logic vulnerabilities, targeting repository-level reasoning while keeping costs under control. 
+
+7. Conclusion 
+
+We presented A NTAEUS , a repository-level framework for detecting logic vulnerabilities by grounding LLM rea-soning in codebase-wide context. A NTAEUS follows a five-stage pipeline that combines function prioritization, context-grounding, structured reasoning, comparative validation, and reporting to make LLM analysis both evidence-grounded and cost-aware. It prioritizes security-relevant functions, grounds each in local and repository-level evidence, derives sinks and safety conditions, validates candidate findings against similar sinks, and reports retained violations with supporting evidence. Our evaluation on 28 real-world C and C++ repositories with confirmed CWE-284 and CWE-200 vulnerabilities shows that A NTAEUS detects and explains 15 vulnerabilities, substantially outperforming function-level LLM analysis and frontier-agentic baselines while maintain-ing comparable token usage and cost budgets. These results suggest that repository-specific grounding and staged valida-tion are key to efficiently applying frontier LLM capabilities to logic vulnerability detection. 
+
+References    
+
+> [1] V. Felmetsger, L. Cavedon, C. Kruegel, and G. Vigna, “Toward automated detection of logic vulnerabilities in web applications,” in
+> 19th USENIX Security Symposium (USENIX Security 10) , 2010. [2] MITRE, “CWE-200: Exposure of Sensitive Information to an Unau-thorized Actor,” https://cwe.mitre.org/data/definitions/200.html, 2026, Common Weakness Enumeration. [3] ——, “CWE-284: Improper Access Control,” https://cwe.mitre.org/ data/definitions/284.html, 2026, Common Weakness Enumeration.
+
+[4] ——, “2025 CWE Top 25 Most Dangerous Software Weaknesses,” https://cwe.mitre.org/top25/archive/2025/2025 cwe top25.html, 2025, Common Weakness Enumeration. Page last updated: December 15, 2025. Accessed: 2026-06-09. [5] GitHub, “CodeQL Documentation,” https://codeql.github.com/docs/, accessed: 2026-05-18. [6] Semgrep, “Semgrep Documentation,” https://semgrep.dev/docs/, accessed: 2026-05-18. [7] X. Li and Y. Xue, “Logicscope: Automatic discovery of logic vul-nerabilities within web applications,” in Proceedings of the 8th ACM SIGSAC symposium on Information, computer and communications security , 2013, pp. 481–486. [8] F. Sun, L. Xu, and Z. Su, “Detecting logic vulnerabilities in e-commerce applications.” in NDSS , 2014. [9] G. Pellegrino and D. Balzarotti, “Toward black-box detection of logic flaws in web applications.” in NDSS , vol. 14, 2014, pp. 23–26. [10] G. Deepa, P. S. Thilagam, A. Praseed, and A. R. Pais, “Detlogic: A black-box approach for detecting logic vulnerabilities in web applications,” Journal of Network and Computer Applications , vol. 109, pp. 89–109, 2018. [11] J. Guo, C. Wang, X. Xu, Z. Su, and X. Zhang, “Repoaudit: An autonomous llm-agent for repository-level code auditing,” arXiv preprint arXiv:2501.18160 , 2025. [12] J. Chen, Z. Pan, X. Hu, Z. Li, G. Li, and X. Xia, “Reasoning runtime behavior of a program with llm: How far are we?” in 2025 IEEE/ACM 47th International Conference on Software Engineering (ICSE) . IEEE, 2025, pp. 1869–1881. [13] Anthropic, “Project Glasswing: Securing Critical Software for the AI Era,” https://www.anthropic.com/project/glasswing, 2026, accessed: 2026-04. [14] N. Carlini, N. Cheng, K. Lucas, M. Moore, M. Nasr, V. Prabhushankar, W. Xiao, H. Angulu, E. B. Asher, J. Bow, K. Bradwell, B. Buchanan, D. Forsythe, D. Freeman, A. Gaynor, X. Ge, L. Graham, K. Guru, H. Lakhani, M. McNiece, M. Mehrara, R. Nichol, A. Pirzada, S. Porter, A. Terzis, and K. Troy. Assessing claude mythos preview’s cybersecurity capabilities. [Online]. Available: https://red.anthropic.com/2026/mythos-preview/ [15] Y. Li, X. Li, H. Wu, M. Xu, Y. Zhang, X. Cheng, F. Xu, and S. Zhong, “Everything you wanted to know about llm-based vulnerability detec-tion but were afraid to ask,” arXiv preprint arXiv:2504.13474 , 2025. [16] S. Ullah, M. Han, S. Pujar, H. Pearce, A. Coskun, and G. Stringhini, “Llms cannot reliably identify and reason about security vulnera-bilities (yet?): A comprehensive evaluation, framework, and bench-marks,” in 2024 IEEE symposium on security and privacy (SP) .IEEE, 2024, pp. 862–880. [17] A. Yildiz, S. G. Teo, Y. Lou, Y. Feng, C. Wang, and D. M. Divakaran, “Benchmarking llms and llm-based agents in practical vulnerability detection for code repositories,” in Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 2025, pp. 30 848–30 865. [18] X. Zheng, A. Pesoli, M. Valleri, S. Jana, and L. Cavallaro, “Veritas: A semantically grounded agentic framework for memory corruption vulnerability detection in binaries,” arXiv preprint arXiv:2605.15097 ,2026. [19] A. Pesoli, H. Errico, and L. Cavallaro, “Demystifying the mythos or disrupting bugonomics? from zero-day asymmetry to defender remediation throughput,” arXiv preprint arXiv:2605.24632 , 2026. [20] Anthropic, “Introducing claude opus 4.8,” https://www.anthropic.co m/news/claude-opus-4-8, 2026. [21] OpenAI, “Introducing gpt-5.4,” https://openai.com/index/introducing -gpt-5-4/, 2026. [22] Y. Ding, Y. Fu, O. Ibrahim, C. Sitawarin, X. Chen, B. Alomair, D. Wagner, B. Ray, and Y. Chen, “Vulnerability detection with code language models: How far are we?” in Proceedings of the IEEE/ACM 47th International Conference on Software Engineering ,ser. ICSE ’25. IEEE Press, 2025, p. 1729–1741. [Online]. Available: https://doi.org/10.1109/ICSE55347.2025.00038 [23] M. Turpin, J. Michael, E. Perez, and S. Bowman, “Language models don’t always say what they think: Unfaithful explanations in chain-of-thought prompting,” Advances in Neural Information Processing Systems , vol. 36, pp. 74 952–74 965, 2023. [24] D. Engler, D. Y. Chen, S. Hallem, A. Chou, and B. Chelf, “Bugs as deviant behavior: a general approach to inferring errors in systems code,” in Proceedings of the Eighteenth ACM Symposium on Operating Systems Principles , ser. SOSP ’01. New York, NY, USA: Association for Computing Machinery, 2001, p. 57–72. [Online]. Available: https://doi.org/10.1145/502034.502041 [25] F. Yamaguchi, C. Wressnegger, H. Gascon, and K. Rieck, “Chucky: exposing missing checks in source code for vulnerability discovery,” in Proceedings of the 2013 ACM SIGSAC Conference on Computer & Communications Security , ser. CCS ’13. New York, NY, USA: Association for Computing Machinery, 2013, p. 499–510. [Online]. Available: https://doi.org/10.1145/2508859.2516665 [26] A. Nadeem, D. Vos, C. Cao, L. Pajola, S. Dieck, R. Baumgartner, and S. Verwer, “Sok: Explainable machine learning for computer security applications,” in 2023 IEEE 8th European symposium on security and privacy (EuroS&P) . IEEE, 2023, pp. 221–240. [27] D. Guo, S. Lu, N. Duan, Y. Wang, M. Zhou, and J. Yin, “Unixcoder: Unified cross-modal pre-training for code representation,” in Proceed-ings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 2022, pp. 7212–7225. [28] X. Wang, R. Hu, C. Gao, X.-C. Wen, Y. Chen, and Q. Liao, “Reposvul: A repository-level high-quality vulnerability dataset,” in 
+
+Proceedings of the 2024 IEEE/ACM 46th International Conference on Software Engineering: Companion Proceedings , 2024, pp. 472–483. [29] X. Du, G. Zheng, K. Wang, Y. Zou, Y. Wang, W. Deng, J. Feng, M. Liu, B. Chen, X. Peng, T. Ma, and Y. Lou, “Vul-rag: Enhancing llm-based vulnerability detection via knowledge-level rag,” ACM Trans. Softw. Eng. Methodol. , Feb. 2026, just Accepted. [Online]. Available: https://doi.org/10.1145/3797277 [30] D. Cao and W. Jun, “Llm-cloudsec: Large language model em-powered automatic and deep vulnerability analysis for intelligent clouds,” in IEEE INFOCOM 2024 - IEEE Conference on Computer Communications Workshops (INFOCOM WKSHPS) , 2024, pp. 1–6. [31] Z. Li, S. Dutta, and M. Naik, “Iris: Llm-assisted static analysis for detecting security vulnerabilities,” in International Conference on Learning Representations , vol. 2025, 2025, pp. 35 735–35 758. [32] H. Li, Y. Hao, Y. Zhai, and Z. Qian, “Enhancing static analysis for practical bug detection: An llm-integrated approach,” Proc. ACM Program. Lang. , vol. 8, no. OOPSLA1, Apr. 2024. [Online]. Available: https://doi.org/10.1145/3649828 [33] P. J. Chapman, C. Rubio-Gonz´ alez, and A. V. Thakur, “Interleaving static analysis and llm prompting,” in Proceedings of the 13th ACM SIGPLAN International Workshop on the State Of the Art in Program Analysis , 2024, pp. 9–17. [34] A. Lekssays, H. Mouhcine, K. Tran, T. Yu, and I. Khalil, “{LLMxCPG }:{Context-Aware } vulnerability detection through code property {Graph-Guided } large language models,” in 34th USENIX Security Symposium (USENIX Security 25) , 2025, pp. 489– 507. [35] X.-C. Wen, X. Wang, Y. Chen, R. Hu, D. Lo, and C. Gao, “From func-tion to repository: Towards repository-level evaluation of software vulnerability detection,” IEEE Transactions on Software Engineering ,2026. Ethical Considerations 
+
+This work focuses on the automated detection of logi-cal vulnerabilities in software repositories. Our benchmark consists exclusively of previously disclosed vulnerabilities with public CVE identifiers. While automated vulnerability-detection tools pose inherent dual-use risks, our tool is intended to support defensive security analysis, targets context-dependent logical flaws, and does not generate weaponized exploits. This research does not involve human subjects or user data. 
+
+Open Science 
+
+In the spirit of open science, we provide the artifacts underlying our experiments at 
+
+• https://anonymous.4open.science/r/PromptPrioritiza tionAntaeus-00C3 The bundle includes the prioritization prompts, the per-repository ranked function lists they produce, and the prompts for the structured LLM analysis, letting reviewers inspect the inputs given to each model stage and the prior-itized function sets on which our results are computed. We are currently polishing the full implementation of A NTAEUS 
+
+and plan to release it as open source. 
+
+Appendix A. Per-Repository Prioritization Statistics 
+
+Table 9 gives the per-repository breakdown behind the aggregate figures of Table 1. For each repository it reports, separately for the CWE-284 and CWE-200 passes, the files retained after heuristic pruning, the in-scope functions in those files, and the functions saved by the agent after ranking. The shared Files column is the total source and header file count, identical across both passes since both operate on the same repository. 
+
+Appendix B. Per-CVE Token Count 
+
+This appendix gives the per-repository token breakdown behind the aggregate figures reported in Section 4.6. Ta-ble 10 reports the prompt ( In ) and generated ( Out ) tokens for A NTAEUS and the function-level baseline, under both ANTAEUS O4.7 and A NTAEUS G5.4 , summed over the CWE-284 and CWE-200 passes. Table 11 reports the correspond-ing usage for the Opus 4.7 agentic baseline, broken down by token category because it relies on prompt caching. 
+
+TABLE 9. P ER -CVE PRUNING STATS FOR CWE-284 AND CWE-200 
+
+PASSES . Files IS THE TOTAL SOURCE FILES , Kept THOSE RETAINED AFTER HEURISTIC PRUNING , In-scope THE FUNCTIONS THEY CONTAIN ,
+
+AND Analyzed THE FUNCTIONS KEPT BY THE AGENT AFTER RANKING .
+
+CWE-284 CWE-200 CVE Files Kept In-scope Analyzed Kept In-scope Analyzed CVE-2011-3177 2962 220 612 41 232 1180 139 CVE-2014-4668 1760 127 612 34 327 760 15 CVE-2014-9773 1830 156 1180 78 380 1180 15 CVE-2015-2141 407 33 295 26 103 910 107 CVE-2016-10030 2668 937 8195 661 1041 10045 120 CVE-2016-10130 5317 255 1884 42 530 2105 21 CVE-2016-3698 48 2 71 10 5 75 5CVE-2016-5104 50 5 52 12 8 48 6CVE-2016-6255 551 52 285 61 113 466 12 CVE-2017-5940 408 71 360 125 75 217 12 CVE-2017-5985 469 112 905 88 154 620 16 CVE-2017-6594 2473 335 3200 50 1131 7200 22 CVE-2018-19045 329 104 720 47 139 1225 128 CVE-2018-20145 728 80 399 43 118 450 174 CVE-2019-12209 58 5 25 8 7 28 8CVE-2019-12210 58 5 24 5 7 27 12 CVE-2019-12589 1416 135 470 65 146 420 42 CVE-2019-25016 62 8 28 20 19 38 11 CVE-2019-3816 542 56 420 73 180 545 34 CVE-2020-10701 9890 477 12882 250 692 5400 15 CVE-2020-14093 441 119 990 133 220 2054 1079 CVE-2020-14976 77 25 180 39 30 180 83 CVE-2020-15078 499 138 1100 38 247 1011 16 CVE-2020-29074 223 100 760 102 101 470 34 CVE-2020-35517 7915 1557 29128 124 3500 44032 267 CVE-2022-24976 2297 331 1450 106 440 1180 18 CVE-2022-25643 76 21 137 30 24 120 11 CVE-2023-27478 588 82 588 9 192 820 117 
+
+Total 44142 5548 66952 2320 10161 82806 2539 
+
+TABLE 10. P ER -CVE TOKEN COUNT FOR ANTAEUS , SUMMED OVER THE CWE-284 AND CWE-200 PASSES . A LL VALUES IN THOUSANDS OF TOKENS . In /Out ARE PROMPT AND GENERATED TOKENS ; Func. IS THE FUNCTION -LEVEL BASELINE .
+
+ANTAEUS O4.7 Func. Opus4.7 ANTAEUS G5.4 Func. GPT5.4 
+
+CVE In Out In Out In Out In Out CVE-2011-3177 2,077 21 166 17 1,972 45 126 36 CVE-2014-4668 1,045 14 60 5 1,034 18 55 6CVE-2014-9773 1,661 25 104 7 1,651 34 99 15 CVE-2015-2141 2,083 2 115 1 1,994 18 81 10 CVE-2016-10030 13,632 184 962 43 13,550 281 920 114 CVE-2016-10130 1,021 12 59 1 1,006 19 52 3CVE-2016-3698 208 1 13 0 204 3 11 2CVE-2016-5104 294 2 16 2 290 6 14 3CVE-2016-6255 1,255 12 93 2 1,247 25 89 9CVE-2017-5940 2,344 42 128 7 2,335 48 124 16 CVE-2017-5985 1,796 34 102 7 1,785 41 97 13 CVE-2017-6594 1,409 20 128 5 1,393 30 121 11 CVE-2018-19045 3,495 19 222 7 3,407 59 177 44 CVE-2018-20145 4,498 18 301 6 4,376 50 239 30 CVE-2019-12209 286 3 26 1 281 7 24 5CVE-2019-12210 326 3 26 1 318 7 22 5CVE-2019-12589 1,895 27 127 6 1,865 41 112 15 CVE-2019-25016 562 6 28 0 554 11 24 3CVE-2019-3816 1,902 21 99 11 1,879 38 88 14 CVE-2020-10701 4,159 13 235 1 4,156 22 234 7CVE-2020-14093 20,408 39 1,232 10 19,797 157 922 108 CVE-2020-14976 2,096 15 116 5 2,038 47 87 26 CVE-2020-15078 1,184 15 107 5 1,173 21 102 7CVE-2020-29074 3,060 42 273 26 3,036 56 260 28 CVE-2020-35517 6,843 40 552 9 6,657 95 458 65 CVE-2022-24976 2,141 38 149 12 2,128 49 143 21 CVE-2022-25643 741 8 33 3 733 12 29 5CVE-2023-27478 1,548 2 104 2 1,478 23 78 13 
+
+Total 83,969 679 5,582 202 82,337 1,263 4,786 636 TABLE 11. T OKEN USAGE PER CVE FOR OPUS 4.7 A GENTIC , SUMMED OVER THE CWE-200 AND CWE-284 PASSES . C OLUMNS MARKED WITH K ARE IN THOUSANDS OF TOKENS . T OTAL IS THE ROW -WISE SUM OF INPUT , CACHE -WRITE , CACHE -READ , AND OUTPUT TOKENS .
+
+CVE Input CacheWrite K CacheRead K Output K Total K
+
+CVE-2011-3177 200 391 11,833 35 12,259 CVE-2014-4668 181 404 11,363 18 11,785 CVE-2014-9773 228 798 20,961 30 21,790 CVE-2015-2141 121 274 4,979 25 5,277 CVE-2016-10030 194 375 11,838 19 12,232 CVE-2016-10130 208 351 11,064 37 11,452 CVE-2016-3698 53 167 769 5 941 CVE-2016-5104 52 126 693 8 826 CVE-2016-6255 148 316 8,096 15 8,427 CVE-2017-5940 148 335 9,842 27 10,204 CVE-2017-5985 155 269 6,839 17 7,125 CVE-2017-6594 222 439 14,773 43 15,255 CVE-2018-19045 159 236 6,481 27 6,744 CVE-2018-20145 162 295 7,626 28 7,950 CVE-2019-12209 51 97 557 12 666 CVE-2019-12210 53 99 626 6 730 CVE-2019-12589 242 346 14,957 37 15,339 CVE-2019-25016 62 130 1,007 19 1,156 CVE-2019-3816 150 352 9,722 16 10,091 CVE-2020-10701 278 422 18,380 42 18,845 CVE-2020-14093 236 391 15,290 25 15,706 CVE-2020-14976 71 222 2,272 17 2,512 CVE-2020-15078 194 329 11,306 31 11,666 CVE-2020-29074 187 261 8,268 32 8,562 CVE-2020-35517 247 320 14,722 47 15,090 CVE-2022-24976 245 540 19,277 37 19,855 CVE-2022-25643 75 197 1,885 10 2,092 CVE-2023-27478 124 332 6,321 21 6,674 
+
+Total 4,446 8,814 251,746 686 261,251

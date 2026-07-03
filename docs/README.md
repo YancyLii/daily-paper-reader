@@ -6,58 +6,67 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-02
-- 运行时间：2026-07-02 19:24:48 UTC
+- 最新运行日期：2026-07-03
+- 运行时间：2026-07-03 19:35:32 UTC
 - 运行状态：成功
-- 本次总论文数：12
+- 本次总论文数：15
 - 精读区：8
-- 速读区：4
+- 速读区：7
 
 ### 今日简报（AI）
-今日精读聚焦于为AI智能体戴上操作系统级的“紧箍咒”（ActPlane），并揭穿了LLM写C++代码比人类更安全的假象（The Illusion of Safety）。  
-最值得看的是：9分论文表明，Agent的行为约束必须从模型层下沉到OS层进行可编程强制，而且AI生成的代码在多层验证下仍会暴露人类不易犯的致命缺陷。  
-面向普通开发者的建议：在将AI Agent接入敏感环境前，请务必叠加系统层安全护栏，别只信模型的自律。
-- 详情：[/202607/02/README](/202607/02/README)
+今日精选15篇AI论文，重点解读了Agent行为治理与软件测试自动化的两项突破性成果，均获9.0高分。  
+最值得关注：用“行为护栏”约束自主AI决策，以及竞赛级测试工具证明AI已能高效生成并修复测试代码。  
+建议开发者优先了解AgentBound框架，它正将失控风险转化为可验证的安全边界。
+- 详情：[/202607/03/README](/202607/03/README)
 
 ### 精读区论文标签
-1. [ActPlane: Programmable OS-Level Policy Enforcement for Agent Harnesses](/202607/02/2606.25189v2-actplane-programmable-os-level-policy-enforcement-for-agent-harnesses)  
+1. [Behavioral Governance for Autonomous AI Agents: The AgentBound Framework](/202607/03/2606.30970v2-behavioral-governance-for-autonomous-ai-agents-the-agentbound-framework)  
    标签：评分：9.0/10、query:agsec
-   evidence：为代理 harness 提供 OS 级策略执行，弥合自然语言安全策略与具体系统行动之间的差距
-2. [The Illusion of Safety: Multi-Tier Verification of AI vs. Human C++ Code](/202607/02/2607.00107v1-the-illusion-of-safety-multi-tier-verification-of-ai-vs-human-c-code)  
+   evidence：通过可验证章程和合约的自主代理运行时行为治理
+2. [AutoRestTest at the SBFT 2026 Tool Competition](/202607/03/2607.01063v1-autoresttest-at-the-sbft-2026-tool-competition)  
+   标签：评分：9.0/10、query:libfuz
+   evidence：结合语义属性依赖图、多智能体强化学习和LLM探索API输入空间进行REST API测试
+3. [Cognitive Firewall: A Proactive, Zero-Trust, Multi-Gate Framework for LLM Safety](/202607/03/2607.01277v1-cognitive-firewall-a-proactive-zero-trust-multi-gate-framework-for-llm-safety)  
+   标签：评分：9.0/10、query:agsec
+   evidence：使用意图和上下文门的LLM主动运行时安全框架，防止有害输出
+4. [Knowledge Over Parameters: Evolving Smart Contract Vulnerability Detection](/202607/03/2607.01742v1-knowledge-over-parameters-evolving-smart-contract-vulnerability-detection)  
    标签：评分：9.0/10、query:vuldet
-   evidence：多层级验证检测AI生成C++代码中的漏洞
-3. [Managed Autonomy at Runtime: Gear-Based Safety and Governance for Single- and Multi-Agent Cyber-Physical Systems](/202607/02/2607.00334v1-managed-autonomy-at-runtime-gear-based-safety-and-governance-for-single--and-multi-agent-cyber-physical-systems)  
+   evidence：使用LLM和过程性知识演化进行自动化智能合约漏洞检测
+5. [Safety Testing LLM Agents at Scale: From Risk Discovery to Evidence-Grounded Verification](/202607/03/2607.01793v1-safety-testing-llm-agents-at-scale-from-risk-discovery-to-evidence-grounded-verification)  
    标签：评分：9.0/10、query:agsec
-   evidence：提出基于档位的智能体安全治理控制系统
-4. [Beyond the Prompt: Jailbreaking Function-Calling LLMs via Simulated Moderation Traces](/202607/02/2607.00481v1-beyond-the-prompt-jailbreaking-function-calling-llms-via-simulated-moderation-traces)  
+   evidence：LLM代理自动化安全测试框架
+6. [ElephantAgent: Contextual State Continuity in Agentic Systems](/202607/03/2607.01919v1-elephantagent-contextual-state-continuity-in-agentic-systems)  
    标签：评分：9.0/10、query:agsec
-   evidence：利用函数调用上下文中交织的结构漏洞进行令牌流攻击
-5. [HARC: Coupling Harmfulness and Refusal Directions for Robust Safety Alignment](/202607/02/2607.00572v1-harc-coupling-harmfulness-and-refusal-directions-for-robust-safety-alignment)  
+   evidence：提出一种强制上下文状态连续性的协议，以防御智能系统中的上下文状态投毒
+7. [Steerability via constraints: a substrate for scalable oversight of coding agents](/202607/03/2607.02389v1-steerability-via-constraints-a-substrate-for-scalable-oversight-of-coding-agents)  
    标签：评分：9.0/10、query:agsec
-   evidence：分析有害与拒绝表征以构建鲁棒安全对齐
-6. [Antaeus: Hunting Repository-Level Logic Vulnerabilities via Context-Grounded LLM Reasoning](/202607/02/2607.01138v1-antaeus-hunting-repository-level-logic-vulnerabilities-via-context-grounded-llm-reasoning)  
-   标签：评分：9.0/10、query:vuldet
-   evidence：基于LLM的逻辑漏洞检测
-7. [Adversarial Pragmatics for AI Safety Evaluation: A Benchmark for Instruction Conflict, Embedded Commands, and Policy Ambiguity](/202607/02/2607.01153v1-adversarial-pragmatics-for-ai-safety-evaluation-a-benchmark-for-instruction-conflict-embedded-commands-and-policy-ambiguity)  
-   标签：评分：9.0/10、query:agsec
-   evidence：用于评估指令冲突、嵌入命令和政策模糊性下模型行为的基准和协议，解决行为安全约束问题
-8. [Capability Gates Are Not Authorization: Confused-Deputy Failures in LLM Agent Frameworks](/202607/02/2606.28679v1-capability-gates-are-not-authorization-confused-deputy-failures-in-llm-agent-frameworks)  
+   evidence：基于约束的编码代理可扩展监督基底
+8. [OpenSafeIntent: Evaluating Intent-Calibrated Safe Completion Across Dual-Use Prompt Sets](/202607/03/2607.02047v1-opensafeintent-evaluating-intent-calibrated-safe-completion-across-dual-use-prompt-sets)  
    标签：评分：8.0/10、query:agsec
-   evidence：审计LLM智能体框架的授权失败并提出了按调用授权的ScopeGate
+   evidence：评估模型输出在意图切换时的安全校准
 
 ### 速读区论文标签
-1. [Breaking the Rounding Trap: Securing LLMs against Quantization-Conditioned Backdoors](/202607/02/2606.29239v1-breaking-the-rounding-trap-securing-llms-against-quantization-conditioned-backdoors)  
+1. [UA-ChatDev: Uncertainty-Aware Multi-Agent Collaboration for Reliable Software Development](/202607/03/2607.02186v1-ua-chatdev-uncertainty-aware-multi-agent-collaboration-for-reliable-software-development)  
    标签：评分：8.0/10、query:agsec
-   evidence：针对量化条件后门的主动预量化防御，一种大语言模型安全控制策略
-2. [Rise From The Ashes: LLM-based Static Analysis for Deep Learning Framework Bugs](/202607/02/2607.00555v1-rise-from-the-ashes-llm-based-static-analysis-for-deep-learning-framework-bugs)  
-   标签：评分：8.0/10、query:vuldet
-   evidence：基于LLM的静态分析检测DL框架缺陷
-3. [CoCoMUT: A Tool for Code-Context Mining and Automated Dataset Generation](/202607/02/2606.31971v1-cocomut-a-tool-for-code-context-mining-and-automated-dataset-generation)  
+   evidence：将不确定性估计融入多智能体LLM协作，防止幻觉传播，提升安全性与可靠性
+2. [Cloak and Detonate: Scanner Evasion and Dynamic Detection of Agent Skill Malware](/202607/03/2607.02357v1-cloak-and-detonate-scanner-evasion-and-dynamic-detection-of-agent-skill-malware)  
+   标签：评分：8.0/10、query:agsec
+   evidence：检测高风险恶意智能体技能
+3. [When Agents Do Not Stop: Uncovering Infinite Agentic Loops in LLM Agents](/202607/03/2607.01641v1-when-agents-do-not-stop-uncovering-infinite-agentic-loops-in-llm-agents)  
+   标签：评分：7.0/10、query:agsec
+   evidence：识别并刻画无限代理循环为迭代式LLM智能体的失效模式，直接影响安全控制与终止机制设计。
+4. [SkillFuzz: Fuzzing Skill Composition for Implicit Intents Discovery in Open Skill Marketplaces](/202607/03/2607.02345v1-skillfuzz-fuzzing-skill-composition-for-implicit-intents-discovery-in-open-skill-marketplaces)  
+   标签：评分：7.0/10、query:agsec
+   evidence：模糊测试技能组合以检测代理系统中的隐含意图
+5. [Making Failure Safe: A Constrained, Verifiable Agent Framework for Open-Web Data Collection](/202607/03/2607.00035v1-making-failure-safe-a-constrained-verifiable-agent-framework-for-open-web-data-collection)  
+   标签：评分：6.0/10、query:agsec
+   evidence：用于安全网页数据采集的受限可验证代理框架
+6. [Refploit: Facilitating Exploit Construction via Code-Agent Trajectory Repair](/202607/03/2607.01760v1-refploit-facilitating-exploit-construction-via-code-agent-trajectory-repair)  
    标签：评分：6.0/10、query:libfuz
-   evidence：代码上下文提取工具含调用图用于API依赖建模
-4. [Detecting Adversarial Evasion Attacks Against Autoencoder-Based Network Intrusion Detection Systems](/202607/02/2607.01194v1-detecting-adversarial-evasion-attacks-against-autoencoder-based-network-intrusion-detection-systems)  
-   标签：评分：6.0/10、query:vuldet
-   evidence：检测针对网络入侵检测系统的对抗逃逸攻击，提升检测模型对抗鲁棒性，方法可迁移至漏洞检测领域。
+   evidence：基于LLM的轨迹修复生成库漏洞利用的API序列
+7. [Safety Targeted Embedding Exploit via Refinement](/202607/03/2607.01859v1-safety-targeted-embedding-exploit-via-refinement)  
+   标签：评分：6.0/10、query:agsec
+   evidence：STEER攻击将有害提示翻译为低资源语言以绕过安全训练，揭示内容安全约束的缺口。
 
 
 <div class="dpr-home-promo-card">

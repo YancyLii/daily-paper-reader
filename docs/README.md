@@ -6,67 +6,46 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-03
-- 运行时间：2026-07-03 19:35:32 UTC
+- 最新运行日期：2026-07-04
+- 运行时间：2026-07-04 19:59:13 UTC
 - 运行状态：成功
-- 本次总论文数：15
-- 精读区：8
-- 速读区：7
+- 本次总论文数：8
+- 精读区：5
+- 速读区：3
 
 ### 今日简报（AI）
-今日精选15篇AI论文，重点解读了Agent行为治理与软件测试自动化的两项突破性成果，均获9.0高分。  
-最值得关注：用“行为护栏”约束自主AI决策，以及竞赛级测试工具证明AI已能高效生成并修复测试代码。  
-建议开发者优先了解AgentBound框架，它正将失控风险转化为可验证的安全边界。
-- 详情：[/202607/03/README](/202607/03/README)
+今日聚焦AI安全，精读两篇高分论文，探讨持久状态AI的分布式攻击与上下文护栏分层基准。
+最值得关注的是“分布式攻击”对长期运行AI系统的致命影响，以及SafePyramid提出的护栏评估新范式。
+建议开发者用最新的攻击框架（如劫持检索推理的KidnapRAG）测试系统稳健性，并参照SafePyramid分层理念构建防护机制。
+- 详情：[/202607/04/README](/202607/04/README)
 
 ### 精读区论文标签
-1. [Behavioral Governance for Autonomous AI Agents: The AgentBound Framework](/202607/03/2606.30970v2-behavioral-governance-for-autonomous-ai-agents-the-agentbound-framework)  
+1. [Distributed Attacks in Persistent-State AI Control](/202607/04/2607.02514v1-distributed-attacks-in-persistent-state-ai-control)  
    标签：评分：9.0/10、query:agsec
-   evidence：通过可验证章程和合约的自主代理运行时行为治理
-2. [AutoRestTest at the SBFT 2026 Tool Competition](/202607/03/2607.01063v1-autoresttest-at-the-sbft-2026-tool-competition)  
-   标签：评分：9.0/10、query:libfuz
-   evidence：结合语义属性依赖图、多智能体强化学习和LLM探索API输入空间进行REST API测试
-3. [Cognitive Firewall: A Proactive, Zero-Trust, Multi-Gate Framework for LLM Safety](/202607/03/2607.01277v1-cognitive-firewall-a-proactive-zero-trust-multi-gate-framework-for-llm-safety)  
-   标签：评分：9.0/10、query:agsec
-   evidence：使用意图和上下文门的LLM主动运行时安全框架，防止有害输出
-4. [Knowledge Over Parameters: Evolving Smart Contract Vulnerability Detection](/202607/03/2607.01742v1-knowledge-over-parameters-evolving-smart-contract-vulnerability-detection)  
-   标签：评分：9.0/10、query:vuldet
-   evidence：使用LLM和过程性知识演化进行自动化智能合约漏洞检测
-5. [Safety Testing LLM Agents at Scale: From Risk Discovery to Evidence-Grounded Verification](/202607/03/2607.01793v1-safety-testing-llm-agents-at-scale-from-risk-discovery-to-evidence-grounded-verification)  
-   标签：评分：9.0/10、query:agsec
-   evidence：LLM代理自动化安全测试框架
-6. [ElephantAgent: Contextual State Continuity in Agentic Systems](/202607/03/2607.01919v1-elephantagent-contextual-state-continuity-in-agentic-systems)  
-   标签：评分：9.0/10、query:agsec
-   evidence：提出一种强制上下文状态连续性的协议，以防御智能系统中的上下文状态投毒
-7. [Steerability via constraints: a substrate for scalable oversight of coding agents](/202607/03/2607.02389v1-steerability-via-constraints-a-substrate-for-scalable-oversight-of-coding-agents)  
-   标签：评分：9.0/10、query:agsec
-   evidence：基于约束的编码代理可扩展监督基底
-8. [OpenSafeIntent: Evaluating Intent-Calibrated Safe Completion Across Dual-Use Prompt Sets](/202607/03/2607.02047v1-opensafeintent-evaluating-intent-calibrated-safe-completion-across-dual-use-prompt-sets)  
+   evidence：提出Iterative VibeCoding设置，研究AI编码代理在持久状态下分布式攻击的安全控制。
+2. [SafePyramid: A Hierarchical Benchmark for In-context Policy Guardrailing](/202607/04/2606.29887v1-safepyramid-a-hierarchical-benchmark-for-in-context-policy-guardrailing)  
    标签：评分：8.0/10、query:agsec
-   evidence：评估模型输出在意图切换时的安全校准
+   evidence：用于上下文策略护栏的分层基准，评估安全规则理解
+3. [ATM: CID-Brokered Pre-Write Admission for Multi-Agent Code Co-Synthesis](/202607/04/2607.00041v1-atm-cid-brokered-pre-write-admission-for-multi-agent-code-co-synthesis)  
+   标签：评分：8.0/10、query:agsec
+   evidence：ATM为多代理LLM提供安全并发代码变更的治理底座
+4. [Knowledge-Enhanced Agentic Vulnerability Repair](/202607/04/2607.00820v1-knowledge-enhanced-agentic-vulnerability-repair)  
+   标签：评分：8.0/10、query:vuldet
+   evidence：利用LLM和历史修复知识自动修复漏洞，涉及代码分析与漏洞检测。
+5. [Beyond Gradient-Based Attacks: Adversarial Robustness and Explainability Stability in Cybersecurity Classifiers](/202607/04/2607.01679v1-beyond-gradient-based-attacks-adversarial-robustness-and-explainability-stability-in-cybersecurity-classifiers)  
+   标签：评分：8.0/10、query:vuldet
+   evidence：评估网络安全分类器的对抗鲁棒性和可解释性稳定性
 
 ### 速读区论文标签
-1. [UA-ChatDev: Uncertainty-Aware Multi-Agent Collaboration for Reliable Software Development](/202607/03/2607.02186v1-ua-chatdev-uncertainty-aware-multi-agent-collaboration-for-reliable-software-development)  
-   标签：评分：8.0/10、query:agsec
-   evidence：将不确定性估计融入多智能体LLM协作，防止幻觉传播，提升安全性与可靠性
-2. [Cloak and Detonate: Scanner Evasion and Dynamic Detection of Agent Skill Malware](/202607/03/2607.02357v1-cloak-and-detonate-scanner-evasion-and-dynamic-detection-of-agent-skill-malware)  
-   标签：评分：8.0/10、query:agsec
-   evidence：检测高风险恶意智能体技能
-3. [When Agents Do Not Stop: Uncovering Infinite Agentic Loops in LLM Agents](/202607/03/2607.01641v1-when-agents-do-not-stop-uncovering-infinite-agentic-loops-in-llm-agents)  
+1. [SurrogateShield: Beyond Redaction for High-Utility, Privacy-Preserving LLM Interactions](/202607/04/2606.29567v1-surrogateshield-beyond-redaction-for-high-utility-privacy-preserving-llm-interactions)  
    标签：评分：7.0/10、query:agsec
-   evidence：识别并刻画无限代理循环为迭代式LLM智能体的失效模式，直接影响安全控制与终止机制设计。
-4. [SkillFuzz: Fuzzing Skill Composition for Implicit Intents Discovery in Open Skill Marketplaces](/202607/03/2607.02345v1-skillfuzz-fuzzing-skill-composition-for-implicit-intents-discovery-in-open-skill-marketplaces)  
+   evidence：客户端提示预处理替代PII以保护隐私
+2. [KidnapRAG: A Black-Box Attack for Hijacking Reasoning in Agentic Retrieval-Augmented Generation Systems](/202607/04/2607.00422v1-kidnaprag-a-black-box-attack-for-hijacking-reasoning-in-agentic-retrieval-augmented-generation-systems)  
    标签：评分：7.0/10、query:agsec
-   evidence：模糊测试技能组合以检测代理系统中的隐含意图
-5. [Making Failure Safe: A Constrained, Verifiable Agent Framework for Open-Web Data Collection](/202607/03/2607.00035v1-making-failure-safe-a-constrained-verifiable-agent-framework-for-open-web-data-collection)  
-   标签：评分：6.0/10、query:agsec
-   evidence：用于安全网页数据采集的受限可验证代理框架
-6. [Refploit: Facilitating Exploit Construction via Code-Agent Trajectory Repair](/202607/03/2607.01760v1-refploit-facilitating-exploit-construction-via-code-agent-trajectory-repair)  
-   标签：评分：6.0/10、query:libfuz
-   evidence：基于LLM的轨迹修复生成库漏洞利用的API序列
-7. [Safety Targeted Embedding Exploit via Refinement](/202607/03/2607.01859v1-safety-targeted-embedding-exploit-via-refinement)  
-   标签：评分：6.0/10、query:agsec
-   evidence：STEER攻击将有害提示翻译为低资源语言以绕过安全训练，揭示内容安全约束的缺口。
+   evidence：黑盒投毒攻击劫持推理，篡改用户意图
+3. [Mitigating Package Hallucinations in Large Language Models via Model Editing](/202607/04/2607.02052v1-mitigating-package-hallucinations-in-large-language-models-via-model-editing)  
+   标签：评分：7.0/10、query:agsec
+   evidence：提出BOUND模型编辑框架，缓解包幻觉，提升输出安全性。
 
 
 <div class="dpr-home-promo-card">

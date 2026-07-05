@@ -1,6 +1,9 @@
 * <a class="dpr-sidebar-root-link" href="#/">首页</a>
 * <a class="dpr-sidebar-root-link dpr-sidebar-noactive-link" href="javascript:void(0)" data-dpr-hash="#/tutorial/README">使用教程</a>
 * Daily Papers
+  * 2026-07-05 <!--dpr-date:20260705-->
+    * 精读区
+      * <a class="dpr-sidebar-item-link dpr-sidebar-item-structured" href="#/202607/05/2607.02376v1-hardware-enforced-semantic-coordination-for-safety-critical-real-time-autonomous-systems" data-sidebar-item="{&quot;title&quot;: &quot;Hardware-Enforced Semantic Coordination for Safety-Critical Real-Time Autonomous Systems&quot;, &quot;link&quot;: &quot;https://arxiv.org/abs/2607.02376v1-hardware-enforced-semantic-coordination-for-safety-critical-real-time-autonomous-systems&quot;, &quot;score&quot;: &quot;9.0&quot;, &quot;tags&quot;: [{&quot;kind&quot;: &quot;query&quot;, &quot;label&quot;: &quot;agsec&quot;}], &quot;evidence&quot;: &quot;硬件强制语义协调为集成LLM的自治系统提供安全&quot;}">Hardware-Enforced Semantic Coordination for Safety-Critical Real-Time Autonomous Systems</a>
   * 2026-07-04 <!--dpr-date:20260704-->
     * 精读区
       * <a class="dpr-sidebar-item-link dpr-sidebar-item-structured" href="#/202607/04/2607.02514v1-distributed-attacks-in-persistent-state-ai-control" data-sidebar-item="{&quot;title&quot;: &quot;Distributed Attacks in Persistent-State AI Control&quot;, &quot;link&quot;: &quot;https://arxiv.org/abs/2607.02514v1-distributed-attacks-in-persistent-state-ai-control&quot;, &quot;score&quot;: &quot;9.0&quot;, &quot;tags&quot;: [{&quot;kind&quot;: &quot;query&quot;, &quot;label&quot;: &quot;agsec&quot;}], &quot;evidence&quot;: &quot;提出Iterative VibeCoding设置，研究AI编码代理在持久状态下分布式攻击的安全控制。&quot;}">Distributed Attacks in Persistent-State AI Control</a>

@@ -1,0 +1,518 @@
+Title: Teaching Code LLMs to Reason with Intermediate Formal Specifications
+
+URL Source: https://arxiv.org/pdf/2607.04232v1
+
+Published Time: Tue, 07 Jul 2026 02:07:35 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# Teaching Code LLMs to Reason with Intermediate Formal Specifications 
+
+Minh Le-Anh 
+
+FPT Software AI Center Hanoi Univ. of Science and Tech. 
+
+Hanoi, Vietnam minhla4@fpt.com 
+
+Cuong Chi Le 
+
+University of Texas at Dallas 
+
+Texas, USA cuong.le@utdallas.edu 
+
+Tien N. Nguyen 
+
+University of Texas at Dallas 
+
+Texas, USA tien.n.nguyen@utdallas.edu 
+
+Abstract —Unlike natural-language specifications, executable formal specifications provide machine-checkable constraints for verifying, debugging, and repairing code. However, writing such specifications is labor-intensive, and existing LLM-based meth-ods mainly infer whole-program pre/postconditions, missing the intermediate semantic commitments that programmers rely on when reasoning about an algorithm. Our study further shows that prompting current CodeLLMs often produces executable assertions that are syntactically invalid, trivial, or too weak to reject behavior-changing faults. In this paper, we study executable checkpoint specification generation, where assertions are inserted at meaningful internal program points to describe expected intermediate states. We introduce S PEC CODER , a verification-guided CodeLLM training framework that learns from validated reference programs, behavior-changing mutants, and multi-turn specification-refinement traces. SPEC CODER selects specifica-tions that hold on correct executions while rejecting faulty executions, turning specifications from passive annotations into executable evidence. To evaluate this setting, we introduce Hu-manExec, a benchmark built from recent Codeforces competitive-programming problems with test suites, reference solutions, and human buggy submissions, supporting three tasks: specifica-tion generation, program correctness checking, and program repair. Experiments on HumanExec show that SPEC CODER 
+
+substantially improves checkpoint-specification quality over base CodeLLMs. Across Qwen2.5-Coder models, SPEC CODER im-proves inline-specification correctness by up to 55.8%, complete-ness by up to 358.1%, and executable assertion validity by up to 26.6%. These gains further translate to downstream correct-ness reasoning and repair, showing that executable checkpoints provide fine-grained evidence for reliable verification. 
+
+I. I NTRODUCTION 
+
+Formal specifications are symbolic constraints that describe expected program behavior and can be checked against execu-tions [1], [2]. When a specification is written as an assertion, it becomes directly executable: the assertion can be evaluated on concrete program traces and used as feedback for verification, testing, debugging, and repair. Instead of only asking whether a program produces the correct final output, executable specifi-cations can expose whether the program satisfies the properties needed to reach that output correctly. Recent advances in Large Language Models (LLMs) have transformed software development. However, the hallucination and semantic unreliability of LLM-generated code have shifted the focus of software engineering research from merely gen-erating code to a more fundamental question: how can we verify that generated code is correct and aligned with user intent, and how can we help repair it when it is not? Program specifications provide an important vehicle for this goal. They make the intended behavior explicit and can serve as oracles for checking, explaining, and correcting generated implemen-tations. Unfortunately, manually writing high-quality formal specifications for LLM-generated code is labor-intensive and requires substantial programming and verification expertise. This creates a clear need for automated techniques that can generate executable formal specifications. Recent research has shown that LLMs can generate program specifications for a given implementation, including postcon-ditions and natural-language correctness conditions [3]. For example, NL2Postcond [3] and SpecMind [4] infer post-conditions from source code. HoarePrompt [5] uses natural-language state conditions for correctness reasoning, and SpecRover [6] extracts code intent to support repair. They demonstrate the value of specification-like reasoning, but their intermediate signals are not directly executable assertions. First, most existing approaches derive specifications at a coarse granularity. Approaches such as NL2Postcond and SpecRover primarily focus on preconditions or postconditions for an entire method or program. End-to-end specifications are useful because they summarize boundary behavior: what must hold before execution and what should hold after the program terminates. However, they do not expose whether the main algorithm is correct at each internal step that could ensure the final correctness. In practice, developers rarely reason about non-trivial programs only through final outputs. Instead, they decompose a program into meaningful computation steps and check local semantic commitments: after preprocessing, an array should have a certain structure; after a loop iteration, an invariant should hold; etc. Whole-program postconditions often miss these internal obligations, making them insufficient for fine-grained verification, diagnosis, and repair. Second, some LLM-based approaches can produce interme-diate reasoning conditions, but these conditions are often ex-pressed in natural language. For example, HoarePrompt-style reasoning can describe reachable program states at intermedi-ate points, helping an LLM reason about correctness. However, natural-language specifications are difficult to execute directly. They may be useful for explanation or human inspection, but 
+
+> arXiv:2607.04232v1 [cs.SE] 5 Jul 2026
+
+they provide limited support for fully automated workflows that require machine-checkable feedback, such as trace-based consistency checking, test-time assertion validation, fault lo-calization, and automated program repair. These limitations motivate a richer view of specification for LLM-generated code. Unlike prior work that treats specifica-tions mainly as final summaries or textual reasoning aids, our goal is to teach models to produce the executable intermediate specifications that are validated by execution and selected for their ability to reject faulty behaviors .
+
+{Pre } S0 {Step 1} S1 · · · { Step n} Sn {Post }.
+
+In this paper, we focus on assertion-style executable formal specifications: Boolean predicates inserted into source code and evaluated over concrete runtime states. Such specifications still describe the boundary behavior of the code, but they are executable constraints. The intermediate formal check-point specifications describe the semantic states reached by important algorithmic steps. Given a program, these check-point specifications are executable assertions placed inside the source code, so they can verify not only the final answer but also the path by which the program reaches it. Toward this goal, our preliminary study shows that LLMs do not produce high-quality specifications in the intermediate checkpoints for a given program. A final postcondition mainly requires understanding the desired output behavior of the whole program, whereas a checkpoint specification requires understanding the internal algorithm, identifying meaningful program points, and expressing properties that should hold at those points. Thus, checkpoint specification generation demands a deeper form of step-by-step program reasoning. The gap exposed by our study suggests that current code LLMs may produce plausible final conditions while still lacking robust understanding of intermediate program execu-tion. Moreover, they often produce trivial assertions, or weak conditions that are valid but provide little help for verification. We introduce S PEC CODER , a specification-aware training framework that teaches code LLMs to generate executable checkpoint specifications for a given program. S PEC CODER 
+
+constructs training data from correct programs, synthesized mutants, and specification-refinement traces, then trains mod-els to produce interleaved code-and-specification outputs. The resulting specifications are executable assertions that can be evaluated on program traces for correctness. The trained/fine-tuned model supports the annotation setting (specification generation): given a program, it inserts executable checkpoint specifications. This paper makes the following contributions:  
+
+> •
+
+A verification-guided training framework that uses reference programs, validated mutants, and specification-refinement traces to produce specification-aware supervision for LLMs.  
+
+> •
+
+HumanExec, an execution-based benchmark for assessing specification generation on tasks with human-written buggy code, measuring both correctness and completeness.  
+
+> •
+
+We empirically study the usefulness of specification-aware training in three downstream applications: specification gen-                                                                                                     
+
+> 1def merge_intervals(intervals):
+> 2#BUG: intervals should be sorted by start point,
+> 3#but this implementation sorts by end point.
+> 4#Example input: [[10,20], [1,100]]
+> 5#Sorting by end keeps [10,20] before [1,100], so the start points are not sorted.
+> 6intervals.sort(key=lambda p: p[1])
+> 78#Natural-language spec at the checkpoint:
+> 9#"The intervals should be sorted before merging."
+> 10 #This is readable, but cannot be checked automatically.
+> 11 12 #Executable checkpoint specification:
+> 13 assert all(intervals[i][0] <= intervals[i+1][0]
+> 14 for iin range(len(intervals) -1))
+> 15 16 merged =[]
+> 17 for start, end in intervals:
+> 18 if not merged or merged[-1][1] <start:
+> 19 merged.append([start, end])
+> 20 else:
+> 21 merged[-1][1] =max(merged[-1][1], end)
+> 22 23 return merged
+> Fig. 1. Natural-language versus Executable Checkpoint Specification
+
+eration , consistency checking between program intent and implementation, and program repair .II. M OTIVATION 
+
+A. Limitations of Natural-Language Specifications for Auto-mated Verification 
+
+Natural-language specifications are widely used in recent LLM-based verification and program-repair methods because they are easy to generate, read, and communicate to develop-ers [5]. For example, an LLM can describe an intermediate state with a sentence such as “the list should be sorted before merging”. Such descriptions are useful for human inspection and can guide an LLM’s reasoning about code. However, the key limitation is that natural-language specifi-cations are not executable. Unlike formal assertion-style spec-ifications, they do not define precise Boolean conditions over concrete program states. Therefore, they cannot be directly checked against execution traces. Fig. 1 illustrates this with a simplified interval-merging pro-gram. The natural-language checkpoint states that the intervals should be sorted before merging. This description is readable, but it cannot be evaluated automatically. If the implementation accidentally sorts intervals by their end point instead of their start point, an automated system cannot directly detect the violation. In contrast, the executable assertion at line 13 directly checks the required intermediate state on the concrete runtime value of intervals .Natural-language specifications can also be vague or in-complete. For example, an LLM may state that “the current interval has been handled correctly” or “the merged list is updated properly.” These statements sound plausible, but they do not specify what must hold over program variables, such as whether the intervals are ordered, or whether the last interval contains the maximum end point seen so far. This limitation weakens downstream automation. In pro-gram verification, a natural-language specification cannot be evaluated during execution. In consistency checking, it cannot provide an objective signal that an implementation violates the user intent. In program repair, it provides only weak feedback: the system may know that a final test failed, but not which intermediate semantic commitment was broken. In contrast, an executable checkpoint can expose the internal state where the computation first deviates from the intended behavior. This motivates executable checkpoint specifications: asser-tions placed at meaningful program points that can be vali-dated on executions and used as reliable verification signals. 
+
+B. Limitations of Code LLMs for Generating Reliable Formal Specifications 
+
+Executable checkpoint specifications address the non-verifiability of natural-language descriptions, but generating them is substantially harder than generating free-form text. A model must identify meaningful program points, infer the intended semantics of the intermediate state, determine which variables are in scope, and express the property as a syntactically valid Boolean predicate. A generated assertion that refers to an unavailable variable, fails on the correct program, or states a tautology such as assert True cannot serve as a reliable verification signal. We thus examine whether base Code LLMs can generate reliable inline formal specifications through prompting alone. For each model, we prompt it to insert checkpoint assertions into correct programs and evaluate the generated assertions from three execution-based perspectives. Syntax measures whether the assertions are executable. Correctness measures whether they hold on correct executions. In our mutant-based evaluation, Completeness measures, operationally, whether they reject behavior-changing mutants that reach the same checkpoints and therefore provide useful verification signals. For example, for the program in Fig. 1, a prompted model may generate a syntactically valid but weak assertion such as    
+
+> assert len(intervals) >= 0
+
+, which holds on both correct and faulty executions. It may also generate an overly strong assertion such as checking that intervals are already non-overlapping before the merge loop, which can fail on correct inputs. These illustrate why executable syntax alone is not suf-ficient: a useful checkpoint must be both valid for the intended computation and discriminative against faulty behavior. Table I shows that prompting alone is insufficient for re-liable formal checkpoint specification generation. Although the models often produce syntactically executable assertions, their semantic quality remains limited. For example, Qwen2.5-Coder-32B achieves 0.89 syntax validity, but only 0.63 cor-rectness and 0.26 completeness. This indicates that many generated assertions either fail on correct executions or hold on correct executions, yet are too weak to reject buggy variants. These results reveal a key challenge: executable assertions are not useful merely because they are well formed. They must also capture semantic properties that are valid for the intended computation and discriminative against faulty behavior. LLMs often miss this balance, producing assertions that are invalid, overly specific, tautological, or unrelated to the algorithmic                
+
+> TABLE I FORMAL SPECIFICATION QUALITY OF BASE MODELS BEFORE FINE -TUNING .
+> Model Syntax ↑Correctness ↑Completeness ↑
+> Qwen2.5-Coder-7B 0.8272 0.2772 0.1707 Qwen2.5-Coder-14B 0.7900 0.5226 0.1989 Qwen2.5-Coder-32B 0.8989 0.6313 0.2604
+
+state. This motivates a verification-guided training approach, where candidate assertions are refined using execution feed-back and chosen for both correctness and discriminative power. 
+
+C. Key Idea 
+
+These observations suggest that checkpoint specification generation should not be treated as a purely textual generation problem. A useful checkpoint must be validated on correct executions and challenged against faulty executions. This motivates our key idea to turn specification generation into verification-guided learning. Instead of treating an assertion as useful because it appears plausible to an LLM, we evaluate candidate assertions through execution. A checkpoint spec-ification is useful only when it satisfies two properties: it should hold on correct executions, and it should reject faulty executions that reach the same checkpoint. Given a programming problem x and an implementation 
+
+y, checkpoint specification generation produces an annotated program ˜y, where assertions are inserted at internal program points. Each assertion s is a Boolean predicate over variables in scope at its insertion point. We evaluate these assertions on two execution populations: correct executions , where the assertions should hold, and mutant executions , where strong assertions should expose behavior-changing faults. This con-verts specification generation from a purely generative task into a feedback-driven process in which the quality of a specification can be checked by running the program. III. S PEC CODER : A V ERIFICATION -B ASED MODEL 
+
+A. Data Construction 
+
+We present S PEC CODER , a training framework for adapting CodeLLMs to generate executable checkpoint specifications. Given a programming problem and a program, S PEC CODER 
+
+constructs supervision from assertions that are validated by execution rather than accepted solely from LLM output. The pipeline consists of four stages. First, we select reliable reference programs from a LeetCode-style programming sys-tem by keeping only submissions that pass their available test suites. These executions provide the correct runtime states on which checkpoint assertions should hold. Second, we construct behavior-changing mutants from each reference program and retain only non-trivial mutants that pass at least one test and fail at least one test. These mutants provide controlled faulty executions, excluding equivalent variants and programs that are too broken to yield useful intermediate signals. Third, a teacher model generates checkpoint specifications through a multi-turn Explore–Submit process. At each turn, Mutant Generation                                                                                 
+
+> Multi-turn Specification Refinement
+> Training data Problem Selection
+> Given <Problem Statement> and
+> <Reference Program> , create
+> <N> one-line mutants. Preserve
+> syntax; change behavior.
+> Given <Problem Statement> and
+> <Reference Program> ,
+> insert executable checkpoint
+> assertions into the program.
+> Explore candidate assertion and
+> then Submit (using <Feedback> )
+> Execution Verifier
+> def func (x,y,z):
+> x=A( x,y)
+> if cond( y,z):
+> y=B( y,z)
+> else :
+> y=C( x,y)
+> x,z=D( x,z)
+> return x,y,z
+> Mutant 1: x = A'(x, y)
+> Mutant 2: y = B'(y, z)
+> Mutant 3: y = C'(x, y)
+> Correctness
+> ( > α)
+> def func (x,y,z):
+> x=A( x,y)
+> #assert Spec_1
+> if cond( y,z):
+> y=B( y,z)
+> #assert Spec_2
+> else :
+> y=C( x,y)
+> #assert Spec_3
+> x,z=D( x,z)
+> #assert Spec_4
+> return x,y,z
+> Specification Generation task
+> Code Generation task
+> User:
+> Generate specifications for this program:
+> <Problem Statement>
+> <Reference Program> + (<Mutant>)
+> Response:
+> <Annotated Program> =
+> <Reference Program> +
+> (<Mutant>) + <Specifications>
+> User:
+> Generate code for this problem:
+> <Problem Statement>
+> Response:
+> <Annotated Program> =
+> <Reference Program> + <Specifications>
+> def func (x,y,z):
+> x=A( x,y)
+> if cond( y,z):
+> y=B'( y,z)
+> else :
+> y=C( x,y)
+> x,z=D( x,z)
+> return x,y,z
+> Mutant List
+> Execute
+> on Tests
+> Keep mutants
+> with ≥1 pass
+> and ≥1 fail
+> Reference Profram
+> Feedback ( Correctness ,Completeness )
+> Pass
+> Fail
+> Explore/Submit
+> Completeness
+> ( > β )
+> Problem Statement
+> Test Cases
+
+1 2
+
+3
+
+4Fig. 2. Pipeline for mutant-guided checkpoint specification data construction. 
+
+candidate assertions are instrumented and executed on the reference program and retained mutants. The verifier reports syntax errors, unsafe assertions, unreachable checkpoints, as-sertion failures, and mutant-rejection evidence. A submitted annotated program is accepted only when its assertions satisfy the required correctness and completeness thresholds. Finally, the accepted annotated programs are converted into supervised fine-tuning examples for two tasks: inserting checkpoint spec-ifications into an existing program and generating a complete specification-bearing solution from the problem statement. This ensures that the student model learns from checkpoint specifications that are reachable, executable, valid on reference executions, and challenged by behavior-changing mutants. Fig. 2 illustrates the data construction pipeline, and Algo-rithm 1 gives its procedural form. Starting from problems, submissions, and test suites, we select validated reference programs, generate behavior-changing mutants as controlled faulty executions, and use multi-turn specification refinement to synthesize executable checkpoint assertions. Candidate specifications are executed on both reference programs and retained mutants, and only annotated programs satisfying the correctness and completeness thresholds are kept for training. 
+
+1) Problem Selection and Reference Validation: Given a programming problem xi, we collect a human-written submis-sion yi and its test suite Ti. To ensure that the constructed spec-ifications are grounded in executions, we keep a sample only when two conditions are satisfied. First, the test suite must con-tain more than 30 tests, so that execution feedback covers more than a small number of examples. Second, the submission must pass all available tests: ∀t ∈ Ti, Exec( yi, t ) = Pass .
+
+This step gives us a trusted reference implementation. The executions of yi define the correct runtime states on which checkpoint specifications should hold. The same reference program is also used as the base program for constructing behavior-changing mutants. All train/validation/test splits are performed at the problem level before mutant generation and specification refinement. Thus, mutants and annotated programs derived from a problem cannot appear in training. 
+
+2) Mutant Generation: After validating the reference pro-gram, we construct mutants to provide negative executions. 
+
+Algorithm 1 Mutant-guided checkpoint specification data construction 
+
+Require: Problems P, submissions, test suites, teacher model 
+
+M , thresholds α, β , maximum turns K
+
+Ensure: Training data Dspec , Dcode 
+
+1: Dspec , Dcode ← ∅ 
+
+2: for all problem xi ∈ P do 
+
+3: collect candidate program yi and test suite Ti
+
+4: if |Ti| ≤ 30 or yi does not pass all tests then 
+
+5: continue 
+
+6: generate one-line mutants from yi
+
+7: keep mutants with ≥ 1 pass and ≥ 1 fail 
+
+8: deduplicate retained mutants to obtain Mi
+
+9: F ← ∅ , ˜yi ← ∅ 
+
+10: for k = 1 , . . . , K do 
+
+11: a ← M (xi, y i, F ) ▷ EXPLORE or S UBMIT 12: extract annotated program ˆyi from a
+
+13: execute ˆyi on Ti and Mi
+
+14: compute Corr ij and Comp ij for all assertions 
+
+15: if a = SUBMIT and A CCEPT (Si, α, β ) then 
+
+16: ˜yi ← Filter(ˆ yi)
+
+17: break 
+
+18: update feedback F from execution results 
+
+19: if ˜yi = ∅ then 
+
+20: continue 
+
+21: add (xi, y i) → ˜yi to Dspec 
+
+22: add annotated mutant examples (xi, m ) → ˜m to Dspec 
+
+23: add xi → ˜yi to Dcode 
+
+24: return Dspec , Dcode 
+
+ACCEPT (Si, α, β ) holds if every generated assertion is reached on the reference code and satisfies Corr ij ≥ α, every assertion with an evaluable mutant set satisfies Comp ij ≥ β, and at least one assertion has a non-empty eligible mutant set. For each executable statement in yi, we prompt an LLM to generate plausible one-line buggy replacements. The prompt asks for natural coding mistakes, such as using an incorrect condition, updating the wrong variable, calling an incorrect helper function, or omitting a necessary update. Each mutant must preserve syntax while changing program behavior. We run every generated mutant on the same test suite Ti. We keep only non-trivial mutants that pass at least one test and fail at least one test: 0 < #{t ∈ Ti | Exec( m, t ) = Pass } < |Ti|.
+
+A mutant passing all tests is likely equivalent to the reference program under the available tests, while a mutant that fails all tests is often too broken to provide useful intermediate signals. We also deduplicate mutants with the same pass/fail pattern over the test suite. The remaining mutants form the retained mutant pool Mi. They serve as controlled faulty executions: a useful checkpoint specification should hold on the reference program but reject at least some faulty executions. 
+
+3) Multi-turn Specification Refinement: Inspired by the multi-turn refinement strategy of SpecMind [4], we generate executable checkpoint specifications through a verification-guided Explore–Submit process. For each task i, the teacher model is given the problem statement xi, a validated reference implementation yi, the available functional tests Ti, and a pool of retained behavior-changing mutants Mi. The goal is to insert inline checkpoint specifications into yi while leaving the executable implementation unchanged. At each turn, the teacher either explores candidate check-points or submits an annotated program for acceptance. Re-gardless of the turn type, the verifier executes the candidate an-notations on both the reference program and retained mutants, producing feedback on reachability, correctness, and mutant rejection. The difference is that an EXPLORE turn uses the feedback only to guide the next revision, while a SUBMIT turn additionally triggers the acceptance test against the predefined quality thresholds. The implementation code is required to remain byte-equivalent after removing assertion comments; turns that modify executable code or contain unsafe assertion expressions are rejected and regenerated. We first extract all assertion comments from the annotated program and instrument them as executable runtime checks. Each assertion is evaluated at its original program location by wrapping its Boolean expression in a trace function. This records both whether a checkpoint is reached and whether the assertion holds every time it is reached. Assertions that contain syntactic errors, refer to undefined state at runtime, or use unsafe operations such as mutation, I/O, randomness, or dynamic evaluation are treated as invalid feedback. 
+
+a) Correctness: Correctness measures whether a gener-ated checkpoint specification is valid on the reference imple-mentation. Let Si = {si1, . . . , s ik } be the assertions extracted from a candidate annotated program. For assertion sij and test t ∈ Ti, let rijt be the number of times the checkpoint is reached during the reference execution, and let pijt be the number of those evaluations for which the assertion is true. The per-assertion correctness score is 
+
+Corr ij =
+
+P 
+
+> t∈Ti
+
+1[rijt > 0 ∧ pijt = rijt ]
+
+P 
+
+> t∈Ti
+
+1[rijt > 0] .
+
+If the assertion is not reached by any reference execution, we set Corr ij = 0 . Thus, an assertion is correct only when every reached evaluation on the reference implementation satisfies the predicate. We aggregate at the test level rather than the raw evaluation level so that a single long-running test with many repeated checkpoint evaluations does not dominate the correctness score. 
+
+b) Completeness: Completeness measures whether a cor-rect checkpoint specification can expose faulty intermediate states in retained mutants. A checkpoint should only be expected to reject faults that can influence the state observed at that checkpoint. Therefore, we restrict completeness evaluation to eligible mutants whose changed line occurs before the checkpoint and whose execution can reach the checkpoint. We only evaluate a mutant against a checkpoint when the mutant is eligible for that checkpoint: the mutated source line must occur before the checkpoint, and the corresponding original line and checkpoint must co-reach on at least one reference execution. This prevents a checkpoint from being penalized for mutants that cannot causally affect or reach it. For assertion sij , let Eij ⊆ Mi be the eligible mutants that reach the checkpoint in at least one mutant execution. A mutant m ∈ Eij is rejected if sij fails on any reached exec-ution of that mutant. The per-assertion completeness score is 
+
+Comp ij = #{m ∈ Eij : sij rejects m}
+
+#Eij 
+
+.
+
+When Eij is empty, no completeness claim is made for that as-sertion and is excluded from the averaged completeness score. The verifier reports per-assertion feedback after each turn, including reachability, correctness, mutant rejection counts, skipped mutants, and surviving mutants when available. The teacher uses this feedback to preserve reliable assertions, repair false or unreachable ones, and strengthen assertions that are correct but weak. The acceptance test is applied at the assertion level rather than only to an average score. This prevents a submitted program from being accepted because a few strong check-points compensate for invalid, unreachable, or weak ones. A submitted annotated program is accepted only if its assertions satisfy the quality thresholds. That is, every generated assertion must be reached on the reference implementation and satisfy 
+
+Corr ij ≥ α, and every assertion with an evaluable mutant set must satisfy Comp ij ≥ β, with at least one assertion receiving a non-vacuous completeness evaluation. In our implementa-tion, the default thresholds are α = 1 .0 and β = 0 .9. If no submitted program satisfies these conditions within the max-imum number of turns, the trajectory is marked unsuccessful and is not used as accepted specification supervision. 
+
+4) Training Data: Accepted annotated programs are con-verted into two supervised fine-tuning tasks: specification generation and code generation. 
+
+a) Specification generation: This task teaches the model to insert executable checkpoint specifications into an existing program. The input contains the problem statement and a program pi, where pi can be either the validated reference program or a retained mutant: 
+
+pi ∈ { yi} ∪ M i.
+
+For the reference program, the target is the accepted annotated program ˜yi. For a mutant, we construct the target ˜m by insert-ing the accepted checkpoint specifications at the corresponding program locations of the mutant, while preserving the mutant’s executable code. The target assertions describe the intended intermediate semantics of the task, not the behavior of the buggy code. Thus, when ˜m is executed, some assertions may fail and expose the fault. The training example is the same program annotated with executable checkpoint specifications: 
+
+(xi, p i) → ˜pi.
+
+b) Code generation: This task teaches the model to gen-erate a specification-bearing solution directly from the problem statement. The input contains only the problem statement, and the output is the validated reference solution annotated with checkpoint specifications: xi → ˜yi. The final training data is the union of the two task datasets: 
+
+D = Dspec ∪ D code .
+
+B. Model Training 
+
+SPEC CODER is trained with supervised fine-tuning on the constructed instruction data. The training set contains two types of examples: specification-generation examples, where the model annotates a given program with executable check-point assertions, and code-generation examples, where the model generates a complete solution together with checkpoint assertions. The two tasks share the same goal: the response should be a program with intermediate specifications. All examples are formatted as instruction-response pairs. For specification generation, the instruction contains the prob-lem statement and an input program; for code generation, the instruction contains only the problem statement. In both cases, the response is the final annotated program. We do not train the student model to reproduce the teacher’s exploration turns or verifier feedback. The multi-turn refinement process is used only to construct and filter high-quality supervision targets. With the training corpus D = Dspec ∪ D code , we optimize the standard autoregressive language-modeling objective over the target response: 
+
+L(θ) = − X
+
+> (u,o )∈D |o|
+
+X
+
+> j=1
+
+log pθ (oj | u, o <j ),
+
+where u is the instruction input and o is the annotated-program response. At inference time, the trained model can be used in the specification-generation setting to insert checkpoint assertions into a given program. IV. H UMAN EXEC DATASET 
+
+We introduce HumanExec, a benchmark for evaluating whether models can generate and use executable specifications in realistic programming tasks. HumanExec is collected from recent Codeforces problems and is kept separate from the LeetCode-style data used to construct S PEC CODER ’s training corpus. Each task contains a problem statement, input/output specification, reference solution, human-submitted buggy solu-tions, and an executable test suite. The buggy programs come from real human submissions rather than synthetic mutation rules. Thus, the benchmark captures common programming mistakes in algorithm design, boundary handling, state up-dates, data-structure usage, and case analysis. This allows us to test if executable checkpoint specifications are useful beyond the synthetic mutants used during training-data construction. To make the benchmark suitable for semantic verification, we filter out shallow failures. We remove submissions that do not compile, use malformed input/output handling, or fail only due to immediate runtime errors. We retain bugs that execute normally but produce incorrect outputs on some tests, since these cases require reasoning about the intended algorithm rather than merely fixing syntax or crashes. We also validate each reference solution against the available test suite and keep only tasks whose reference program passes all tests. For a buggy submission, we retain only non-trivial incorrect pro-grams that pass at least one test and fail at least one test. This ensures that the benchmark focuses on semantic deviations rather than equivalent solutions or completely broken code. HumanExec is aimed to measure both specification quality and downstream programming performance under a shared execution setting. It has a total of 150 tasks, each has 48– 279 test cases with mean=79.53 and median=70. The number of mutant per task is 150, with min=3, max=188, mean=53.19, and median=44. The difficulty level is from 800-2500 (Code-Forces standard), with mean=1348, and median=1300. 
+
+Specification generation. Given a problem statement and a reference solution, the model must insert executable check-point specifications at meaningful internal program points. This subtask evaluates whether generated assertions are exe-cutable, valid on correct executions, and discriminative against faulty executions from human-submitted buggy programs. 
+
+Program repair. Given a problem statement and a human-submitted buggy solution, the model must produce a repaired solution that passes the test suite. This subtask tests whether executable checkpoint specifications can provide useful local evidence for identifying and correcting semantic errors. 
+
+Program correctness checking. Given a problem statement and a candidate solution, the model must determine whether the solution is correct. This subtask evaluates whether models can use specification to justify correctness or expose a bug, instead of relying only on surface-level code plausibility. V. E MPIRICAL EVALUATION 
+
+We evaluate SPEC CODER from different perspectives: whether it generates higher-quality executable checkpoint specifications for a given code, and whether these specifica-tions improve downstream programming tasks. Our evaluation is centered around the following research questions:  
+
+> •
+
+RQ1: Specification Generation. Can S PEC CODER gen-erate more correct and discriminative checkpoint specifi-cations than prompted base models for a given code?  
+
+> •
+
+RQ2: Program Correctness Checking. Can SPEC -CODER ’s checkpoint specifications help models judge whether a candidate program is correct?  
+
+> •
+
+RQ3: Program Repair. Do executable checkpoint spec-ifications improve code repair of buggy programs? TABLE II SPECIFICATION -GENERATION QUALITY ON HUMAN EXEC . ABBREVIATIONS : CORR . = CORRECTNESS ON CORRECT EXECUTIONS ; C OMP . =   
+
+> COMPLETENESS AGAINST BEHAVIOR -CHANGING MUTANTS ; %V ALID =EXECUTABLE ASSERTION RATE .
+
+Model Inline Checkpoint Specs Postconditions Corr. ∆ Corr. Comp. ∆ Comp. %Valid ∆ Valid Corr. ∆ Corr. Comp. ∆ Comp. 
+
+Qwen2.5-Coder-7B 0.2794 0.0% 0.1707 0.0% 0.8272 0.0% 0.5358 0.0% 0.3161 0.0% 
+
++ SpecCoder 0.4353 +55.8% 0.7820 +358.1% 0.9028 +9.1% 0.5389 +0.6% 0.6981 +120.8% 
+
+Qwen2.5-Coder-14B 0.5227 0.0% 0.1989 0.0% 0.7900 0.0% 0.5808 0.0% 0.1901 0.0% 
+
++ SpecCoder 0.6468 +23.7% 0.7713 +287.8% 1.0000 +26.6% 0.6477 +11.5% 0.6643 +249.4% 
+
+Qwen2.5-Coder-32B 0.6313 0.0% 0.2640 0.0% 0.8989 0.0% 0.7697 0.0% 0.2394 0.0% 
+
++ SpecCoder 0.8098 +28.3% 0.6843 +159.2% 0.9973 +10.9% 0.9047 +17.5% 0.4561 +90.5% 
+
+1) Datasets: We use HumanExec as the primary bench-mark for all three RQs. For RQ1, we evaluate specification generation on reference solutions. Generated assertions are executed on correct reference executions to measure validity and correctness, and are evaluated against faulty executions to measure discriminativeness. These faulty executions are ob-tained from human-submitted buggy solutions in HumanExec; if evaluation-only mutants are additionally used, they are gene-rated only after the train/test split and are never used for training. For RQ2, we construct candidate programs from both reference solutions and human-submitted buggy solutions and ask models to predict if each candidate is correct. For RQ3, we use human-submitted buggy solutions as repair inputs and evaluate generated repairs against the HumanExec test suites. 
+
+2) Models: We evaluate representative LLMs from the Qwen2.5-Coder families: Qwen2.5-Coder-7B, Qwen2.5-Coder-14B, Qwen2.5-Coder-32B. For each model, we com-pare the base instruction-tuned model with its S PEC CODER -tuned counterpart. All methods use the same decoding settings and evaluation test suites. 
+
+A. RQ1: Specification Generation 1) Baselines: We compare S PEC CODER against zero-shot specification generation, where the base instruction-tuned model directly annotates a given program with checkpoint specifications. This baseline tests whether prompting alone is sufficient to produce high-quality executable specifications from the same backbone model. 
+
+2) Metrics: We evaluate generated specifications using execution-based metrics. Validity measures the fraction of gen-erated assertions that can be safely instrumented and executed, excluding assertions with syntax errors, out-of-scope variables, or unsafe operations. Correctness measures whether a reach-able assertion holds on correct executions of the reference solution. Completeness measures, in an operational mutant-based sense, whether a correct assertion rejects behavior-changing faulty executions that reach the same checkpoint. Completeness is measured using evaluation-only behavior-changing mutants constructed from HumanExec reference so-lutions after the train/test split. These mutants are used only for evaluation and are not included in S PEC CODER ’s training data. Note that completeness captures discriminative power against  
+
+> Fig. 3. Quality of generated checkpoint assertions.
+
+the available faulty executions rather than logical completeness over all possible bugs. We report these metrics separately for inline checkpoint specifications and final postconditions. 
+
+3) Results: Table II summarizes the specification-generation results on HumanExec. Across the zero-shot base models, larger base models improve correctness and completeness, although validity is not strictly monotonic. Yet, their specifications remain limited. Qwen2.5-Coder-7B achieves only 0.2794 correctness and 0.1707 completeness, while Qwen2.5-Coder-14B improves correctness to 0.5227 but still obtains only 0.1989 completeness. The strongest base model, Qwen2.5-Coder-32B, further improves to 0.6313 correctness and 0.2640 completeness, yet its generated specifications are still far from reliably discriminative. These results indicate that scaling the base model helps, but prompting alone is insufficient for generating specifications that are both correct and useful for rejecting buggy executions. SPEC CODER substantially improves inline checkpoint spec-ification quality. With Qwen2.5-Coder-14B, S PEC CODER in-creases correctness from 0.5227 to 0.6468 and completeness from 0.1989 to 0.7713, while reaching 1.0000 executable assertion validity. With Qwen2.5-Coder-32B, SPEC CODER 
+
+reaches 0.8098 correctness and 0.6843 completeness, com-pared with 0.6313 and 0.2640 for the corresponding base zero-shot model. Across the three tuned backbones, S PEC -CODER improves average inline correctness from 0.4778 to 0.6306, average inline completeness from 0.2112 to 0.7459, and average validity from 0.8387 to 0.9667. These gains show that verification-guided fine-tuning teaches the model to generate checkpoint assertions that are not only syntacti-cally executable, but also substantially more discriminative against behavior-changing mutants. The specifications from SPEC CODER range from value constraints, ordering structure, loop progress, algorithm, data shape, and others. Figure 3 further explains the source of these gains. We measure Checkpoint Quality as the fraction of assertions reached by at least one test case, and Non-triviality as the fraction of assertions that reject at least one mutant. These metrics are useful because a model could generate assertions in locations where no faulty execution reaches or can be affected by them. Such assertions may be correct, but they do not provide evidence for discriminating correct behavior from faulty behavior. Across all three backbones, S PEC CODER 
+
+consistently improves both metrics: average checkpoint quality increases from 68.6% to 87.1%, while the non-trivial assertion rate increases from 39.3% to 83.4%. This shows that S PEC -CODER does not merely generate more executable assertions; it generates assertions that are more often exercised during execution and more likely to expose faulty intermediate states. The remaining results follow the same trend. For Qwen2.5-Coder-7B, S PEC CODER achieves 0.4353 correctness, 0.7820 completeness, and 0.9028 validity, improving over the corre-sponding zero-shot base model by 55.8%, 358.1%, and 9.1%, respectively. For postcondition specifications, SPEC CODER 
+
+achieves 0.6971 correctness and 0.6062 completeness on aver-age, compared with 0.6288 correctness and 0.2485 complete-ness for zero-shot prompting. The postcondition results show that S PEC CODER also improves final-state specifications, but the largest gains occur for inline checkpoint completeness. This suggests that verification-guided training is especially beneficial for the harder task of generating intermediate as-sertions that expose faulty internal states. Overall, the re-sults indicate that executable checkpoint specifications require verification-guided training rather than direct prompting alone. 
+
+4) Does SpecCoder Internalize Checkpoint Specifications?: 
+
+We further measure whether S PEC CODER internalizes exe-cutable checkpoint specifications using 30 held-out validation problems from the dataset construction process. Each problem contains verified annotated specifications produced by our verification-guided refinement pipeline. For each assertion, we teacher-force the same annotated program under the base model and the corresponding S PEC CODER model, and com-pute perplexity only over assertion tokens. Since both models score the same target assertions, lower perplexity indicates that the model assigns higher likelihood to the same specification. Fig. 4 shows that S PEC CODER shifts the per-assertion per-plexity distribution left across all three backbones, indicating higher confidence on the same executable assertions. Together with Table II, this suggests that it learns both the syntax and placement patterns of checkpoint specifications, rather than relying only on prompting-time instruction following. 
+
+5) Qualitative Analysis: Fig. 5 shows a representative example comparing zero-shot specification generation with SPEC CODER . The original model does not generate specifi- 
+
+> Fig. 4. ECDF of per-assertion perplexity on held-out inline checkpoint specifications. Each panel compares a base Qwen2.5-Coder model with its SPEC CODER -tuned counterpart on the same assertion tokens.
+
+cations in the required executable format; instead, it mainly inserts explanatory comments, such as describing that s ac-cumulates digit sums or that t is a greatest common divi-sor. Even comments prefixed with “assert” are still natural-language descriptions rather than valid Boolean predicates. As a result, they cannot be directly instrumented or checked dur-ing execution. In contrast, S PEC CODER generates executable checkpoint assertions over in-scope variables, such as s == 0and N - 2 > 0, n == N and 2 <= i < N, and t > 0 and s %t == 0 and (N-2) % t == 0. These assertions are placed at meaningful internal program points and can be evaluated on runtime states, illustrating why S PEC CODER improves both assertion validity and discriminative completeness. 
+
+B. RQ2: Program Correctness Checking 
+
+RQ2 evaluates whether checkpoint specifications help a model judge whether a candidate program is correct. This task is different from repair: the model must produce a correctness verdict and justification rather than a patch. 
+
+1) Baselines: We compare direct correctness checking from the problem statement and code against chain-of-thought prompting, HoarePrompt-style natural-language specification reasoning, and S PEC CODER with executable assertion evi-dence. The S PEC CODER classifier receives checkpoint specifi-cations and, when applicable, violated-specification evidence. 
+
+2) Metrics: We report Matthews Correlation Coefficient (MCC), balanced accuracy, true negative rate, true positive rate, false negative rate, and false positive rate. MCC and balanced accuracy summarize overall classification quality under class imbalance, while FPR and FNR distinguish the risk of incorrectly accepting a buggy program from the risk of incorrectly rejecting a correct program. 
+
+3) Results: Table III reports correctness-checking results on H UMAN EXEC . Overall, executable checkpoint evidence improves correctness checking across model sizes. Compared with Vanilla, S PEC CODER improves MCC from 0.236 to 0.307 for Qwen2.5-Coder-7B, from 0.283 to 0.384 for Qwen2.5-N = int (input ())                                                                                                                                                                                                                                                                                                                                                                    
+
+> s=0#sis the sum of digits of Nin all bases from 2to N-1
+> def gcd (a,b):
+> while (b) :
+> a,b=b,a%b
+> return a#ais the greatest common divisor of the initial aand b
+> for iin range (2,N):
+> n=N#nis the current number to be converted to base i
+> while (n>0):
+> s+= n%i#saccumulates the sum of digits of Nin base i
+> n=n// i#nis reduced by removing the last digit in base i
+> #assert sis the accumulated sum of digits of Nin bases from 2to i
+> t=gcd (s,N-2)#tis the greatest common divisor of sand (N-2)
+> #assert tdivides both sand (N-2) without remainder
+> print (str (s// t)+"/" +str (( N-2)// t))
+> #the output is the irreducible fraction of s/(N-2)
+> #assert (s//t) and ((N-2)//t) are the numerator and denominator
+> of the irreducible fraction
+> N=int (input ())
+> #assert 3<= N<= 1000
+> s=0
+> #assert s== 0and N-2>0and 3<= N<= 1000
+> def gcd (a,b):
+> #assert a>= 0and b>= 0
+> while (b) :
+> a,b=b,a%b
+> #assert b== 0and a>= 0
+> return a
+> for iin range (2,N):
+> n=N
+> #assert n== Nand 2<= i<Nand s>= 0
+> while (n>0):
+> s+= n%i
+> n=n// i
+> #assert n== 0and i-1<= s<= (i -1) *N
+> #assert N-2<= s<= (N -2) *Nand s== sum(sum((N // (base
+> ** k)) %base for kin range(N)) for base in range(2, N))
+> t=gcd (s,N-2)
+> #assert t>0and s%t== 0and (N-2) %t== 0
+> print (str (s// t)+"/" +str (( N-2)// t))
+> N=int (input ())
+> s=0
+> def gcd (a,b):
+> while (b) :
+> a,b=b,a%b
+> #State: ais the GCD of the original aand b,
+> and bis 0.
+> return a
+> #The program returns the GCD of the original a
+> and b, which is stored in variable a.
+> for iin range (2,N):
+> n=N
+> while (n>0):
+> s+= n%i
+> n=n// i
+> t=gcd (s,N-2)
+> print (str (s// t)+'/' +str (( N-2)// t))
+> #State of the program right berfore the function
+> call: aand bare integers such that 3<= a<= 1000
+> and a<= b.
+
+SpecCoder HoarePrompt Original Model Fig. 5. Qualitative comparison of specification generation TABLE III PROGRAM CORRECTNESS -CHECKING PERFORMANCE ON HUMAN EXEC . ABBREVIATIONS : MCC = M ATTHEWS CORRELATION COEFFICIENT ; ∆MCC = 
+
+RELATIVE MCC IMPROVEMENT OVER VANILLA ; BA = B ALANCED ACCURACY ; TPR = T RUE POSITIVE RATE ; FNR = F ALSE NEGATIVE RATE ; FPR = FALSE POSITIVE RATE ; TNR = T RUE NEGATIVE RATE .
+
+Model Classifier Correctness-Checking Metrics Tokens (Millions) MCC ↑ ∆MCC ↑ BA ↑ TNR ↑ TPR ↑ FNR ↓ FPR ↓ Input Output Total 
+
+Qwen2.5-Coder-7B Vanilla 0.236 0.0% 0.600 0.733 0.167 0.333 0.267 0.38 0.21 0.59 CoT 0.211 -10.71% 0.600 0.773 0.220 0.280 0.227 0.45 0.31 0.76 HoarePrompt 0.310 +30.94% 0.639 0.713 0.427 0.073 0.287 59.30 8.93 68.23 
+
++ SpecCoder AssertChecker 0.307 +29.75% 0.653 0.820 0.333 0.167 0.180 0.82 0.48 1.30 Qwen2.5-Coder-14B Vanilla 0.283 0.0% 0.633 0.900 0.233 0.267 0.100 0.38 0.22 0.60 CoT 0.229 -19.14% 0.613 0.840 0.273 0.227 0.160 0.45 0.38 0.83 HoarePrompt 0.366 +29.56% 0.680 0.887 0.293 0.207 0.113 53.01 10.47 63.58 
+
++ SpecCoder AssertChecker 0.384 +35.69% 0.680 0.887 0.253 0.247 0.113 0.91 0.34 1.25 Qwen2.5-Coder-32B Vanilla 0.394 0.0% 0.693 0.893 0.300 0.200 0.107 0.38 0.08 0.46 CoT 0.248 -36.97% 0.620 0.873 0.247 0.253 0.127 0.45 0.09 0.18 HoarePrompt 0.455 +15.69% 0.727 0.840 0.387 0.113 0.160 48.82 12.09 60.91 
+
++ SpecCoder AssertChecker 0.493 +25.15% 0.733 0.947 0.287 0.213 0.053 0.87 0.49 1.36 
+
+Coder-14B, and from 0.394 to 0.493 for Qwen2.5-Coder-32B. Balanced accuracy follows the same trend: S PEC CODER 
+
+achieves 0.653, 0.680, and 0.733 across the three backbones, matching or exceeding the strongest baseline in each model group. In contrast, simple chain-of-thought prompting does not reliably improve correctness checking and even reduces MCC for all three backbones. This suggests that free-form reasoning alone is insufficient, while executable specification evidence gives the checker a more reliable signal. 
+
+4) Qualitative Analysis: Figure 5 also illustrates why ex-ecutable checkpoint specifications provide stronger evidence for correctness checking than natural-language state reasoning. HoarePrompt generates readable state descriptions, such as explaining that a is the GCD of the original arguments or de-scribing the state before a function call, but these descriptions are not executable and cannot be objectively checked against a candidate program. Some conditions also refer to implicit con-cepts such as “original” variable values, making them difficult to bind to concrete runtime states. By contrast, S PEC CODER 
+
+produces executable assertions that define concrete obligations over program variables, including initialization constraints, loop-state properties, accumulated digit-sum relations, and di-visibility checks after gcd . When a candidate program violates such an assertion, the checker receives localized, machine-checkable evidence of the semantic deviation, explaining the improved correctness-checking performance of S PEC CODER .
+
+C. RQ3: Program Repair 
+
+RQ3 evaluates whether executable checkpoint specifications help models repair human-written bugs. Given a buggy pro-gram, each method generates one or more candidate repairs under the AgentCoder backbone. We execute each candidate against the full test suite and measure whether the generated patch fixes the program. 
+
+1) Baselines: We introduce AssertRepair, an APR method that leverages assertion signals for program repair. Specifically, given a failing test input, AssertRepair executes the program and captures the assertion states, including violated checkpoint specifications. The resulting diagnostic evidence is then pro-vided to the LLM to guide repair generation. Besides the vanilla baseline, we compare AssertRepair with state-of-the-art repair baselines based on natural-language specification signals. We adopt HoarePrompt (V), which uses programs annotated with HoarePrompt-generated spec-ifications for repair, and SpecRover (V), a competitive-TABLE IV PROGRAM REPAIR PERFORMANCE ON HUMAN EXEC . ABBREVIATIONS :                                                 
+
+> PASS @kREPORTS WHETHER AT LEAST ONE OF THE TOP -kGENERATED REPAIRS PASSES THE FULL TEST SUITE . APR REPORTS THE MEAN PASS RATE OVER GENERATED REPAIRS .
+> Model Method Pass@1 Pass@3 APR
+> Qwen2.5-Coder-7B Vanilla 0.089 0.157 0.447 HoarePrompt 0.099 0.111 0.511 SpecRover 0.132 0.151 0.580 +SpecCoder AssertRepair 0.140 0.190 0.514 Qwen2.5-Coder-14B Vanilla 0.237 0.269 0.578 HoarePrompt 0.211 0.289 0.534 SpecRover 0.235 0.261 0.556
+> +SpecCoder AssertRepair 0.241 0.301 0.598
+> Qwen2.5-Coder-32B Vanilla 0.261 0.301 0.615 HoarePrompt 0.272 0.358 0.587 SpecRover 0.279 0.338 0.610
+> +SpecCoder AssertRepair 0.283 0.333 0.622
+
+programming variant of SpecRover. In contrast to these natural-language-specification baselines, AssertRepair uses ex-ecutable checkpoint specifications and violated-assertion evi-dence. To ensure a fair comparison, all methods are allowed only a single repair attempt per turn. 
+
+2) Metrics: We report Pass@k , where k ∈ { 1, 3}, measur-ing whether at least one of the top-k generated repairs passes all tests. We also report Average Pass Rate (APR). 
+
+3) Results: Table IV reports program repair results on H U-
+
+> MAN
+
+EXEC . Overall, executable checkpoint evidence improves repair effectiveness, especially for the top-ranked generated repairs. S PEC CODER achieves the best Pass@1 for all three backbones: 0.140 for Qwen2.5-Coder-7B, 0.241 for Qwen2.5-Coder-14B, and 0.283 for Qwen2.5-Coder-32B. For Qwen2.5-Coder-14B and Qwen2.5-Coder-32B, S PEC -CODER achieves the highest APR, improving over Vanilla from 0.578 to 0.598 and from 0.615 to 0.622, respectively. These gains suggest that executable checkpoint specifications help the repair agent produce a larger fraction of passing patches, not only a better top candidate. Averaged across the three backbones, S PEC CODER obtains an APR of 0.578, compared with 0.547 for Vanilla and 0.544 for HoarePrompt. Its average APR is close to SpecRover’s 0.582, while SPEC CODER achieves stronger Pass@1 and Pass@3 on average. The results therefore suggest that exe-cutable checkpoint evidence is most effective at guiding the repair process toward correct high-ranked patches, while its effect on the entire candidate distribution depends on the strength of the underlying model. Overall, RQ3 shows that executable checkpoint specifica-tions provide useful localized evidence for program repair. This evidence improves top-ranked repair success across all model sizes and improves average repair quality for the stronger 14B and 32B backbones. VI. R ELATED WORK 
+
+a) Traditional specification inference: Dynamic ap-proaches infer likely properties by observing executions [7], [1], [2], but their results depend heavily on the coverage and diversity of available tests. Static analyses [8], [9], [10], [11], [12] and abstract interpretation [13] often produce conservative or imprecise specifications due to over-approximation and false positives. Other approaches extract specifications from API documentation or code comments [14], [15], [16], [17], [18], [19], [20]. Data-mining techniques infer common API usage patterns from large codebases [21], [22], [23], including call pairs, sequences, and finite-state models [24], [25], [26], [27], [28], [29]. These methods are useful for API usage con-straints, but they rarely infer executable postconditions [11]. 
+
+b) Machine-learning and LLM-based specification gen-eration: Recent machine-learning and LLM-based techniques have expanded automated specification and oracle generation. Some methods synthesize test oracles or unit tests [30], [31], [32], [33], [34], while others improve test generation and cov-erage [35], [36]. For example, AthenaTest [34] generates unit test inputs and oracles from the focal method implementation, TOGA [30] focuses on oracle generation, and TiCoder [33] uses LLMs to generate inputs/outputs from textual intent. Other work directly targets specifications. NL2Postcond [3] uses LLMs to infer postconditions from code and textual de-scriptions, and EvoSpex [37] applies evolutionary learning to infer functional input–output relationships. Recent efforts also explore property-based specifications: Vikram et al. [38] use LLMs to generate property-based tests, while Speculyzer [39] enumerates likely properties and candidate inputs to guide code generation. Beyond input–output properties, learning-based methods have been used to infer program invariants [40], [41], [42], [43]. In contrast, S PEC CODER targets executable checkpoint specifications: assertions placed at meaningful in-ternal program points and selected using execution feedback from correct programs and behavior-changing mutants. 
+
+c) Specification-guided reasoning and repair.: LLMs have been used to produce specification-like reasoning for correctness checking and program repair. HoarePrompt [5] uses natural-language state conditions to support structural reasoning about program correctness. SpecRover [6] extracts natural-language code intent to guide agentic program re-pair, vet patches, and provide supporting evidence. These approaches show that specification-like signals can improve LLM-based reasoning, but their intermediate signals are pri-marily expressed in natural language and are not directly exe-cutable assertions. S PEC CODER differs by training CodeLLMs to generate executable intermediate specifications that can be checked on concrete executions and used as verifiable evidence for specification generation, consistency checking, and repair. VII. C ONCLUSION 
+
+We presented S PEC CODER , a verification-guided frame-work for training CodeLLMs to generate executable check-point specifications. By learning from validated reference programs, behavior-changing mutants, and refinement traces, SPEC CODER produces assertions that capture intermediate program states and can be checked during execution. Experi-ments on H UMAN EXEC show that these checkpoints improve specification quality and provide useful evidence for correct-ness checking and program repair, suggesting that executable intermediate specifications are a promising path toward more verifiable and repairable LLM-generated programs. VIII. D ATA AVAILABILITY STATEMENT 
+
+All data and code are available at [44]. REFERENCES [1] I. Beschastnikh, Y. Brun, S. Schneider, M. Sloan, and M. D. Ernst, “Leveraging existing instrumentation to automatically infer invariant-constrained models,” in Proceedings of the 19th Symposium on Foundations of Software Engineering , ser. ESEC/FSE ’11. ACM, 2011, pp. 267–277. [Online]. Available: http://doi.acm.org/10.1145/2025113.2025151 [2] M. D. Ernst, J. Cockrell, W. G. Griswold, and D. Notkin, “Dynamically discovering likely program invariants to support program evolution,” in Proceedings of the 21st International Conference on Software Engineering , ser. ICSE’99. ACM, 1999, pp. 213–224. [Online]. Available: http://doi.acm.org/10.1145/302405.302467 [3] M. Endres, S. Fakhoury, S. Chakraborty, and S. K. Lahiri, “Can large language models transform natural language intent into formal method postconditions?” Proc. ACM Softw. Eng. , vol. 1, no. FSE, Jul. 2024. [Online]. Available: https://doi.org/10.1145/3660791 [4] C. C. Le, M. V. Pham, T. D. Vu, V. D. Cuong, P. N. Huy, P. N. Hoang, and T. N. Nguyen, “SpecMind: Cognitively inspired, interactive multi-turn framework for postcondition inference,” in Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , M. Liakata, V. P. Moreira, J. Zhang, and D. Jurgens, Eds. San Diego, California, United States: Association for Computational Linguistics, Jul. 2026, pp. 36 409–36 424. [Online]. Available: https://aclanthology.org/2026.acl-long.1687/ [5] D. S. Bouras, Y. Dai, T. Wang, Y. Xiong, and S. Mechtaev, “Hoareprompt: Structural reasoning about program correctness in natural language,” 2025. [Online]. Available: https://arxiv.org/abs/2503.19599 [6] H. Ruan, Y. Zhang, and A. Roychoudhury, “Specrover: Code intent extraction via llms,” in Proceedings of the IEEE/ACM 47th International Conference on Software Engineering , ser. ICSE ’25. IEEE Press, 2025, p. 963–974. [Online]. Available: https://doi.org/10.1109/ICSE55347.2025.00080 [7] G. Ammons, R. Bod´ ık, and J. R. Larus, “Mining specifications,” in Proceedings of the 29th ACM SIGPLAN SIGACT Symposium on Principles of Programming Languages , ser. POPL ’02. ACM, 2002, pp. 4–16. [Online]. Available: http://doi.acm.org/10.1145/503272.503275 [8] S. Shoham, E. Yahav, S. Fink, and M. Pistoia, “Static specification mining using automata-based abstractions,” in Proceedings of the 2007 International Symposium on Software Testing and Analysis , ser. ISSTA ’07. New York, NY, USA: Association for Computing Machinery, 2007, p. 174–184. [Online]. Available: https://doi.org/10.1145/1273463.1273487 [9] D. Engler, D. Y. Chen, S. Hallem, A. Chou, and B. Chelf, “Bugs as deviant behavior: A general approach to inferring errors in systems code,” in Proceedings of the Eighteenth ACM Symposium on Operating Systems Principles , ser. SOSP’01. ACM, 2001, pp. 57–72. [Online]. Available: http://doi.acm.org/10.1145/502034.502041 [10] T. Kremenek, P. Twohey, G. Back, A. Ng, and D. Engler, “From uncertainty to belief: inferring the specification within,” in Proceedings of the 7th Symposium on Operating Systems Design and Implementation ,ser. OSDI ’06. USA: USENIX Association, 2006, p. 161–176. [11] M. K. Ramanathan, A. Grama, and S. Jagannathan, “Static specification inference using predicate mining,” in Proceedings of the 2007 ACM SIGPLAN Conference on Programming Language Design and Implementation , ser. PLDI ’07. ACM, 2007, pp. 123–134. [Online]. Available: http://doi.acm.org/10.1145/1250734.1250749 [12] Y. Wei, C. A. Furia, N. Kazmin, and B. Meyer, “Inferring better contracts,” in Proceedings of the 33rd International Conference on Software Engineering , ser. ICSE ’11. ACM, 2011, pp. 191–200. [Online]. Available: http://doi.acm.org/10.1145/1985793.1985820 [13] P. M. Cousot, R. Cousot, F. Logozzo, and M. Barnett, “An abstract interpretation framework for refactoring with application to extract methods with contracts,” in Proceedings of the ACM International Conference on Object Oriented Programming Systems Languages and Applications , ser. OOPSLA ’12. New York, NY, USA: Association for Computing Machinery, 2012, p. 213–232. [Online]. Available: https://doi.org/10.1145/2384616.2384633 [14] R. Pandita, X. Xiao, H. Zhong, T. Xie, S. Oney, and A. Paradkar, “Inferring method specifications from natural language api descriptions,” in Proceedings of the 34th International Conference on Software Engi-neering , ser. ICSE ’12. IEEE Press, 2012, p. 815–825. [15] L. Tan, D. Yuan, G. Krishna, and Y. Zhou, “/*icomment: bugs or bad comments?*/,” in Proceedings of Twenty-First ACM SIGOPS Symposium on Operating Systems Principles , ser. SOSP ’07. New York, NY, USA: Association for Computing Machinery, 2007, p. 145–158. [Online]. Available: https://doi.org/10.1145/1294261.1294276 [16] L. Tan, Y. Zhou, and Y. Padioleau, “acomment: mining annotations from comments and code to detect interrupt related concurrency bugs,” in Proceedings of the 33rd International Conference on Software Engineering , ser. ICSE ’11. New York, NY, USA: Association for Computing Machinery, 2011, p. 11–20. [Online]. Available: https://doi.org/10.1145/1985793.1985796 [17] S. H. Tan, D. Marinov, L. Tan, and G. T. Leavens, “@tcomment: Testing javadoc comments to detect comment-code inconsistencies,” in Proceedings of the 2012 IEEE Fifth International Conference on Software Testing, Verification and Validation , ser. ICST ’12. USA: IEEE Computer Society, 2012, p. 260–269. [Online]. Available: https://doi.org/10.1109/ICST.2012.106 [18] A. Blasi, A. Goffi, K. Kuznetsov, A. Gorla, M. D. Ernst, M. Pezz` e, and S. D. Castellanos, “Translating code comments to procedure specifications,” in Proceedings of the 27th ACM SIGSOFT International Symposium on Software Testing and Analysis , ser. ISSTA 2018. New York, NY, USA: Association for Computing Machinery, 2018, p. 242–253. [Online]. Available: https://doi.org/10.1145/3213846.3213872 [19] H. Zhong, L. Zhang, T. Xie, and H. Mei, “Inferring resource specifications from natural language api documentation,” in Proceedings of the 24th IEEE/ACM International Conference on Automated Software Engineering , ser. ASE ’09. USA: IEEE Computer Society, 2009, p. 307–318. [Online]. Available: https://doi.org/10.1109/ASE.2009.94 [20] Y. Zhou, R. Gu, T. Chen, Z. Huang, S. Panichella, and H. Gall, “Analyzing apis documentation and code to detect directive defects,” in 2017 IEEE/ACM 39th International Conference on Software Engi-neering (ICSE) , 2017, pp. 27–37. [21] Z. Li and Y. Zhou, “Pr-miner: Automatically extracting implicit programming rules and detecting violations in large software code,” in Proceedings of the 13th Symposium on Foundations of Software Engineering , ser. ESEC/FSE-13. ACM, 2005, pp. 306–315. [Online]. Available: http://doi.acm.org/10.1145/1081706.1081755 [22] B. Livshits and T. Zimmermann, “Dynamine: finding common error patterns by mining software revision histories,” in Proceedings of the 10th European Software Engineering Conference Held Jointly with 13th ACM SIGSOFT International Symposium on Foundations of Software Engineering , ser. ESEC/FSE-13. New York, NY, USA: Association for Computing Machinery, 2005, p. 296–305. [Online]. Available: https://doi.org/10.1145/1081706.1081754 [23] H. Zhong, T. Xie, L. Zhang, J. Pei, and H. Mei, “Mapo: Mining and recommending api usage patterns,” in Proceedings of the 23rd Euro-pean Conference on ECOOP 2009 — Object-Oriented Programming .Springer-Verlag, 2009, pp. 318–343. [24] A. Wasylkowski, A. Zeller, and C. Lindig, “Detecting object usage anomalies,” in Proceedings of the Symposium on Foundations of Software Engineering , ser. ESEC-FSE ’07. ACM, 2007, pp. 35–44. [Online]. Available: http://doi.acm.org/10.1145/1287624.1287632 [25] C. C. Williams and J. K. Hollingsworth, “Automatic mining of source code repositories to improve bug finding techniques,” IEEE Trans. Softw. Eng. , vol. 31, no. 6, pp. 466–480, 2005. [26] S. Thummalapenta and T. Xie, “Alattin: Mining alternative patterns for detecting neglected conditions,” in Proceedings of the 2009 IEEE/ACM International Conference on Automated Software Engineering , ser. ASE ’09. IEEE Computer Society, 2009, pp. 283–294. [Online]. Available: http://dx.doi.org/10.1109/ASE.2009.72 [27] T. T. Nguyen, H. A. Nguyen, N. H. Pham, J. M. Al-Kofahi, and T. N. Nguyen, “Graph-based mining of multiple object usage patterns,” in 
+
+Proceedings of the Symposium on Foundations of Software Engineering ,ser. ESEC/FSE ’09. ACM, 2009, pp. 383–392. [Online]. Available: http://doi.acm.org/10.1145/1595696.1595767 [28] M. Pradel and T. R. Gross, “Automatic generation of object usage specifications from large method traces,” in Proceedings of the 2009 IEEE/ACM International Conference on Automated Software Engineering , ser. ASE ’09. IEEE Computer Society, 2009, pp. 371–382. [Online]. Available: http://dx.doi.org/10.1109/ASE.2009.60 [29] A. Wasylkowski and A. Zeller, “Mining temporal specifications from object usage,” in Proceedings of the 2009 IEEE/ACM International Conference on Automated Software Engineering , ser. ASE ’09. IEEE Computer Society, 2009, pp. 295–306. [Online]. Available: http://dx.doi.org/10.1109/ASE.2009.30 [30] E. Dinella, G. Ryan, T. Mytkowicz, and S. K. Lahiri, “Toga: a neural method for test oracle generation,” in Proceedings of the 44th International Conference on Software Engineering ,ser. ICSE ’22. New York, NY, USA: Association for Computing Machinery, 2022, p. 2130–2141. [Online]. Available: https://doi.org/10.1145/3510003.3510141 [31] A. Mastropaolo, N. Cooper, D. N. Palacio, S. Scalabrino, D. Poshy-vanyk, R. Oliveto, and G. Bavota, “Using transfer learning for code-related tasks,” IEEE Transactions on Software Engineering , vol. 49, no. 4, pp. 1580–1598, 2023. [32] M. Tufano, D. Drain, A. Svyatkovskiy, and N. Sundaresan, “Generating accurate assert statements for unit test cases using pretrained transformers,” in Proceedings of the 3rd ACM/IEEE International Conference on Automation of Software Test , ser. AST ’22. New York, NY, USA: Association for Computing Machinery, 2022, p. 54–64. [Online]. Available: https://doi.org/10.1145/3524481.3527220 [33] S. K. Lahiri, S. Fakhoury, A. Naik, G. Sakkas, S. Chakraborty, M. Musuvathi, P. Choudhury, C. von Veh, J. P. Inala, C. Wang, and J. Gao, “Interactive code generation via test-driven user-intent formalization,” 2023. [Online]. Available: https://arxiv.org/abs/2208.05950 [34] M. Tufano, D. Drain, A. Svyatkovskiy, S. K. Deng, and N. Sundaresan, “Unit test case generation with transformers and focal context,” 2021. [Online]. Available: https://arxiv.org/abs/2009.05617 [35] C. Lemieux, J. P. Inala, S. K. Lahiri, and S. Sen, “Codamosa: Escaping coverage plateaus in test generation with pre-trained large language models,” in Proceedings of the 45th International Conference on Software Engineering , ser. ICSE ’23. IEEE Press, 2023, p. 919–931. [Online]. Available: https://doi.org/10.1109/ICSE48619.2023.00085 [36] J. Altmayer Pizzorno and E. D. Berger, “Coverup: Effective high coverage test generation for python,” Proc. ACM Softw. Eng. , vol. 2, no. FSE, Jun. 2025. [Online]. Available: https://doi.org/10.1145/3729398 [37] F. Molina, P. Ponzio, N. Aguirre, and M. Frias, “Evospex: An evolutionary algorithm for learning postconditions,” in Proceedings of the 43rd International Conference on Software Engineering , ser. ICSE ’21. IEEE Press, 2021, p. 1223–1235. [Online]. Available: https://doi.org/10.1109/ICSE43902.2021.00112 [38] V. Vikram, C. Lemieux, J. Sunshine, and R. Padhye, “Can large language models write good property-based tests?” 2024. [Online]. Available: https://arxiv.org/abs/2307.04346 [39] W.-D. Li, D. Y. Key, and K. Ellis, “Toward trustworthy neural program synthesis,” in ICLR 2025 Third Workshop on Deep Learning for Code , 2025. [Online]. Available: https://openreview.net/forum?id=zC4Wjyu2Wu [40] P. Garg, D. Neider, P. Madhusudan, and D. Roth, “Learning invariants using decision trees and implication counterexamples,” in Proceedings of the 43rd Annual ACM SIGPLAN-SIGACT Symposium on Principles of Programming Languages , ser. POPL ’16. New York, NY, USA: Association for Computing Machinery, 2016, p. 499–512. [Online]. Available: https://doi.org/10.1145/2837614.2837664 [41] L. Laich, P. Bielik, and M. Vechev, “Guiding program synthesis by learning to generate examples,” in International Conference on Learning Representations , 2020. [Online]. Available: https://openreview.net/forum?id=BJl07ySKvS [42] J. Yao, G. Ryan, J. Wong, S. Jana, and R. Gu, “Learning nonlinear loop invariants with gated continuous logic networks,” in Proceedings of the 41st ACM SIGPLAN Conference on Programming Language Design and Implementation , ser. PLDI 2020. New York, NY, USA: Association for Computing Machinery, 2020, p. 106–120. [Online]. Available: https://doi.org/10.1145/3385412.3385986 [43] K. Pei, D. Bieber, K. Shi, C. Sutton, and P. Yin, “Can large language models reason about program invariants?” in Proceedings of the 40th International Conference on Machine Learning , ser. Proceedings of Machine Learning Research, A. Krause, E. Brunskill, K. Cho, B. Engelhardt, S. Sabato, and J. Scarlett, Eds., vol. 202. PMLR, 23–29 Jul 2023, pp. 27 496–27 520. [Online]. Available: https://proceedings.mlr.press/v202/pei23a.html [44] [Online]. Available: https://speccoder.site

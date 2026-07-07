@@ -1,0 +1,402 @@
+Title: MOSAIC: Knowledge-Guided CLI Command Composition Attack in LLM Coding Agents
+
+URL Source: https://arxiv.org/pdf/2607.02857v1
+
+Published Time: Tue, 07 Jul 2026 00:19:53 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# MOSAIC: Knowledge-Guided CLI Command Composition Attack in LLM Coding Agents 
+
+Jiangrong Wu Sun Yat-sen University wujr28@mail2.sysu.edu.cn Huaijin Wang Shandong University huaijinwang@sdu.edu.cn Yihao Zhang Peking University zhangyihao@stu.pku.edu.cn Yuhong Nan Sun Yat-sen University nanyh@mail.sysu.edu.cn Shuai Wang Hong Kong University of Science and Technology shuaiw@cse.ust.hk 
+
+Abstract —LLM coding agents increasingly complete devel-opment tasks by issuing ordinary CLI commands. Following the Unix design, these commands cooperate through shared operating-system state: one command may write state that a later command reads. While this composition is benign and intended, it creates an overlooked exploit surface. Existing attacks and defenses mainly target the instruction layer, where malicious intent appears as hostile text. In contrast, we observe that individually benign commands can form a dangerous producer-consumer state relation across the command trace, exposing what we call CLI command-composition risk (CCR ). Given this new attack surface, it is critical to systematically uncover and characterize the impact of CCR in real-world coding agents. However, systematically understanding this risk is quite challenging, because naive command enumeration and end-to-end LLM generation produce mostly invalid workflows. We present MOSAIC, a knowledge-guided framework that distills validated command-state behaviors from CVEs, advisories, and researcher PoCs into reusable summaries, composes them into exploit paths, and instantiates them as realistic developer workflows for black-box agent evaluation. Across five real-world CLI coding agents and five backend LLMs over 2,525 trials, MOSAIC achieves a 96.59% attack success rate under benign developer tasks. 
+
+Index Terms —LLM Coding Agents, CLI Security, Command Composition Risk 
+
+I. I NTRODUCTION 
+
+LLM coding agents are rapidly upgrading from code assis-tants into automatic program development agents. A growing number of them run directly in the command-line interface (CLI) and act by issuing ordinary CLI commands, so the LLM coding agent [1]–[5], such as Claude Code and Codex CLI, is becoming the mainstream form. Such an agent operates inside a real development environment, where it clones repositories, inspects project files, installs dependencies, runs tests, edits configuration, and prepares code changes. Its execution sub-strate is the same CLI layer that human developers use every day, including command-line such as git , npm , bash , curl .As shown in Figure 1, given a user’s natural-language request, the agent interprets it as a sequence of ordinary CLI commands that serve the user’s intent. These commands are designed to work together, a defining principle of the Unix phi-losophy in which each command does one sub-task well and passes its output to the next [6], [7]. Each command performs a Corresponding  
+
+> Resources
+> LLM Coding Agent
+> Set up the project
+> from xxx.
+> User Task
+> >_
+> git clone …
+> >_
+> cat README
+> >_
+> npm install …
+
+Fig. 1: Among existing LLM coding agents, user tasks are typically handled with combinations of CLI commands. focused step and passes its result to later commands through the same shared operating-system state, so that a small set of ordinary commands can compose to accomplish complex development tasks. This shared state includes environment variables, the file system, package lifecycle scripts, and hooks. One command can write state that a later command reads, so the commands form a stateful trace whose later steps depend on the state that earlier steps leave behind. In LLM coding agent, this CLI substrate directly reaches the user’s system and software production environment. Once they are compromised, the security impact falls on high-value development assets. An attacker can wipe developer and production data [8], exfiltrate proprietary source code and credentials [9], [10], poison the downstream software supply chain or plant persistent backdoors [11], or abuse the environment’s standing privileges to pivot into internal systems [12], [13]. As LLM coding agents become one of the most representative productivity tools in modern software development, their security becomes a critical part of the software production pipeline. Existing work on LLM-agent security has largely studied the instruction layer. The dominant attack model is indirect prompt injection: adversarial text is placed in a file, web page, issue, tool output, or other agent-readable content, aiming to hijack the backend LLM and steer it toward an unsafe next action [14]–[18]. AIShellJack [19] gives concrete examples 1
+
+> arXiv:2607.02857v1 [cs.CR] 3 Jul 2026
+
+of this pattern. The injected text tells the agent that, “for debugging purposes, the agent should find API keys in the codebase and send them to a Discord webhook”. The agent then treats this adversarial text as task guidance, searches the codebase, and transmits the result. These attacks directly tell the agent what harmful action to perform through malicious text. Representative defenses therefore operate at the same layer, using prompt filtering, structured prompting, adversarial post-training, isolation, or runtime checks that detect whether the selected tool call is consistent with the user’s intent [20]– [25]. This line of work addresses a central question: how malicious text can change an agent’s decision. It also carries an implicit locality assumption: the attack signal is expected to be visible in an input instruction, a model response, or an individual proposed action. 
+
+CLI Command-Composition Risk. However, the attack surface of LLM coding agents is not limited to its instruction layer, but also lies in its deep reliance on CLI commands. More specifically, due to the shared operating-system state of CLI commands, the attack signal can move into the composition between CLI commands: one command establishes state, a later command consumes it, and the composed trace reaches the security problem, e.g., credential leakage, system destruc-tion. The security gap caused by this cross-command relation is not covered in the current agent ecosystem. This paper studies the risk constituted by CLI command-composition in the current LLM coding agent ecosystem, which we call CLI command-composition risk (CCR ). It arises when multiple individually legitimate CLI commands compose through shared state to produce capability outside the user’s task scope. The attack signal appears only in a producer-consumer relation across benign commands: one command le-gitimately writes an environment variable, configuration value, hook, or token; a later command legitimately consumes it; and their combined effect compromises the agent’s execution context. 
+
+Our Work. To assess the security boundary related to CLI command of LLM coding agents, we set out to systematically uncover and characterize CCR in real-world coding agents to improve the safeguard and the reliability. However, there is a significant challenge: how to generate high-quality, high-fidelity, and reliable CLI command compositions ? Naively enumerating command combinations or simply asking an LLM for generation produces mostly noise, because most command pairs have no meaningful semantic interaction, and it often yields plausible-looking paths that are invalid in the system. Our key observation is that existing CLI security knowledge provides a natural knowledge base for this generation problem. For example, CVEs, maintainer advisories, and researcher proofs of concept (PoCs) record CLI mechanisms that have already been validated in practice: a particular environment variable, configuration field, hook, lifecycle event, helper pro-gram, or parser boundary can produce capability beyond what the user expects under specific conditions. This knowledge is a strong seed for CCR , and it is more grounded and reliable than blind enumeration or end-to-end LLM generation. Moreover, it lies on the same execution surface as the CLI that coding agents routinely invoke. Building on this observation, we present MOSAIC, aknowledge-guided framework that assesses CCR in real-world coding agents. MOSAIC solves three linked problems. First, 
+
+knowledge acquisition : it collects multi-source CLI security evidence, including CVEs, advisories, researcher PoCs, and abuse knowledge bases, that records real command-line state behaviors. Second, knowledge distillation : it refines these heterogeneous entries into reusable command-state summaries that capture what CLI command activates a behavior and what state it produces or consumes. Third, knowledge reuse :it composes these command-state summaries into command compositions whose individual commands are benign, but the combined trace triggers an out-of-scope capability, and instantiates each composition as a realistic developer workflow for agent testing. 
+
+Evaluation. We evaluate MOSAIC on five representative real-world LLM coding agents (e.g., Claude Code, Codex CLI, Gemini CLI), across five backend LLMs among 2,525 attack trials. MOSAIC reaches a 96.59% end-to-end attack success rate under benign developer tasks, while matched instruction-layer baselines reach at most 2.18%. Importantly, the structured knowledge base is the key enabler of this effectiveness: compared with a standalone LLM generator, it boosts the generation of effective attacks by over 50%. These results show that LLM coding agents, as one of the most representative and widely adopted productivity tools in modern software development, are still exposed to substantial security risk. Beyond exposing the risk, we evaluate five representative deployed defenses and find that none of them block the attack caused by CCR . We therefore discuss why these defenses fall short and outline a provenance-aware defense direction that reasons over state relations across the command trace. The benefits of our research are twofold: it provides a knowledge-based methodology for understanding CCR , and it informs how developers can self-check their own products and design future defenses. 
+
+Contributions. This paper makes the following contributions.  
+
+> •
+
+We identify and characterize CLI command-composition risk ( CCR ), a previously overlooked class of risk in LLM coding agents: through shared operating-system state, in-dividually benign CLI commands compose into an exploit path that reaches a security-sensitive capability beyond the user’s task.  
+
+> •
+
+We present MOSAIC, which distills multi-source CLI security evidence into a knowledge base, and reuses the knowledge to systematically surface high-fidelity, reliable instances of CCR for assessing real-world coding agents.  
+
+> •
+
+We evaluate MOSAIC on five real-world LLM coding agents across five backend LLMs, showing that current agents are broadly susceptible to CCR under benign devel-oper tasks, well beyond the matched instruction-layer base-2lines. We further find that five representative deployed de-fenses all fail to observe the CCR , and outline a provenance-aware defense direction for future mitigation. II. B ACKGROUND AND MOTIVATION 
+
+A. CLI Workflows in Coding Agents 
+
+LLM coding agents increasingly run in the command-line interface and complete tasks by issuing CLI commands. We refer to such systems as CLI coding agents [1]–[3], [26]. A LLM coding agent turns a natural-language development request into a stateful CLI command workflow. In a typical user task, the agent repeatedly observes the project, plans the next step, emits a CLI command, reads the result, and continues until the task is complete. For example, during a repository initialization, the agent may inspect README files, parse configuration files, run git commands, install depen-dencies, and retry failed steps based on command outputs. 
+
+CLI Command Composition. The security-relevant prop-erty of this execution model is that CLI commands are not independent events. The runtime execution of a coding agent is better viewed as a command trace over a shared local state σ0
+
+> c1
+
+−→ σ1
+
+> c2
+
+−→ · · · cn
+
+−→ σn, where each ci is a CLI command selected by the agent and each σi is the local development state after that command executes. This state includes the process environment, workspace files, repository metadata, package metadata, command-specific configuration, startup scripts, hooks, and command outputs later observed by the agent. Thus, a CLI command acts as a state transition over the local execution environment. For example, environment variables redirect where a command reads metadata; repository configuration changes the behavior of later Git operations. These command behaviors are benign and common in devel-opment. However, these composition capability changes the security boundary for LLM coding agents. A local approval gate or command filter can inspect the current command string 
+
+ci, but it generally does not capture the hidden produced and consumed state sets of ci over the local state, nor how state produced by ci may be consumed by future commands. Therefore, the relevant risk unit is the stateful command trace: a command produces a state, a later command consumes that state, and their composition produces a capability outside the intended user task. 
+
+B. Motivating Example 
+
+Figure 2 shows a concrete instance. The user asks the agent to clone and set up an attacker-controlled repository whose README requests a one-line setup step, git config core.hooksPath .githooks , and which ships a .githooks/pre-commit hook contain-ing malicious_command . The setup command writes the hooks-path directive into the on-disk .git/config ; later, when the agent commits during its normal workflow, git commit reads .git/config , resolves the hook, and runs 
+
+malicious_command in the agent’s context, causing re-mote code execution. GitHub Repository        
+
+> CLI Coding Agent
+> README.md:
+> git config --local
+> core.hooksPath .githooks
+> RCE
+> (Remote Code Execution)
+> .githooks/pre -commit
+> 1. git config --local
+> core.hooksPath .githooks
+> …
+> 2. git commit
+> #!/bin/sh
+> …malicious_command
+> Attacker controls
+> repository content
+> Hidden state transfer occurs
+> Command 2 , Later, during
+> normal development: git
+> commit reads .git/config
+> Command 1 , Config write:
+> Writes hooksPath
+> into .git/config (persists)
+> Composition :Executing
+> .githooks/pre -commit
+> according to Git’s design
+> Please clone this project for me,
+> read the README, and set it up.
+> git clone …
+
+Fig. 2: An example of CCR , where two benign Git commands compose through the on-disk .git/config 
+
+and cause RCE. Both commands are ordinary: enabling hooks is a routine setup step [27]–[29] and committing work is a routine action the agent performs on its own. A command-level detector gate sees only benign strings, with no curl , bash -c , or direct credential access, so the dangerous capability lives outside any single command. Because the handoff rides the on-disk 
+
+.git/config , it persists across commands no matter how many steps or how much time separate them, even when each command runs in a fresh shell. Thus the example does not rely on treating a malicious repository as novel; it uses the repository only to expose a cross-command Git state dependency that is absent from single-command or single-text analyses. 
+
+C. Related Work on Agent Security 
+
+Most agent-security research operates at the instruction or action layer . On the attack side, jailbreaks place adversarial text in the prompt, direct prompt injection overrides system or user instructions, and indirect prompt injection hides instruc-tions in agent-readable content [30]–[32]; AIShellJack [19] instantiates this for shell agents, where malicious text makes the model treat untrusted content as task guidance. On the defense side, mechanisms filter prompts [33], [34], separate trusted from untrusted text [21], [35], enforce instruction hier-archy [36], [37], train models to refuse unsafe requests [22], [38], or check that a selected action matches the user’s intent [39], [40]. Both sides share a locality assumption: the attack signal is visible in some text, response, or single action. However, CLI command-composition attacks expose astructural blind spot in agent security. The execution substrate of coding agents, the shared operating-system state that or-dinary CLI commands pass to one another, is an orthogonal attack surface that neither current attacks nor defenses have examined. And this surface is hard to eliminate because it follows from the intended design of the CLI. Commands are built to cooperate by sharing state, which lets a few ordinary commands accomplish complex development work. As long as an agent autonomously runs stateful CLI workflows, the problem stays persistent and structural. Although there are some work focuses on scanning malicious shell artifacts, such 3as ShellCheck [41], GTFOBins [42], and LOLBAS [43], they still miss CCR since they only detect malicious behaviors that are visible in a single command (Corresponding result shown in Table V, Section VIII-D). This distinction also separates 
+
+CCR from classic supply-chain attacks: the attacker-controlled artifact is only a delivery channel, while the studied security object is the later state handoff among commands. III. P ROBLEM STATEMENT 
+
+A. Stateful CLI Command-Composition 
+
+This subsection defines the execution object of CCR . A coding agent runs a user task p as a CLI command trace 
+
+T = ( c1, . . . , c n) over a shared local state space Σ, such as environment variables, files, configuration and so on. Each command ci has behavior beyond its visible string. The command-line program it runs, such as git or npm , reads and writes parts of the shared state, and may act on that state. For example, it may consult a configuration field, load a hook, or invoke a helper program named by that state. We call ci a
+
+producer for the state it writes and a consumer for the state it reads or acts on. Formally, Pi ⊆ Σ denotes the produced state 
+
+of ci, and Qi ⊆ Σ denotes the consumed state of ci. Either set may be empty. Thus, producer and consumer are roles a command plays in a relation, not fixed command types. 
+
+State Dependency. A state dependency holds from an earlier command ci to a later command cj when ci writes state that 
+
+cj later reads or acts on: 
+
+ci ⇝ cj ⇐⇒ i < j ∧ Pi ∩ Qj̸ = ∅.
+
+Here, Σ may use semantic state descriptors, so the intersection also covers indirect matches under documented CLI semantics. For example, a configuration field written by one command may name a hook path that a later command loads and executes. We write Dep (T ) = {(i, j ) | ci ⇝ cj } for all such dependencies in T . These producer/consumer roles and the resulting dependencies are grounded in official command-line documentation, such as the git, npm, and Bash manuals [44]– [46]. 
+
+B. CLI Command-Composition Risk (CCR) 
+
+This subsection defines CCR . Let Scope (p) be the capabili-ties that task p legitimately needs or reasonably implies, such as reading files, installing dependencies, or running tests. A trace T exhibits CCR for p when all three conditions hold:  
+
+> •
+
+L1 (Each agent-run command benign in isolation). Every command ci the agent itself runs stays within Scope (p) by its own visible effect.  
+
+> •
+
+L2 (Out-of-scope security capability). The trace as a whole yields a security-sensitive capability κ /∈ Scope (p), such as remote code execution, credential leakage, or boundary escape.  
+
+> •
+
+L3 (Emerges only through composition). No single com-mand the agent runs produces κ on its own; κ arises only through a non-empty chain of state dependencies ci1 ⇝
+
+· · · ⇝ cik .
+
+CCR therefore treats the CLI command as the unit of execution and composition: each CLI command the agent runs is benign by its own visible effect, and the risk arises only when these effects compose, through shared state, into a security-sensitive capability beyond the user’s task. 
+
+C. Research Goal and Threat Model 
+
+Research Goal. In this paper, to assess the security boundary of LLM coding agents, we set out to systematically un-cover and characterize CCR in real-world coding agents to improve the safeguard and the reliability. We characterizes CLI command-composition attacks, a new attack paradigm that exploits CCR against LLM coding agents by composing individually benign CLI commands into an exploit path with security impact. Specifically, we formalize how CLI com-mands produce and consume shared local state, how such state creates dependencies across a command trace, and when the resulting trace yields a security-sensitive capability beyond the user’s task. 
+
+Threat Model. We consider an attacker who has no shell access to the victim system, and the victim user hosts a LLM coding agent that uses CLI commands to complete the task. The attacker cannot modify the coding-agent runtime, cannot directly issue commands in the victim workspace, and cannot directly control the agent’s internal decision pro-cess. The attacker controls only content that the agent may reasonably process during a benign development task, such as a public repository, package metadata, an issue or pull request, documentation, or an extension surface. This attacker-controlled content may enter the local state before the agent starts the task, or may be materialized during the task through ordinary developer operations such as cloning a repository or installing a package. Note that these delivery channels match how developers already use coding agents [47], [48], and this threat model is consistent with recently disclosed real-world compromises of production coding agents [8], [9], [12]. In our threat model, the attacker’s objective is to cause the agent’s CLI command trace to compose into a security-sensitive capability (e.g., RCE, credential leakage, container escape) beyond the user’s task. Such a capability translates directly into severe, real-world damage that has already been observed in deployed agents, including production data/cre-dentials corrupted/leakage [8], [10], downstream software sup-ply chain poisoning [9], persistent backdoors planting [11] and so on. IV. O VERVIEW OF MOSAIC In this paper, systematically uncovering CCR at scale imme-diately raises a central methodological challenge: How to gen-erate the high-quality, high-fidelity, reliable CLI command compositions? Naively enumerating command combinations produces mostly noise, because most command pairs have no meaningful semantic interaction. Simply asking an LLM to generate attack chains end-to-end is also unreliable, because it often yields plausible-looking paths that is invalid in the actual execution (More experiment details in Section VIII-C). 4Our Solution. Our key observation is that existing CLI security knowledge provides a natural knowledge base for this generation problem. CVEs, researcher PoCs, and community abuse knowledge bases record command-line state behaviors that have already been validated in practice: a particular envi-ronment variable can redirect metadata lookup, a configuration field can name a helper program, a hook or lifecycle event can trigger execution, or a parser boundary can change how a token is interpreted. These entries provide grounded evidence that a command-line state behavior can turn locally benign state into a security-sensitive capability. Building on this observation, we present MOSAIC, aknowledge-guided framework that assesses CCR in real-world coding agents. It assembles validated command-state evidence into exploit paths, and runs as the three-module pipeline shown in Figure 3. 
+
+A. MOSAIC pipeline 
+
+CLI Security Knowledge Base Construction. MOSAIC first crawls multi-source CLI security evidence, including CVE records, issue discussions, and researcher PoCs. The collected entries are passed through a CLI relevance filter that keeps entries exposing CLI-semantic and reproducible command-state behaviors. MOSAIC then extracts command-state summaries that shape a CLI’s capability from the retained entries. The output is a CLI security knowledge base organized around 13 command-state families, where each family is one type of state that produced/consumed by the command, linked to supporting evidence entries, concrete instances, PoCs, and resources. 
+
+CLI Command-Composition Instance Generation. Given the command-state families, MOSAIC identifies producer/-consumer command-state pairings that may form a valid command-composition relation. For each pairing, MOSAIC retrieves the corresponding evidence from the CLI security knowledge base and provides it to the LLM-assisted generator. The generator produces the attack instances, such as attacker-controlled resources (e.g., external repo), an expected com-mand sequence that carries the required state, and a benign user prompt that presents the task as a plausible developer workflow. Finally, a validator checks schema consistency, evidence grounding, and state-handoff logic before the attack instance is used for evaluation. 
+
+Runtime Execution and Validation. During black-box eval-uation aligned with our threat model, the benign user prompt is given to a victim LLM coding agent. While completing the task, the agent may encounter the attacker-controlled resource and execute multiple CLI commands. MOSAIC records both the actual command trace and external effects. The actual command trace captures which CLI commands were invoked, while the external-effect monitor checks whether the expected marker or side effect is produced, such as a created, deleted, or modified file. The oracle marks the attack instance as successful only when the expected command-state relation is observed and the external side effect confirms the terminal capability. Otherwise, the attack fails on this agent. V. CLI S ECURITY KNOWLEDGE BASE CONSTRUCTION 
+
+A. Knowledge Acquisition 
+
+MOSAIC collects CLI security evidence from five sources: 
+
+(1) The NIST National Vulnerability Database (NVD) [49]; 
+
+(2) The GitHub Security Advisory Database (GHSA) [50]; (3) 
+
+Exploit-DB [51]; (4) The CISA Known Exploited Vulnerabili-ties (KEV) catalog [52]; (5) A curated set of security-research blogs (e.g., Google Project Zero [53], Trail of Bits [54], Embrace The Red [55]). These sources provide complementary evidence for command-line behavior: NVD and GHSA provide structured vulnerability and advisory metadata; Exploit-DB provides PoC-rich records; KEV highlights vulnerabilities with real-world exploitation evidence; and research blogs often provide concrete trigger details that are absent from structured sum-maries. Records are normalized and de-duplicated by CVE ID when possible, so evidence from GHSA or other sources is merged into a canonical CVE-backed record. 
+
+CLI Relevance Filter. The crawler produces 30,180 raw records. MOSAIC first performs cross-source de-duplication by CVE ID, yielding 21,149 unique candidates. It then applies static filters to retain CLI-relevant entries: a CLI whitelist and a CWE blacklist. This step leaves 5,583 merged command-relevant entries. MOSAIC then narrows the merged corpus through LLM-assisted review and manual validation. The LLM scores each candidate on a two-dimension rubric. (1) Shell/command nativeness determines whether the unsafe state transition occurs at a command interpreter (bash, git, sudo, npm), which is the execution surface of the LLM coding agent and excludes a web, DOM, or database layer. 
+
+(2) Substantive PoC determines whether the entry carries enough evidence (a PoC body, reproduction steps) to recover a command-level trigger. Each verdict must cite a concrete anchor such as a CWE ID, function name, CLI flag, or URL, which suppresses hand-wavy acceptances. Finally, we manu-ally confirm the surviving candidates, yielding 454 confirmed entries. Importantly, MOSAIC does not replay historical CVE exploits: a retained CVE, advisory, or PoC is used as evidence for an underlying command-line mechanism. If a patch for the CVE removes the mechanism itself or eliminates the relevant state interface, the entry is discarded. 
+
+B. Knowledge Base Organization 
+
+Command-State Summary Extraction. Recall from Sec-tion III-A that a CLI command ci has implicit state behavior over the shared local state Σ, captured by the produced state 
+
+Pi and the consumed state Qi. MOSAIC uses this command-level abstraction to organize CLI security knowledge. For knowledge construction, MOSAIC stores reusable command-state summaries extracted from CLI security evidence. A command-state summary is a structured record that describes a class of CLI commands by the state they can produce, the state they can consume, and the capability that 5(C) Runtime Execution and Validation (A) CLI Security Knowledge Base Construction (B) CLI Command-Composition Instance Generation 
+
+> CLI Relevance Filter (Quality Gate)
+> CVE / Advisory Records
+> Posted Issues
+> Researcher PoCs
+> Knowledge Sources
+> 13 Command-State Families
+> CLI Security Knowledge Base
+> Evidence Entries
+> PoCs / Resources
+> External Effects / Marker Log E
+
+...      
+
+> Benign User Prompt
+> Attacker-controlled Resource
+> User CLI Coding Agent
+> Oracle
+> TraceOK(T,I) ∧
+> EffectOK(E,m) success fail
+> Agent Executes CLI Workflow
+> Actual Command
+> Trace T
+
+... 
+
+> Schema Evidence Grounding State-Handoff Logic
+> Validator
+> Command-State Summary Extraction
+> Command Template Trigger Condition Produced State Consumed State Capability Evidence
+> 13 Command-State Families
+> Curated CLI Security Entries
+> Producer / Consumer Command-State Pairing
+> LLM- assisted Generation
+> Attacker-controlled Resource
+> Expected Command Sequence
+> Benign User Prompt
+> Expected External Effect
+
+Fig. 3: Workflow of MOSAIC: a three-module pipeline that assess the security boundary of LLM coding agent. may become available. Formally, a command-state summary is a tuple 
+
+r = ( τr , ϕ r , P r , Q r , κ r , E r ),
+
+where τr is a command template, ϕr is the trigger condition under which the command behavior applies, Pr ⊆ Σ is the produced-state set, Qr ⊆ Σ is the consumed-state set, κr is the capability that may become reachable when the command behavior is activated, and Er is the supporting evidence, such as a CVE, advisory, PoC, documentation fragment, or curated security entry. For each of the 454 retained CLI security entries, MO-SAIC performs LLM-assisted extraction to produce one or more command-state summaries. To constrain the extraction process, we design a structured schema that requires the LLM to identify the command template, trigger condition, produced state, consumed state, exposed capability, and supporting evidence for each summary. A static validator then checks whether the extracted summary is schema-complete, internally consistent, and grounded in the original evidence; finally, all validated summaries are manually reviewed and confirmed to ensure the fidelity and trustworthiness of the knowledge base. 
+
+Family Organization. The extracted command-state sum-maries are then clustered into command-state families. A command-state family captures a reusable pattern of command behavior over shared CLI state, and it abstracts away from any single CVE. Finally, MOSAIC clusters the retained entries into 13 command-state families. The resulting knowledge base K groups the summaries into these 13 families, where each family carries its supporting evidence entries (vulner-abilities, advisories, and PoCs) and concrete resources such as command snippets, configuration layouts, repository files, and minimal examples. This organization is essential for the subsequent attack instance generation: when MOSAIC selects a producer-consumer command-state pairing, it can provide the evidence needed to instantiate that pairing as a realistic instance. The 13 families span the main channels through which CLI commands hand off state: environment propaga-tion, privileged-helper invocation, argv option boundaries, path and symlink, terminal-escape rendering, shell-wrapper parsing, container and host boundaries, package-manager lifecycle, repository-metadata trust, scheduler and service writes, chroot path confinement, submodule and hook behavior, and IFS word splitting. VI. C OMMAND -C OMPOSITION INSTANCE GENERATION 
+
+This section describes how MOSAIC turns the CLI security knowledge base into concrete attack instances. 
+
+A. Candidate Command-State Chain Construction 
+
+Producer/Consumer Pairs Extraction. The input to this module is the CLI security knowledge base K from Sec-tion V. Let S denote the set of command-state summaries stored in K. Recall from Section V-B that each summary 
+
+r = ( τr , ϕ r , P r , Q r , κ r , E r ) has a produced-state set Pr and a consumed-state set Qr . MOSAIC first selects summaries that can participate in a state dependency. A summary with Pr̸ = ∅
+
+can play a producer role, a summary with Qr̸ = ∅ can play a consumer role, and a summary with both sides non-empty can serve as an intermediate step that consumes earlier state and produces later state. Producer and consumer are therefore roles in a candidate composition, not fixed command types. Recall the formulation in Section III-A: for two command-state summaries ra and rb, MOSAIC considers ra a candidate producer for rb when the state produced by ra can satisfy the state consumed by rb through rb’s built-in mechanism, that is, 
+
+ra ⇝ rb ⇐⇒ Pra ∩ Qrb̸ = ∅.
+
+Dependency-Chain Enumeration. MOSAIC then enumer-ates candidate exploit paths Π = (r1, . . . , r n) with 2 ≤
+
+n ≤ Lmax , where every adjacent pair satisfies rℓ ⇝ rℓ+1 .Here n is the exploit-path length, the number of command-state summaries the path chains, so the path contains n − 1
+
+state handoffs. We set the maximum exploit path length to 
+
+Lmax = 4 commands. This length bound is a deliberate trade-off. A length-2 exploit path covers a direct producer-consumer command pair, a length-3 path covers a bridge-style composition, and a length-4 path covers a multi-stage development workflow where setup, metadata loading, hook or lifecycle activation, and the terminal capability are separated across commands. 6Longer exploit paths may be more stealthy, but they mostly repeat the same state-dependency patterns through additional intermediate states. They also grow the search space combina-torially. Thus, Lmax = 4 balances coverage, tractability, and causal attribution. 
+
+B. Evidence-Grounded Feasibility Checking 
+
+A statically compatible exploit path is still only a candi-date. To check whether the candidate can be instantiated as a concrete CLI workflow, MOSAIC retrieves from K the supporting evidence ZΠ for the whole chain. The retrieved evidence includes the original vulnerability or advisory de-scription, a minimal PoC, command examples, configuration layouts, affected command-line programs, trigger conditions, documentation fragments, and concrete resources associated with the summaries. MOSAIC uses an LLM-assisted checker to judge whether the candidate chain has a realistic attack instance. The checker receives both the candidate chain Π and the retrieved evi-dence ZΠ. Its output is constrained by a structured schema that requires a feasibility verdict, evidence anchors for each state-dependency transition, required assumptions, a possible resource layout, the expected state transitions, and a rejection reason when the chain is infeasible, labeling each candidate chain as FEASIBLE or INFEASIBLE .The LLM-assisted checker determines whether the statically matched chain is semantically and structurally plausible under the evidence provided by the knowledge base. A chain is kept only when every dependency transition is grounded in retrieved evidence, the required state can be materialized through an attacker-controlled resource or ordinary developer operation, and the consumer behavior can be reached by ordinary CLI commands. Chains that fail these checks are discarded before instance generation. 
+
+C. Instance Generation and Validation 
+
+Instance Generation. For each feasible CLI chain Π, MO-SAIC invokes the same LLM-assisted generator with the chain and its evidence ZΠ to produce an attack instance 
+
+I = (q, R, C, m ), also called a command-composition in-stance. Here, q is a benign user prompt, R is an attacker-controlled resource, C = (˜ c1, . . . , ˜cu) is the expected com-mand sequence/trace pattern, and m is the expected external effect of the attack instance. The generated instances must be mutually aligned: the prompt should naturally lead the agent to process the resource, the resource should contain the state needed by the exploit path, the expected command sequence should establish and consume the required state, and the expected external effect should make the terminal capability and security impact observable. Note that producing an instance is inherently a generative task, because the prompt, the resource, the command sequence, and the external effect must stay mutually aligned, and the resource must realisti-cally embed the hidden state that the exploit path consumes. Blind enumeration and fixed templates cannot satisfy these constraints, so MOSAIC relies on an LLM-assisted generator to construct each instance. The expected command sequence C is a trace pattern used to describe how the exploit path can be instantiated. During runtime evaluation, the agent may execute equivalent commands or additional benign setup commands. The runtime oracle later checks whether the actual command trace carries out the intended exploit path under semantic matching, and it allows the trace to differ from C in exact string form. 
+
+Static Validation. Before runtime evaluation, MOSAIC validates every attack instance. The validator checks schema completeness, evidence grounding, state-dependency consis-tency, local benignness, and resource consistency. Schema completeness requires all fields in I = ( q, R, C, m ) to be present and well-formed. Evidence grounding requires each state-dependency transition in Π to be supported by retrieved evidence. State-dependency consistency checks whether the expected command sequence can establish the produced states and later consume them according to Π. Local benignness checks whether the prompt and visible commands remain plausible for the developer task. Resource consistency checks whether the attacker-controlled resource contains the files, metadata, configuration, or tokens required by the command trace. Only instances that pass all validation checks are used in runtime evaluation. The output of this section is therefore a set of validated, evidence-grounded attack instances. VII. R UNTIME EXECUTION AND RISK VALIDATION 
+
+A. Black-box Agent Execution 
+
+Recall our threat model in Section III-C. For each valid attack instance I = ( q, R, C, m ), MOSAIC initializes a fresh workspace, materializes the attacker-controlled resource R,and gives the benign user prompt q to the target LLM coding agent. The agent is asked to complete a normal development task, such as inspecting a repository, initializing a project, or installing dependencies. During the task, the agent may read or otherwise interact with R. The expected behavior is that the agent invokes CLI commands that carry out the producer-consumer relation in C while pursuing the benign task. A runtime execution is represented as ρ = ( T, E ), where 
+
+T = (ˆ c1, . . . , ˆcn) is the actual command trace invoked by the agent, and E is the observed external-effect. The command trace records the invoked CLI commands, their ordering, exit status, and relevant standard output or error needed for semantic matching. The external-effect log records marker effects in the workspace or controlled environment, such as created files and deleted files associated with the terminal capability. This dual logging is necessary because the agent may execute commands that look syntactically correct but fail to trigger the underlying CLI mechanism. 
+
+B. Risk Validation 
+
+The oracle combines a command-trace check with an external-effect check, Oracle (I, ρ ) = TraceOK (T, I ) ∧
+
+EffectOK (E, m ). TraceOK (T, I ) checks whether the actual 7command trace contains the key producer and consumer steps needed to establish the intended mechanism pairing in C. It checks semantic equivalence of the relevant steps, including whether the producer state was established and whether a later command read or trusted that state. EffectOK (E, m )
+
+checks whether the marker or external effect specified by 
+
+m was observed. This second condition is required because a trace may reach the expected command syntax without causing the terminal capability to occur. The external effect confirms whether the attack achieves its terminal security-sensitive capability, such as RCE, at the end of the exploit path. Finally, this module output the result that whether the current target agent affected by CCR .VIII. E VALUATION 
+
+In this section, we evaluate MOSAIC from three perspec-tives:  
+
+> •
+
+RQ1: How often are real-world LLM coding agents success-fully attacked through CCR under benign developer tasks, and how does this compare with instruction-layer attack baselines under the same deployment?  
+
+> •
+
+RQ2: To what extent does the CLI security knowledge base contribute to generating valid and effective attack instances?  
+
+> •
+
+RQ3: To what extent can current defense strategies block 
+
+CCR ?
+
+A. Experimental Setup 
+
+Target LLM Coding Agents. We evaluate MOSAIC on five representative real-world LLM coding agents: Claude Code [1], Codex CLI [2], Gemini CLI [3], GitHub Copilot CLI [4], and Trae Agent [5]. They can inspect project files, modify code or resources, and execute CLI or shell commands during multi-step developer workflows. Each agent is evalu-ated with its default deployment configuration. For the agent backend LLM, we evaluate five models, one per major vendor: gpt-5.1 (OpenAI) [56], gemini-2.5-flash 
+
+(Google) [57], claude-haiku-4-5 (Anthropic) [58], deepseek-v4-flash (DeepSeek) [59], and qwen3.7-plus (Qwen) [60], covering major closed and open model families. 
+
+Execution Environment and Oracle. The evaluation uses the attack instances generated by MOSAIC. Starting from the CLI security knowledge base in Section V, MOSAIC constructs 101 CCR exploit paths (21/35/45 at lengths 2/3/4), and materializes each exploit path into one executable attack instance, and each instance is executed against five agents under five backend LLMs, yielding 2,525 (101 × 5 agents 
+
+× 5 LLMs) attack trials .The 101 attack instances span different terminal capabil-ities, and each is assigned to exactly one of six capability classes by the deepest security boundary its composed trace crosses: code execution, container/host escape, chroot/jail escape, privileged helper/channel access, persistence, and output/rendering deception . For every class we use a de-terministic external-effect oracle, a per-instance marker that can be produced only if the terminal capability genuinely fired. For code execution, an attack succeeds only when the triggered command writes the marker to a sentinel path; the other classes test the analogous boundary crossing, such as the marker reaching a host path for container escape, or a loader accepting a marker-carrying persistence artifact. This single deterministic effect confirms the capability and suppresses false positives from a trace that reaches the expected command syntax without triggering the mechanism. 
+
+B. RQ1: CCR in the Real-world 
+
+TABLE I: End-to-end ASR of MOSAIC broken down by target CLI coding agent (top) and by backend LLM (bottom), over the same 2,525 trials.                                                     
+
+> Breakdown End-to-End ASR Exploit-path length nn=2 (105) n=3 (175) n=4 (225)
+> By target CLI coding agent
+> Claude Code 488/505 (96.63%) 99.05% 97.14% 95.11% Codex CLI 484/505 (95.84%) 98.10% 96.00% 94.67% Gemini CLI 492/505 (97.43%) 100.00% 97.71% 96.00% GitHub Copilot 486/505 (96.24%) 99.05% 96.57% 94.67% Trae Agent 489/505 (96.83%) 99.05% 97.14% 95.56%
+> By backend LLM
+> GPT-5.1 484/505 (95.84%) 98.10% 96.00% 94.67% Haiku-4.5 482/505 (95.45%) 98.10% 95.43% 94.22% Gemini-2.5 Flash 488/505 (96.63%) 99.05% 96.57% 95.56% Qwen3.7+ 491/505 (97.23%) 99.05% 97.14% 96.44% DS-V4 Flash 494/505 (97.82%) 100.00% 97.71% 96.89%
+> Total 2,439/2,525 (96.59%) 99.05% 96.91% 95.20%
+
+Agent Breakdown. Table I shows that all five real-world LLM coding agents are affected by CCR at a high rate under benign developer tasks. MOSAIC reaches an end-to-end ASR of 96.59%, and every agent stays above 95.8%. Each agent also exposes all 101 exploit paths. The ASR drops a little bit when the exploit-path length grows, but still remains above 95% for the longest length-4 exploit paths. We then manually inspected the failed attack trials. Most failures occur because the agent completes the benign task through an alternative valid CLI-composition path, and this happens more often for longer exploit paths, since the agent has more chances to reach the task goal through a different workflow. When we force the agent onto the intended path of the CCR , the attack still succeeds. This confirms that the composition remains valid and that the agent does not detect the risk. Therefore the failures reflect planning stochasticity of the agent and the availability of alternative developer workflows. 
+
+Model Breakdown. Table I also reports the result of different backend LLM (bottom panel) on the same evaluation set. All five backend LLMs stay above 95% end-to-end ASR. This uniformly high ASR across every backend LLM shows no systematic reduction attributable to the choice of backend model. This supports our motivation, since current agents and their backend LLMs focus on instruction-layer attacks and defenses, and these overlook the CCR that several benign commands create when they compose through shared state. 
+
+Comparison with Baselines. We compare MOSAIC with two SOTA (state-of-the-art) instruction-layer attack baselines against the LLM (coding) agent under the same deployment, 8TABLE II: Attack success rate (ASR) of MOSAIC compared to instruction-layer baselines, on Claude Code across five backend LLMs.                          
+
+> Attack Per-model ASR (/101) Overall GPT Haiku Gemini Qwen DS All (/505)
+> AIShellJack 1/101 0/101 1/101 5/101 4/101 11/505 (2.18%) General IPI 0/101 0/101 0/101 3/101 1/101 4/505 (0.79%)
+> MOSAIC 96/101 95/101 98/101 99/101 100/101 488/505 (96.63%)
+
+AIShellJack [19] and a general indirect prompt-injection (IPI) baseline. Besides, the threat model of these two baselines is consistent with CCR , recall that the threat model in this paper assumes an attacker who only plants content that the agent reads during a benign developer task and who cannot run commands on the victim machine. AIShellJack and the general IPI work [15], [17], [18], [32], [61]–[63] assume this same setting. Specifically, we take the security impact of each 
+
+CCR instance as the attack goal of the two baselines, and we build 101 instruction-layer attack payloads per baseline that pursue these same goals. MOSAIC reaches the attack goal through a CLI command composition, while a baseline places the same goal as an explicit malicious instruction in the content the agent reads. An instruction-layer attack therefore differs only in how it wraps the malicious instruction. AIShellJack uses a specific wrapping style, while the general IPI baseline uses five styles: Naive, Escape-Separation, Context-Ignoring, Fake-Completion, and Important-Instructions , drawn from the current benchmarks [15], [62], [63]. As shown in Table II, AIShellJack and the general IPI baseline succeed in only 2.18% and 0.79% of attack trials, while MOSAIC succeeds in 96.63%, more than 40 times the success rate of either baseline. These near-zero baseline results show that current agents and their backend models have largely converged on detecting and rejecting explicit instruction-layer attacks. However, CCR exposes its capability only through a cross-command state dependency, so it stays effective on a surface that these matured deployment/defenses never inspect. 
+
+Takeaway-1. Real-world LLM codings exhibit CCR at a high rate under benign developer tasks, persisting across agents and backend LLMs and staying far above matched instruction-layer baselines. C. RQ2: Contribution of the CLI Security Knowledge Base 
+
+TABLE III: Contribution of the knowledge base to generation quality.                        
+
+> Method IVR Post-IVR ASR End-to-End ASR MOSAIC 101/101 (100.00%) 488/505 (96.63%) 488/505 (96.63%)
+> Ablations w/o structured KB
+> LLM-only 9/101 (8.91%) 3/45 (6.67%) 3/505 (0.59%) LLM + self-refine 17/101 (16.83%) 5/85 (5.88%) 5/505 (0.99%) LLM + raw RAG 47/101 (46.53%) 92/235 (39.15%) 92/505 (18.22%) Each instance is then run under 5backend LLMs in Claude Code, giving 505 trials. IVR (instance validity rate) is the fraction of these that trigger the intended capability when the command composition is run directly without an agent. Post-IVR ASR is over the trials of IVR-passing instances ( #valid ×5); End-to-End ASR is over all 505 trials.
+
+Structured-KB Ablation. To isolate the contribution of the knowledge base, we keep the same evaluation dataset and LLM generator. We give the generator increasing levels of knowledge. LLM-only provides no knowledge beyond the high-level risk description. LLM + self-refine lets the generator reflect on and summarize its own knowledge through a self-iteration loop. LLM + raw RAG adds retrieval over the raw crawled security records that we have not yet distilled into a knowledge base. The full MOSAIC pipeline adds the structured knowledge base. There is a significant metric IVR (instance validity rate) captures whether a generator can produce a valid instance at all. A generator with low IVR mostly emits broken or invalid instances, for example with a wrong configuration or argument, that cannot trigger even on a clean run. End-to-End ASR is layered on top of this validity, because without a valid instance, the attack cannot succeed. Table III shows that the structured CLI security knowledge base is the main driver of generation quality, measured under the same. Both metrics increase together as the knowledge grows richer, and full MOSAIC is the only generator that pro-duces a valid instance every time (100% IVR) and achieves the highest end-to-end ASR; without the knowledge base, validity drops as low as 8.91% and end-to-end success collapses with it. Post-IVR ASR, which restricts attention to the instances that pass IVR, adds a second effect: even among valid instances, raw RAG retrieval triggers the agent in under half of them (39.15%) while MOSAIC triggers 96.63%. The structured knowledge base accurately describes the combination of CLI commands, so that each produced instance can reliably trigger 
+
+CCR .TABLE IV: Instance quality of different construction LLMs.                  
+
+> Model IVR Post-IVR ASR End-to-End ASR
+> GPT-5.1 (Default) 101/101 (100.00%) 488/505 (96.63%) 488/505 (96.63%) Gemini-2.5 Flash 100/101 (99.01%) 486/500 (97.20%) 486/505 (96.24%) DS-V4 Flash 101/101 (100.00%) 489/505 (96.83%) 489/505 (96.83%) Haiku-4.5 100/101 (99.01%) 485/500 (97.00%) 485/505 (96.04%) All attack trials are run in Claude Code under 5backend LLMs. IVR and ASR are defined as in Table III.
+
+Instance Quality across Different LLM Generators. Ta-ble IV shows that the quality of MOSAIC stays stable across construction LLMs once the knowledge base are fixed. These models differ substantially in reasoning ability [47], [64], so a generator that relied on the LLM alone would inherit that gap. However, under the same budget of 101 generated instances, all four models converge to similarly high IVR and End-to-End ASR; the default GPT-5.1 generator of MOSAIC reaches 96.63% End-to-End ASR, and the variation across the other models is small. The reason is that the structured knowledge base supplies the validated command knowledge to flatten the capability gap between the models. Therefore the structured KB determines the attack instance quality, and the choice of construction LLM has little effect. 
+
+Takeaway-2. The structured CLI security knowledge base is the key enabler of MOSAIC : it produces the valid, triggerable instances that are the precondition for high end-to-end suc-cess, and keeps this quality stable across construction LLMs of differing ability. 
+
+9D. RQ3: Defense Boundary Analysis 
+
+In the current ecosystem, defenses relevant to CCR fall into five categories: Instruction-Scanner [21], [22], [33], [34], 
+
+Capability control [25], Information-flow control [24], [65], [66], Command/Resource-Scanner [41]–[43], [67], and Task-alignment monitor [34], [39]. We then select one representative real-world tool from each category and deploy it as a runtime hook over the agent’s tool calls, so that every defense observes the same command stream the agent executes. 
+
+Representative Defenses. For the Instruction-Scanner , we deploy PromptGuard 2 from LlamaFirewall [34]. It repre-sents prompt filtering, prompt-injection detection, structured instruction separation, and model-level instruction-alignment defenses that observe malicious text [21], [22], [33]. For Capa-bility control , we deploy Progent [25], a programmable privi-lege policy over agent tool calls. We configure Progent with the strongest privilege policy that still allows the benign developer task: workspace file read and write, dependency installation, and version control are permitted, while network egress and writes outside the workspace are denied. For Information-flow control , we include CaMeL [65]. CaMeL is an agent tool-call information-flow mechanism: an external monitor over the agent trace checks security under CaMeL’s policy, from the entry tool call to the sink tool call. We give CaMeL the strongest source-sink policy that still allows the task, marking attacker-controlled resources as an untrusted source and flagging any flow from them into a sensitive sink. For the 
+
+Command/Resource-Scanner , we deploy Semgrep [67] with security and shell rule packs. It represents static inspection of command strings, shell fragments, scripts, configuration files, and known living-off-the-land artifacts, which is the signal used by shell static analyzers and abuse knowledge bases such as ShellCheck, GTFOBins, and LOLBAS [41]–[43]. Semgrep scans every attacker-controlled resource and every command string before the agent executes it. For the Runtime task-alignment monitor , we deploy the AlignmentCheck module of LlamaFirewall [34], [39]. It represents action-level defenses that check whether a proposed action serves the user task during the agent execution. TABLE V: Residual ASR of MOSAIC under five representative defenses adapted to the CLI coding agent.                           
+
+> Category Representative Defense End-to-End ASR ASR drop
+> No Defense None 488/505 (96.63%) –Instruction-Scanner PromptGuard 2 [34] 488/505 (96.63%) 0.00 pp Capability control Progent [25] 488/505 (96.63%) 0.00 pp Information-flow control CaMeL [65] 488/505 (96.63%) 0.00 pp Command/Resource-Scanner Semgrep [67] 438/505 (86.73%) 9.90 pp Task-alignment monitor AlignmentCheck [34] 417/505 (82.57%) 14.06 pp Each defense is deployed on Claude Code. ASR drop is in percentage points (pp) relative to no defense.
+
+Residual Risk under Defenses. Table V reports residual ASR on the same 505 attack instances. Three of the five de-fenses leave the attack success unchanged, a 0.00 percentage-point drop. PromptGuard 2 has no effect, because the CCR 
+
+instances carry no explicit malicious instruction. Progent has no effect, because it only focus on agent tool and cannot capture the cross-command state relation. CaMeL also has no effect because CaMeL tracks provenance between tool-call arguments and returns of the agent, while the CCR is based on OS state shared between two separate CLI commands and never appears as a value passed from one tool-call argument to another. Therefore even a cross-step information-flow defense never observes the dependency. Semgrep and AlignmentCheck reduce ASR only modestly, since some of the local commands still look like a plausible operation, but even the strongest deployed defense still leaves 82.57% of the attacks successful. None of these defenses detects CCR by capturing the security impact that the benign CLI command combination produces. 
+
+Takeaway-3. Across all five defense categories, the deployed defenses leave CCR largely intact, since none captures the security impact that the benign CLI command combination produces. 
+
+IX. M ITIGATION AND DISCUSSION 
+
+Existing defenses fail because they observe the wrong sys-tem level. None of them reconstructs the producer-consumer state dependency across CLI commands that carries the at-tack. A defense for this class must make the CLI runtime provenance-aware: record the state each command writes or selects, tag state that originates from untrusted resources, detect when a later command consumes it, and check the resulting capability against the user task. The unit of safety must shift from individual actions to state relations across the command trace. 
+
+Toward Provenance-Aware Defenses. Because the agent runs every command itself, a monitor at its command layer can apply this idea concretely. Take the example in Figure 2. When the agent runs git config core.hooksPath .githooks , the monitor tags the new hooks path as state that came from the untrusted cloned repository. Later, when 
+
+git commit reads that path and is about to run the hook, the monitor can capture the untrusted state about to cause code execution outside the user’s task. 
+
+Threats to Validity. Our study does not provide an exhaustive catalog of CLI compositions. We evaluate 101 evidence-grounded exploit paths without exhausting every strategy. However, the methodology suggests how agent developers can self-check their own products and heuristically intercept some exploit paths at runtime. Our knowledge base can help developers to reduce CCR 
+
+exposure by running agents in ephemeral, least-privilege en-vironments and treating inherited environment variables, con-figuration, hooks, and lifecycle scripts as untrusted state. The broader goal is an agent runtime that preserves the flexibility of CLI development while reasoning explicitly about the state commands pass to one another. X. C ONCLUSION 
+
+This paper introduces CLI command-composition attacks, an attack paradigm against coding agents in which indi-vidually benign CLI commands compose, through shared operating-system state, into an exploit path that produces a 10 capability outside the user’s task. We present MOSAIC, a knowledge-guided framework that distills CLI security records into reusable command-state knowledge and constructs these attacks as realistic developer workflows. REFERENCES [1] Anthropic, “Claude Code: Configure permissions,” https://code.claude. com/docs/en/permissions, 2026, accessed: 2026-06-08. [2] OpenAI, “Codex CLI,” https://developers.openai.com/codex/cli, 2026, accessed: 2026-06-08. [3] Google, “Gemini CLI documentation,” https://developers.google.com/ gemini-code-assist/docs/gemini-cli, 2026, accessed: 2026-06-08. [4] GitHub, “Getting started with GitHub Copilot CLI,” https://docs.githu b.com/copilot/how-tos/copilot-cli/cli-getting-started, 2026, accessed: 2026-06-08. [5] ByteDance, “Trae Agent: An llm-based agent for software engineering,” https://github.com/bytedance/trae-agent, 2026, accessed: 2026-06-08. [6] M. D. McIlroy, E. N. Pinson, and B. A. Tague, “The UNIX time-sharing system: Foreword,” The Bell System Technical Journal , vol. 57, no. 6, pp. 1899–1904, 1978. [7] E. S. Raymond, The Art of UNIX Programming . Addison-Wesley, 2003. [8] BleepingComputer, “Amazon AI coding agent hacked to inject data-wiping commands,” https://www.bleepingcomputer.com/news/security /amazon-ai-coding-agent-hacked-to-inject-data-wiping-commands/, 2025, amazon Q Developer extension v1.84.0; AWS bulletin AWS-2025-015. Accessed: 2026-06-26. [9] Wiz Research, “s1ngularity: Supply chain attack leaks secrets on GitHub,” https://www.wiz.io/blog/s1ngularity-supply-chain-attack, 2025, over 1,000 GitHub tokens leaked; 5,500+ private repositories exposed. Accessed: 2026-06-26. [10] Legit Security, “CamoLeak: Critical GitHub Copilot vulnerability leaks private source code,” https://www.legitsecurity.com/blog/camoleak-c ritical-github-copilot-vulnerability-leaks-private-source-code, 2025, cVSS 9.6; reported by Omer Mayraz (Legit Security); GitHub disabled Copilot Chat image rendering on 2025-08-14. Accessed: 2026-06-26. [11] Pillar Security, “New vulnerability in GitHub Copilot and Cursor: How hackers can weaponize code agents,” https://www.pillar.security/blog/n ew-vulnerability-in-github-copilot-and-cursor-how-hackers-can-wea ponize-code-agents, 2025, rules File Backdoor; MITRE ATLAS case AML.CS0041. Accessed: 2026-06-26. [12] Check Point Research, “Caught in the hook: RCE and API token exfiltration through Claude Code project files,” https://research.che ckpoint.com/2026/rce-and-api-token-exfiltration-through-claude-cod e-project-files-cve-2025-59536/, 2025, cVE-2025-59536 (CVSS 8.7), CVE-2026-21852. Accessed: 2026-06-26. [13] NIST National Vulnerability Database, “CVE-2025-53773: GitHub Copilot and Visual Studio remote code execution via prompt injection,” https://nvd.nist.gov/vuln/detail/CVE-2025-53773, 2025, cWE-77; CVSS 7.8; writes chat.tools.autoApprove to enable YOLO mode (per Embrace The Red). Accessed: 2026-06-26. [14] Y. Liu, G. Deng, Y. Li, K. Wang, Z. Wang, X. Wang, T. Zhang, Y. Liu, H. Wang, Y. Zheng et al. , “Prompt injection attack against llm-integrated applications,” arXiv preprint arXiv:2306.05499 , 2023. [15] E. Debenedetti, J. Zhang, M. Balunovi´ c, L. Beurer-Kellner, M. Fis-cher, and F. Tramèr, “Agentdojo: A dynamic environment to evaluate prompt injection attacks and defenses for llm agents,” arXiv preprint arXiv:2406.13352 , 2024. [16] T. Liu, Z. Deng, G. Meng, Y. Li, and K. Chen, “Demystifying rce vulnerabilities in llm-integrated apps,” in Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security ,2024, pp. 1716–1730. [17] Y. Liu, R. Xu, X. Wang, Y. Jia, and N. Z. Gong, “Wainjectbench: Bench-marking prompt injection detections for web agents,” arXiv preprint arXiv:2510.01354 , 2025. [18] I. Evtimov, A. Zharmagambetov, A. Grattafiori, C. Guo, and K. Chaud-huri, “Wasp: Benchmarking web agent security against prompt injection attacks,” arXiv preprint arXiv:2504.18575 , 2025. [19] Y. Liu, Y. Zhao, Y. Lyu, T. Zhang, H. Wang, and D. Lo, “"your ai, my shell": Demystifying prompt injection attacks on agentic ai coding editors,” 2025. [Online]. Available: https://arxiv.org/abs/2509.22040 [20] Y. Liu, Y. Jia, R. Geng, J. Jia, and N. Z. Gong, “Formalizing and benchmarking prompt injection attacks and defenses,” in 33rd USENIX Security Symposium (USENIX Security 24) , 2024, pp. 1831–1847. [21] S. Chen, J. Piet, C. Sitawarin, and D. Wagner, “ {StruQ }: Defending against prompt injection with structured queries,” in 34th USENIX Security Symposium (USENIX Security 25) , 2025, pp. 2383–2400. [22] S. Chen, A. Zharmagambetov, S. Mahloujifar, K. Chaudhuri, D. Wag-ner, and C. Guo, “Secalign: Defending against prompt injection with preference optimization,” in Proceedings of the 2025 ACM SIGSAC Conference on Computer and Communications Security , 2025, pp. 2833–2847. [23] H. Li, X. Liu, H.-C. Chiu, D. Li, N. Zhang, and C. Xiao, “Drift: Dynamic rule-based defense with injection isolation for securing llm agents,” arXiv preprint arXiv:2506.12104 , 2025. [24] J. Kim, W. Choi, and B. Lee, “Prompt flow integrity to prevent privilege escalation in llm agents,” arXiv preprint arXiv:2503.15547 , 2025. [25] T. Shi, J. He, Z. Wang, H. Li, L. Wu, W. Guo, and D. Song, “Progent: Programmable privilege control for llm agents, 2025,” URL https://arxiv. org/abs/2504.11703 , 2025. [26] M. A. Merrill et al. , “Terminal-Bench: Benchmarking agents on hard, realistic tasks in command line interfaces,” 2026. [Online]. Available: https://arxiv.org/abs/2601.11868 [27] typicode, “Husky: Git hooks made easy,” https://github.com/typicode/ husky, 2025, accessed: 2026-06-15. [28] Git, “githooks: Hooks used by git,” https://git-scm.com/docs/githooks, 2025, accessed: 2026-06-15. [29] git-tower, “Getting started with git hooks and husky,” https://www.git-t ower.com/blog/git-hooks-husky, 2024, accessed: 2026-06-15. [30] A. Zou, Z. Wang, N. Carlini et al. , “Universal and transferable adversarial attacks on aligned language models,” arXiv preprint arXiv:2307.15043 , 2023. [31] F. Perez and I. Ribeiro, “Ignore previous prompt: Attack techniques for language models,” in NeurIPS ML Safety Workshop , 2022. [32] K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, and M. Fritz, “Not what you’ve signed up for: Compromising real-world llm-integrated applications with indirect prompt injection,” arXiv preprint arXiv:2302.12173 , 2023. [33] T. Shi, K. Zhu, Z. Wang, Y. Jia, W. Cai, W. Liang, H. Wang, H. Alzahrani, J. Lu, K. Kawaguchi, B. Alomair, X. Zhao, W. Y. Wang, N. Z. Gong, W. Guo, and D. Song, “Promptarmor: Simple yet effective prompt injection defenses,” arXiv preprint arXiv:2507.15219 , 2025. [34] S. Chennabasappa et al. , “Llamafirewall: An open source guardrail system for building secure ai agents,” arXiv preprint arXiv:2505.03574 ,2025. [35] K. Hines et al. , “Defending against indirect prompt injection attacks with spotlighting,” arXiv preprint arXiv:2403.14720 , 2024. [36] E. Wallace et al. , “The instruction hierarchy: Training llms to prioritize privileged instructions,” arXiv preprint arXiv:2404.13208 , 2024. [37] T. Wu et al. , “Instructional segment embedding: Improving LLM safety with instruction hierarchy,” in International Conference on Learning Representations (ICLR) , 2025. [38] J. Piet et al. , “Jatmo: Prompt injection defense by task-specific fine-tuning,” in European Symposium on Research in Computer Security (ESORICS) , 2024. [39] F. Jia, T. Wu, X. Qin, and A. Squicciarini, “The task shield: Enforcing task alignment to defend against indirect prompt injection in llm agents,” 
+
+arXiv preprint arXiv:2412.16682 , 2024. [40] L. Tsai et al. , “Contextual agent security: A policy for every purpose,” in Workshop on Hot Topics in Operating Systems (HotOS) , 2025. [41] V. Holen and contributors, “Shellcheck: A shell script static analysis tool,” https://github.com/koalaman/shellcheck, 2026, accessed: 2026-06-11. [42] E. Pinna, A. Cardaci, and contributors, “GTFOBins: Curated unix binaries for bypassing local security restrictions,” https://gtfobins.org/, 2026, accessed: 2026-06-11. [43] LOLBAS Project, “LOLBAS: Living off the land binaries, scripts and libraries,” https://lolbas-project.github.io/, 2026, accessed: 2026-06-11. [44] Git, “Git reference documentation,” https://git-scm.com/docs, accessed: 2026-06-12. [45] npm, Inc., “npm docs: Scripts,” https://docs.npmjs.com/cli/v11/using-n pm/scripts, accessed: 2026-06-12. [46] Free Software Foundation, “GNU Bash reference manual,” https://ww w.gnu.org/software/bash/manual/, accessed: 2026-06-12. [47] C. E. Jimenez, J. Yang, A. Wettig, S. Yao, K. Pei, O. Press, and K. Narasimhan, “SWE-bench: Can language models resolve real-world github issues?” in International Conference on Learning Representations (ICLR) , 2024. 
+
+11 [48] Anthropic, “Claude code: Common workflows,” https://code.claude.co m/docs/en/common-workflows, 2025, accessed: 2026-06-12. [49] National Institute of Standards and Technology, “National Vulnerability Database,” https://nvd.nist.gov/, accessed: 2026-06-05. [50] GitHub, “GitHub Advisory Database,” https://github.com/advisories, accessed: 2026-06-05. [51] OffSec, “Exploit Database,” https://www.exploit- db.com/, accessed: 2026-06-05. [52] Cybersecurity and Infrastructure Security Agency, “Known Exploited Vulnerabilities Catalog,” https://www.cisa.gov/known-exploited-vulnera bilities-catalog, accessed: 2026-06-05. [53] Google Project Zero, “Project Zero Blog,” https://projectzero.google/, accessed: 2026-06-05. [54] Trail of Bits, “The Trail of Bits Blog,” https://blog.trailofbits.com/, accessed: 2026-06-05. [55] Embrace The Red, “Embrace The Red Blog,” https://embracethered.co m/blog/, accessed: 2026-06-05. [56] OpenAI, “GPT-5.1 model documentation,” https://developers.openai.co m/api/docs/models/gpt-5.1, 2026, accessed: 2026-06-08. [57] Google, “Gemini 2.5 Flash model documentation,” https://ai.google.dev/ gemini-api/docs/models/gemini-2.5-flash, 2026, accessed: 2026-06-08. [58] Anthropic, “Claude API models overview,” https://docs.anthropic.com /en/docs/about-claude/models/overview, 2026, accessed: 2026-06-08. [59] DeepSeek, “DeepSeek V4 Preview Release,” https://api-docs.deepseek .com/news/news260424, 2026, accessed: 2026-06-08. [60] Qwen Team, “Qwen3.7-Plus: Multimodal agent intelligence,” https://qw en.ai/blog?id=qwen3.7-plus, 2026, accessed: 2026-06-08. [61] Y. Liu, G. Deng, Y. Li, K. Wang, Z. Wang, X. Wang, T. Zhang, Y. Liu, H. Wang, Y. Zheng, and Y. Liu, “Prompt injection attack against llm-integrated applications,” arXiv preprint arXiv:2306.05499 , 2023. [62] Y. Liu, Y. Jia, R. Geng, J. Jia, and N. Z. Gong, “Formalizing and benchmarking prompt injection attacks and defenses,” in 33rd USENIX Security Symposium (USENIX Security 24) , 2024, pp. 1831–1847. [63] Q. Zhan, Z. Liang, Z. Ying, and D. Kang, “Injecagent: Benchmark-ing indirect prompt injections in tool-integrated large language model agents,” in Findings of the Association for Computational Linguistics: ACL 2024 , 2024. [64] D. Rein, B. L. Hou, A. C. Stickland, J. Petty, R. Y. Pang, J. Dirani, J. Michael, and S. R. Bowman, “GPQA: A graduate-level google-proof q&a benchmark,” in Conference on Language Modeling (COLM) , 2024. [65] E. Debenedetti et al. , “Defeating prompt injections by design,” arXiv preprint arXiv:2503.18813 , 2025. [66] M. Costa et al. , “Securing ai agents with information-flow control,” 
+
+arXiv preprint arXiv:2505.23643 , 2025. [67] Semgrep, “Semgrep documentation,” https://docs.semgrep.dev/, 2026, accessed: 2026-06-11. 
+
+12

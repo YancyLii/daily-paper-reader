@@ -1,0 +1,493 @@
+Title: ShadowProbe: Language-Extensible Detection of Hidden Algorithmic Complexity Vulnerabilities
+
+URL Source: https://arxiv.org/pdf/2607.05474v1
+
+Published Time: Wed, 08 Jul 2026 00:02:45 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# ShadowProbe: Language-Extensible Detection of Hidden Algorithmic Complexity Vulnerabilities 
+
+Yuanmin Xie ∗1, Xiangfan Wu †‡ 1, Wenhao Wu §‡ , Lingyun Ying ‡, Puzhuo Liu ∗,Haipeng Qu †, Zhongyuan Chen †‡ , Min Zhou ∗, Chengnian Sun ¶∗Tsinghua University †Ocean University of China ‡QI-ANXIN Technology Research Institute 
+
+§Southeast University ¶University of Waterloo 
+
+{xieym23@mails,liupz@mail,mzhou}@tsinghua.edu.cn {wuxiangfan@stu,quhaipeng}@ouc.edu.cn, yinglingyun@qianxin.com {ch4ml1nx,christychen516}@gmail.com, cnsun@uwaterloo.ca 
+
+Abstract —Abstract —Algorithmic Complexity Vulnerabilities (ACVs) are a class of software flaws in which adversarial or care-fully crafted inputs trigger worst case execution behavior, leading to severe performance degradation and Denial-of-Service (DoS) conditions. A key but underexplored source of such vulnerabili-ties is shadow complexity, where non-trivial computational costs are hidden inside seemingly benign standard library APIs. These costs are not visible at the call site and can be systematically exploited to induce unexpected superlinear runtime behavior. Existing ACV detection techniques primarily rely on fuzzing, symbolic execution, or hybrid analysis. However, they are often specific to individual programming languages, require substantial manual effort to construct execution harnesses, and depend on heavy runtime instrumentation. This limits their scalability across large and diverse codebases. In this work, we present ShadowProbe , a scalable and language extensible framework for discovering ACVs through lightweight static analysis, automated reconstruction of exe-cution contexts, and Large Language Model (LLM) assisted test generation. Rather than relying on zero shot LLM infer-ence, ShadowProbe uses a structured multi stage pipeline. It first performs static screening guided by signals from shadow complexity to identify candidate functions. It then reconstructs minimal executable contexts from project level symbols, and finally synthesizes inputs with controlled size to probe worst case execution behavior. Execution time measurements are used for validation, and robust statistical growth inference is applied to separate true algorithmic blowups from runtime noise, including garbage collection and JIT compilation effects. We evaluate ShadowProbe on the WISE benchmark and show that it consistently outperforms existing approaches in analysis efficiency. We further apply ShadowProbe to large scale software systems, including CPython, the JDK, Zig, Rustc, and vLLM, where it uncovers many previously unknown ACVs, a large portion of which have been confirmed and partially remediated by maintainers. These results demonstrate the effectiveness of 
+
+ShadowProbe in identifying hidden algorithmic risks across diverse real world codebases. 
+
+I. I NTRODUCTION 
+
+Software performance—typically characterized by time effi-ciency and execution predictability—is a fundamental pillar of software quality. While performance degradation is generally viewed as a routine engineering concern, it escalates into a critical security threat when adversaries can intentionally ex-ploit structural bottlenecks to mount Denial-of-Service (DoS) 
+
+> 1
+
+Both authors contributed equally to this research. 
+
+attacks. The primary vector for these attacks is Algorith-mic Complexity Vulnerabilities (ACVs) [1]–[6], classified by MITRE as CWE-407 [7]. ACVs stem from inefficient algo-rithms that remain latent during normal operation but exhibit catastrophic runtime slowdowns when triggered by specific, worst-case inputs. Real-world incidents, such as the quadratic-time behavior in Python’s integer conversion (CVE-2020-10735) [8] and Perl’s email parsing (CVE-2014-1474) [9], demonstrate how a single ACV can paralyze critical services across massive software ecosystems. Detecting ACVs is inherently challenging because their activation often depends on intricate program logic, such as nested loops, recursion, and specific data dependencies. Prior research has explored ACV detection using static and dynamic techniques, including fuzzing (e.g., SlowFuzz [3], HotFuzz [6], Singularity [10]), symbolic execution (e.g., WISE [11], SPF-WCA [12]), and hybrid approaches (e.g., Badger [13], Acquirer [4]). While effective on specific pro-grams, these methods often rely on extensive dynamic explo-ration or significant manual driver development. This reliance limits their scalability to massive software ecosystems or language runtimes that comprise thousands of diverse library APIs. 
+
+Shadow Complexity. The fundamental barrier to scaling these analyses is what we term shadow complexity : hidden computational costs induced by library APIs (or language built-ins) that appear computationally trivial at the call sites (e.g., string concatenation via s+=x ) but exhibit non-trivial 
+
+internal complexity. ACVs are particularly insidious when they arise from such hidden costs. Because these abstractions are widely distributed and implicitly trusted, a single API with an unmodeled shadow runtime bottleneck can quickly become an ecosystem-wide risk. This opacity creates a significant blind spot in traditional security audits: while reviewers typically track explicit control flow, they often miss the amplified execution cost of seemingly harmless calls. Addressing this gap requires scalable, automated detection methods capable of exposing these hidden bottlenecks. However, building such a system surfaces two fundamental practical challenges: Challenge 1 : Scalable & Context-Aware Screening. As ex-arXiv:2607.05474v1 [cs.CR] 6 Jul 2026 haustive dynamic validation of every function across a massive codebase is computationally infeasible, the first challenge is identifying a high-coverage candidate set while preserving a strict validation budget. This screening cannot rely solely on identifying explicit syntactic loops; it must account for shadow complexity whose behavior depends on the underlying implementation. For instance, a seemingly benign pattern like repeated string concatenation ( s += x) in Python has implementation-dependent complexity. While CPython often optimizes this to near-linear behavior by reusing the left-hand string object, other Python implementations such as PyPy may not apply the same optimization, causing the identical source code to exhibit quadratic copying behavior. Consequently, initial screening signals must be computationally cheap yet sensitive to these hidden, implementation-dependent bottle-necks, without relying on language-specific instrumentation or manual driver development. Challenge 2 : Automated & Robust Validation. The second challenge is confirming the worst-case behavior of these candidates while minimizing false positives. The system must automatically reconstruct compact executable contexts to syn-thesize worst-case inputs and faithfully exercise the target. Fur-thermore, as illustrated by runtime-specific behavior in Python implementations, ACV detection cannot rely on isolated wall-clock measurements. The analysis must robustly distinguish true algorithmic scaling issues from wall-clock noise intro-duced by runtime effects, such as Garbage Collection (GC) cycles and Just-In-Time (JIT) fluctuations. 
+
+> ShadowProbe
+
+. To address these challenges, we introduce 
+
+> ShadowProbe
+
+, a scalable, language-extensible ACV detection system that combines lightweight static screening, execution context recovery, LLM-assisted worst-case input construction, and measurement-based validation. Unlike prior tools that are tied to specific languages or require heavy manual effort to scale, ShadowProbe leverages a staged architecture to efficiently identify and automatically confirm ACVs across diverse library runtimes. Specifically, ShadowProbe has the following advantages.  
+
+> 1
+
+Shadow Complexity Guided Screening. To address Chal-lenge 1 , ShadowProbe performs lightweight screening guided by shadow complexity, focusing on functions whose call chains may hide non-trivial costs behind library APIs. This stage combines lightweight syntactic and contextual checks to identify functions whose behavior depends on input and may amplify hidden computational costs. This allows ShadowProbe 
+
+to maintain a high-coverage candidate set while preserving a strict validation budget by filtering out functions with trivial or constant-time behavior.  
+
+> 2
+
+Language-Extensible Execution Context Reconstruction. To address the manual overhead of Challenge 2 , 
+
+> ShadowProbe
+
+reconstructs compact executable contexts using project level symbol information. This language-extensible approach eliminates the need for manual driver or harness development, allowing the system to transition from source code to executable tests without language-specific instrumentation.  
+
+> 3
+
+Robust Validation & Growth Inference. Once an exe-cutable execution context is established, ShadowProbe uses LLM to synthesize test inputs across varying sizes to trigger worst-case execution and monitors wall-clock time. To ensure the validity of our findings, we apply a robust statistical inference module that filters out runtime jitter from GC and JIT fluctuations. An ACV is confirmed only when empirical execution time exhibits non-linear growth, providing language-independent evidence. We evaluated ShadowProbe on WISE, a benchmark suite for worst-case complexity analysis, and on five real-world projects: CPython, JDK, Zig, Rustc, and vLLM [14]. Across these projects, ShadowProbe uncovered 162 previously un-known ACVs, of which 84 have been confirmed by main-tainers to date. Among the confirmed cases, 22 are under active maintainer processing and 41 have already been fixed. These findings include cases in mature language runtimes and infrastructure software, and have informed security discussions and planned refactoring of the CPython email module. 
+
+Contributions. We make the following contributions.  
+
+> •
+
+We identify and define shadow complexity as a critical blind spot in current ACV detection—specifically, hidden computational costs within library APIs that elude manual auditing. We characterize the recurring code patterns that expose systems to this phenomenon.  
+
+> •
+
+We design and implement ShadowProbe , a staged, language-extensible, automated, and scalable detection sys-tem that reduces manual effort in ACV discovery by combining shadow complexity guided candidate screening, language-extensible execution context reconstruction, LLM-assisted worst-case input construction, and measurement-based growth validation.  
+
+> •
+
+We demonstrate ShadowProbe ’s efficacy by uncovering previously unknown ACVs in widely deployed systems (CPython, JDK, Zig, Rustc, and vLLM). These findings have yielded confirmed fixes and assigned CVEs, highlighting the tool’s practical utility across diverse software ecosystems. II. B ACKGROUND & M OTIVATION 
+
+A. Problem Definition 
+
+Algorithmic complexity vulnerabilities (ACVs) [1], [3], [7] refer to program behaviors whose execution time grows super-linearly with input size (e.g., Ω( n2) or worse) for some input family parameterized by n, potentially leading to performance degradation. ACVs often arise from interactions between control flow and data structures, or from library and API calls whose in-ternal implementations exhibit non-trivial computational cost. Such behaviors may remain invisible at the call site but can be amplified when exercised on large or adversarial inputs. This work focuses on identifying ACVs using syntactic signals and execution-time evidence, where scalability issues are validated through observed runtime growth trends under increasing input sizes. Shadow complexity in expandvars (original) 
+
+> # Repeated regex search
+> while True: m = search(path, i) if not m: break i, j = m.span(0) name = m.group(1) ...
+> # Full string reconstruction
+> tail = path[j:] path = path[:i] + value path += tail
+
+Fig. 1: A vulnerability from hidden library operations in 
+
+expandvars .
+
+B. Large Language Models 
+
+LLMs trained on large-scale code corpora learn rich syn-tactic and semantic patterns of source code [15]. Unlike traditional program analysis methods that rely on manually designed, language-specific rules, LLMs enable data-driven and unified analysis across programming languages. LLMs are also promising for detecting algorithmic complexity vul-nerabilities, as they can reason about loops and recursion to identify potential performance risks. In addition, LLM-generated function summaries can assist static analysis and reduce false positives [16]. Beyond vulnerability detection, LLMs support cross-language code understanding and have demonstrated strong potential in automated unit test genera-tion, achieving higher coverage than traditional methods [17]. Overall, LLMs introduce data-driven intelligence into program analysis and software testing. Building on these capabilities, this work leverages LLMs to analyze program semantics related to ACVs. LLMs are used to synthesize executable, size-controlled input genera-tors. ShadowProbe then classifies complexity from measured execution-time trends. 
+
+C. Motivating Example: Shadow Complexity 
+
+Figure 1 shows a representative example from CPython. The function expandvars repeatedly searches a string for variable references and reconstructs the string after each replacement. Although the loop body appears to invoke only simple library operations, each iteration may scan or copy a string whose length is proportional to the input size. For an input containing many variable references, the hidden costs in each iteration accumulate across the loop, causing the total running time of expandvars to grow quadratically. This example illustrates what we call shadow complexity :computational costs hidden inside API calls or operations provided by the language that are not visible at the call site. Such costs often reside in library or API implementations that appear to be constant time from the caller’s perspective, but may perform linear or superlinear work over input data. They are difficult to recognize when the implementation is hidden behind library abstractions or native interfaces such as a C ABI, where the callee’s performance behavior is not explicit and may differ across runtimes. When such operations are invoked repeatedly under control flow that depends on input, these hidden costs can be amplified into superlinear runtime behavior. This motivates ShadowProbe to consider not only explicit loops and recursion, but also API calls whose hidden costs can be amplified when repeatedly executed under control flow that depends on input. III. A PPROACH 
+
+Figure 2 illustrates the workflow of ShadowProbe . When analyzing large-scale projects, ShadowProbe follows a four-stage pipeline that addresses the two challenges outlined in the introduction: the first stage performs high-density selection of target functions, while the latter three stages jointly recover missing context, construct verifiable worst-case inputs, and robustly infer complexity. 
+
+Static Analysis. Given the project, ShadowProbe performs lightweight static analysis to quickly identify functions that may exhibit ACVs. 
+
+Context Recovery. To construct execution context for a tar-get function, ShadowProbe extracts a whole-program symbol index that records definitions, source ranges, and reference links. Given a target function, ShadowProbe resolves its dependencies via the index and expands a dependency closure over project-defined symbols. The resulting context is rendered into a compilable artifact, which is used by later stages to synthesize and validate a runnable Candidate .
+
+Worst-Case Input Construction. Given the recovered con-text, ShadowProbe constructs an executable Candidate con-sisting of a size-parameterized input generator and an exe-cution harness. The harness initializes required state, invokes the target function once, and records execution time. When multiple valid generators are produced, ShadowProbe keeps the one whose probe executions exhibit the strongest empirical growth. 
+
+Dynamic Validation. ShadowProbe validates each Candi-date by executing it under increasing input sizes. Execution times are measured for each input size, and the resulting growth trend is used to infer the empirical complexity of the target function. 
+
+A. Static Analysis 
+
+This stage addresses Challenge 1 by extracting a fo-cused set of target functions from a given project through a lightweight, language-extensible static scan. For example, CPython contains more than 15 k functions, while the JDK contains more than 178 k functions. 2 However, only a small fraction of these functions can actually trigger an ACV, making exhaustive complexity analysis both inefficient and unnecessary. To narrow down the search space, we apply this scan using code patterns that are known to be prone to superlinear time complexity. Among such patterns, a natural starting point is explicit loop and recursion structures, as they            
+
+> 2These numbers are obtained by counting function and method definitions using tree-sitter [18]. Codebase ACV Report
+> Execution Adaptive
+> Sampling
+> Stage 4: Dynamic Validation
+> Candidate
+> Stage 3: Worst-Case Input
+> Construction
+> Target
+> Function
+> Stage 1: Static Analysis
+> Missing
+> Symbols
+> Recovered
+> Context
+> Stage 2: Context Recovery
+> Loop/Recursion
+> Shadow
+> Complexity Sinks �1,�2,⋯, ��
+> LLM-Synthesized
+> Generator s
+
+Fig. 2: Overview of the ShadowProbe workflow. are common syntactic indicators of potentially superlinear behavior. However, relying solely on these structures remains too coarse at large-project scale. We therefore incorporate 
+
+shadow complexity sinks to refine the static patterns and improve the density of selected target functions. Specifically, we define two categories of code patterns that are prone to triggering ACVs. 
+
+Nested Loops and Recursion. Nested loops and recursion are common structural features of ACVs: when iteration bounds or recursion depth depend on external inputs, runtime costs can be multiplicatively amplified. Prior work (e.g., DISCOVER [5] and Acquirer [4]) likewise often takes loops as an entry point, first locating input-sensitive loop structures and then applying manual inspection or dynamic validation to confirm risk. Motivated by this, we leverage loop/recursion structure to identify and prioritize candidate ACVs. 
+
+Shadow Complexity Sinks. Shadow complexity sinks are library APIs whose cost is implicit at the call site but depends on the size of an input-derived operand. When invoked inside input-dependent loops or recursion, such hidden costs can be repeatedly amplified and may trigger ACVs. Table I lists representative sink families across common language runtimes. 
+
+ShadowProbe uses these families to refine screening based on loops and recursion. Figure 3 shows a representative Python example where 
+
+N = |methodname | and the worst-case input is (<)N .The guard slice methodname[:1] copies at most one character. By contrast, because CPython strings are immutable, 
+
+methodname[1:] creates a new string by copying the remaining suffix. When the current length is k, this slice costs Θ( k), so the total work is PNk=1 Θ( k) = Θ( N 2).This copying cost is hidden in slicing and grows with string length. ShadowProbe uses such hidden costs together with loops controlled by input to select target functions. 
+
+B. Context Recovery 
+
+As a prerequisite for addressing Challenge 2 ,
+
+ShadowProbe recovers the context needed to construct worst-case inputs. For a target function, the function body alone is often insufficient: worst-case behavior may depend on surrounding project context. Without this context, input construction may fail to produce executable tests or may exercise only partial paths. We therefore recover a compact context before constructing worst-case inputs. 
+
+ShadowProbe performs context recovery by first building a symbol index for the project. The index records program sym-                                                                               
+
+> while methodname[:1] == ’<’:
+> methodname = methodname[1:];
+> LOOP
+> Shadow
+> Worst case: "<" repeated Ntimes ⇒Nslices
+> <<<<<<<<<<<<<<<<<<<<Θ( N)
+> <<<<<<<<<<<<<<<<<<<Θ( N−1)
+> <<<<<<<<<<<<<<<<<<Θ( N−2)
+> ...
+> <Θ(1)
+> T(N) = Θ
+> N(N+1) 2
+> 
+> = Θ( N2)
+
+Fig. 3: The Θ( N 2) case in CPython/.../editor.py .TABLE I: Representative shadow-complexity sink families.                  
+
+> Family Representative operations Hidden cost source Text processing substr ,slicing ,
+> split ,join
+> copying, scanning, or rebuilding strings Collections contains ,index ,
+> sort ,copyOf
+> linear scans, copying, or reordering Regular expressions find ,search ,
+> matches ,sub
+> pattern matching over variable-length input Parsing and serialization parse ,readValue ,
+> decode ,format
+> recursive parsing or object reconstruction Implicit iteration map ,filter ,sum ,
+> min ,items
+> callbacks or iteration hidden behind APIs
+
+bols, their source ranges, and reference information extracted from the project source code. Starting from the target function, 
+
+ShadowProbe expands a bounded dependency closure: when a recovered symbol references another symbol defined in the project, the corresponding definition is retrieved from the index and added to the context. The closure also preserves enclosing declarations when they are required to make the recovered fragment meaningful. This process produces a compact context containing the target and the dependencies needed by later stages, while avoiding the cost of including the entire project. The recovered context is emitted as a context artifact and rendered into a compilable code fragment, which serves as the foundation for subsequent worst-case input construction. The context artifact records recovered symbols and unresolved references, and the rendered fragment provides the source-level definitions used by the input construction stage. Figure 4 illustrates the context recovery process for arepresentative target function, treeSearch . The process begins from an unresolved context in which the target function Target function         
+
+> TreeNode treeSearch(TreeNode x, int k) { ... }
+> Unresolved symbol: TreeNode
+> Iterative context recovery
+> treeSearch →TreeNode →Node TreeNode required by parameter/return types
+> Node required by TreeNode ’s superclass relation
+> Recovered executable context
+> class TreeNode extends Node { ... } class Node { int key() { ... } }
+> Resolved
+
+Fig. 4: Context recovery for treeSearch .references symbols whose definitions are not yet available. The recovery procedure resolves these references through the symbol index and incorporates the corresponding definitions into the context. The process continues until the dependency closure reaches a fixed point or a predefined recovery budget is exhausted. This recovery procedure enables subsequent analysis of the target function under an execution context with resolved dependencies, without requiring the full project source code. 
+
+C. Worst-Case Input Construction 
+
+Given the recovered context, this stage constructs an exe-cutable Candidate that can be used for subsequent dynamic validation. A Candidate consists of a size-parameterized input generator and an execution harness. Given an input size n,the generator produces concrete arguments and optional state-building inputs intended to exercise high-cost execution paths of the target function. Formally, the generator is a size-parameterized mapping 
+
+G : N → A1 × · · · × Ak,
+
+where G(n) = ( arg 1, . . . , arg k) denotes the inputs consumed by the execution harness. For simple targets, these arguments are passed directly to the target function. For targets whose behavior depends on receiver objects or internal state, they may instead include constructor arguments or state-building parameters. The parameter n controls the dominant size measure of the generated inputs, which is required to grow as Θ( n).The generator is synthesized by an LLM rather than man-ually designed. The prompt provides the target signature, re-covered context, harness contract, and input-size parameter n.Figure 5 summarizes this prompt structure. The LLM is asked to return executable generator code that maps n to inputs for the harness. Compilation errors, execution failures, and size-check violations are used as repair feedback. Before accepting a generator, ShadowProbe performs a lightweight size check over a small range of input sizes. Gener-ators whose produced inputs do not preserve the intended size relation are rejected and repaired. Since a single generator may miss the intended worst-case path, ShadowProbe asks 
+
+Prompt            
+
+> Input target function; recovered context; executable Candidate harness
+> Task generate three independent gen_inputs(n) strategies
+> Contract replace only the input generator; preserve the target call
+> Guards valid Θ( n)inputs; O(n)setup; no target calls or artificial work
+> Output list of {name, generator_source} strategies
+
+Fig. 5: Prompt structure for synthesizing candidate worst-case input generators.     
+
+> Example synthesized Candidate (_parseparam )
+> # Context (abbrev.)
+> import os, time # other stubs/helpers omitted
+> # Target: _parseparam
+> def _parseparam(s): while s[:1] == ’;’: s = s[1:] end = s.find(’;’) ... return plist
+> # Generator G(n)(size-controlled)
+> def gen_inputs(n): header = ’text/plain;charset="’ + (’\\"x;’ * n) + ’"’ return (header,)
+> # Main
+> if __name__ == "__main__": n = int(os.environ.get("HARNESS_N","100")) args = gen_inputs(n) t0 = time.perf_counter() _parseparam(*args) t1 = time.perf_counter() print(f"TARGET_TIME_SECONDS={t1-t0}")
+
+Fig. 6: A Candidate for _parseparam .the LLM to propose multiple input-generation strategies under the same harness. Each strategy describes a different way to construct inputs whose size is controlled by n and whose structure is intended to exercise a high-cost execution path. The strategies are instantiated as candidate generators, and 
+
+ShadowProbe keeps the valid generator with the strongest measured growth on probe executions. Formally, given a set of candidate generators G =
+
+G1, . . . , G m, ShadowProbe selects 
+
+G∗ = arg max  
+
+> Gi∈G
+
+score( Gi),
+
+where score( Gi) is computed from the measured growth of the target execution time on probe input sizes. The selected generator G∗ is embedded with the harness to form the final 
+
+Candidate . Figure 6 illustrates a synthesized Candidate for 
+
+_parseparam in CPython. 
+
+D. Dynamic Validation 
+
+To make worst-case claims verifiable and to robustly de-termine complexity (Challenge 2 ), ShadowProbe grounds its Algorithm 1: Adaptive Logarithmic Sampling.                                                                  
+
+> Input: Candidate C, range [nmin , n max ], budget B, max samples k
+> Output: sampled points D
+> 1D ← { (nmin , t C(nmin )) ,(nmax , t C(nmax )) }
+> 2Q ← { (nmin , n max )}
+> 3while Q̸ =∅and |D| < k and Bnot exhausted do
+> 4Pop (nℓ, n h)from Q
+> 5if nh≤nℓ+ 1 then continue
+> 6nm← ⌊ √nℓnh⌋
+> 7if nm/∈(nℓ, n h)then
+> 8nm← ⌊ (nℓ+nh)/2⌋
+> 9if nm/∈(nℓ, n h)then continue
+> 10 Run Cwith input size nmto obtain tC(nm)
+> 11 if the run succeeds then
+> 12 D ← D ∪ { (nm, t C(nm)) }
+> 13 Q ← Q ∪ { (nℓ, n m),(nm, n h)}
+> 14 return D
+
+judgment in measured scaling behavior rather than direct LLM inference. Given an accepted Candidate , ShadowProbe exe-cutes it with increasing input sizes, collects runtime measure-ments (n, t ), and performs curve-fitting-based growth infer-ence over the measured trace. This measurement-based valida-tion reduces the risk that inaccurate LLM reasoning is directly reported as an ACV. As a design principle, ShadowProbe 
+
+avoids instrumentation of the program under test to preserve generality. Instead, it measures the execution time of the target function in real execution scenarios, making validation applicable across diverse runtimes.  
+
+> ShadowProbe
+
+adopts adaptive sampling to characterize execution-time growth under noisy wall-clock measurements. Because wall-clock measurements may be affected by runtime effects such as GC and JIT, timings on very small inputs can be less reliable, whereas overly large inputs are more likely to time out. ShadowProbe therefore first performs boundary probing to identify a feasible input-size range. The lower bound avoids trivial executions with less reliable timings, while the upper bound limits excessive timeouts. Algorithm 1 illustrates the sampling procedure. Within the identified range, ShadowProbe prioritizes log-arithmically uniform input sizes. This choice follows the common model T (n) = Cn k, where the complexity order is reflected by the slope in log–log space. Linear spacing would allocate many samples to the low-n region, where execution times are often less informative for fitting growth trends. When the interval becomes too narrow for logarithmic subdivision,  
+
+> ShadowProbe
+
+falls back to the arithmetic mean to ensure progressive sampling. For each sampled input size, ShadowProbe executes the 
+
+Candidate three times and aggregates the resulting measure-ments into a representative runtime for that size. This repeated measurement also reduces the influence of transient runtime noise. Executions that fail or exceed the per-run timeout are discarded. After collecting sampled data points, ShadowProbe 
+
+classifies the measured growth into four categories: Low-order (at most O(n log n)), Polynomial (e.g., O(n2), O(n3)), 
+
+Exponential (e.g., O(2 n), O(n!) ), and Unknown . Unknown is assigned when valid data are unavailable or insufficient for reliable classification. This coarse-grained taxonomy suffices to separate low-order behavior from ACV-relevant polynomial or exponential growth. IV. E VALUATION  
+
+> ShadowProbe
+
+is implemented in Rust and follows alanguage-extensible design. It leverages LLMs to reason about program semantics and execution behavior, without relying on language-specific analyses. In our evaluation, we instantiate  
+
+> ShadowProbe
+
+for four widely used programming languages, Java, Python, Zig, and Rust, to demonstrate its effectiveness in practical settings. We evaluate our approach by answering the following research questions: 
+
+RQ1: How effective is ShadowProbe at identifying algorith-mic complexity issues compared to existing tools? 
+
+RQ2: What are the contributions of ShadowProbe ’s compo-nents, and how does the choice of LLM model affect its performance? 
+
+RQ3: Can ShadowProbe detect ACVs in real-world software projects? 
+
+A. Experimental Setup 
+
+To address RQ1 , we compare ShadowProbe with two representative and publicly available ACV analysis tools, namely SPF-WCA [12] and Badger [13]. SPF-WCA infers algorithmic complexity by symbolic execution over worst-case paths, which is conceptually closest to our approach, while Badger combines fuzzing and concolic execution to search for worst-case inputs under fixed input sizes. Other ACV detectors, such as HotFuzz [6] and Acquirer [4], are not publicly available and are thus excluded from comparison. Since both SPF-WCA and Badger target Java programs, we use the Java-based WISE [11] benchmark provided in the SPF-WCA repository. ShadowProbe can analyze the entire WISE benchmark automatically, whereas Badger requires sig-nificant manual effort. To address RQ2 , we use the PyEmailBench benchmark, derived from the email module of CPython, a widely used module from the Python standard library, to evaluate the contributions of ShadowProbe ’s major components as well as the sensitivity of its performance to the choice of underlying LLM. Static analysis yields 281 target functions. Based on the constructed ground truth, 69 of them exhibit ACV behavior. We treat analysis results classified as Polynomial or Expo-nential as indicating the presence of an ACV. Ground truth is constructed by systematically inspecting all target functions in the email module, followed by independent manual review by graduate student security researchers with more than three years of security experience. Any disagreements are resolved through discussion to reach a final consensus. We release this set as the PyEmailBench benchmark for evaluating complexity-analysis techniques. TABLE II: Analysis results on the WISE benchmark across different tools.                                                                                                                     
+
+> Benchmark Real ShadowProbe SPF-WCA Badger Comp. Exec. Range Comp. Exec. Range Comp. Exec. Range BellmanFord Poly Poly 43 [1, 19296] Poly 12 [1, 12] NA 5[2, 6] BinaryTree.search Low Low 29 [1, 54288] Low 15 [1, 15] NA 5[2, 6] HeapInsert Low Low 43 [1, 268435453] Low 100 [1, 100] NA 5[2, 6] RedBlackTree.insert Low Low 73 [1, 346721480] Low 120 [1, 120] NA 5[2, 6] Dijkstra Poly Poly 54 [1, 77432] Poly 30 [1, 30] NA 5[2, 6] SortedListInsert.insert Low Low 74 [1, 551857236] Low 20 [1, 20] NA 5[2, 6] TSP Exp Exp 12 [1, 22] Poly 7[1, 7] NA 5[2, 6] QuickSort Poly Poly 81 [1, 723148842] Poly 20 [1, 20] NA 5[2, 6] MergeSort Low Low 75 [1, 47163520] Low 50 [1, 50] NA 5[2, 6] InsertionSort Poly Poly 59 [1, 337098] Poly 6[1, 6] NA 5[2, 6] Avg. Time (s) 379 1790 3085
+> Legend: Low = Low-order; Poly = Polynomial; Exp = Exponential; NA = not applicable.
+
+All experiments were conducted on an AMD machine with 32 threads and 96 GB of memory. DeepSeek-V4-Flash was used as the underlying LLM in all experiments, except for those in Section IV-C. We additionally evaluate GPT-4.1 [19] and DeepSeek-V3.2 [20] to compare the impact of different LLMs. This comparison examines whether ShadowProbe re-mains effective across different LLM backends under the same analysis pipeline. 
+
+B. Benchmark Analysis 
+
+Functions from the WISE benchmark are analyzed, and the results are evaluated from two complementary perspectives: (1) the agreement between the time complexity reported by each tool and the ground-truth complexity, and (2) the average analysis time of the different tools (Table II). Table II summarizes the analysis results for the WISE benchmark across different tools. The column Real reports the ground-truth worst-case time complexity for each benchmark. For ShadowProbe and SPF-WCA, the table reports the in-ferred complexity class together with the number of executions performed and the corresponding input size ranges. Badger does not infer time complexity and is therefore reported as NA in the complexity column, while its execution counts and input size ranges are still shown for comparison. With dynamic validation, ShadowProbe correctly identi-fies the ground-truth worst-case complexity class for all benchmarks in the WISE dataset. This result shows that  
+
+> ShadowProbe
+
+can expose worst-case time-complexity behav-ior across both graph algorithms and data-structure operations. In contrast, SPF-WCA underestimates TSP, reporting Polyno-mial rather than the ground-truth Exponential class, which is consistent with the results reported in its original paper. For the remaining benchmarks, SPF-WCA agrees with the ground-truth complexity class reported in the WISE benchmark. Table II also reports the average analysis time of 
+
+> ShadowProbe
+
+, SPF-WCA, and Badger on the WISE dataset, where Avg. Time denotes the average time required to analyze a single benchmark (i.e., one target function). Since a single execution of Badger targets only a fixed input size, we run Badger with input sizes N ranging from 2 to 6 for each benchmark; at least five data points are required to reliably distinguish among Low-order, Polynomial, and Exponential time complexity classes. In contrast, SPF-WCA is executed using its default configuration, except for the TSP benchmark, where the maximum input size is set to N = 7 , as N = 8 
+
+cannot be completed within the 72-hour time limit. As shown in the table, ShadowProbe achieves a substantially shorter average per-benchmark analysis time, completing the analysis 4.7 × faster than SPF-WCA and 8.1 × faster than Badger. 
+
+C. Sensitivity Analysis 
+
+In this section, we present a sensitivity analysis of 
+
+> ShadowProbe
+
+, focusing on four factors: (a) Context Recovery, (b) Multiple input-generation strategies, (c) Dynamic Vali-dation, and (d) LLM model selection. Since Stage 1 Static Analysis only performs high-density candidate selection with-out classification, we evaluate it separately from downstream accuracy. For all other configurations, a function is considered an ACV if it is classified as Polynomial or Exponential. We evaluate each setting against the ground truth defined in Section IV-A, and report FPR, FNR, precision, recall, and F1 score. Table III summarizes configurations that disable key components or replace the underlying LLM backend. 
+
+Static Analysis. Static Analysis performs lightweight static analysis for high-density candidate selection, quickly identi-fying target functions that may exhibit ACVs. In the email 
+
+module (529 functions), Stage 1 selects 281 targets and prunes the remaining 248. Among the pruned functions, only two contain previously unseen dominant ACV sinks. Thus, Stage 1 misses only two previously unseen dominant sinks while removing 46.9% of functions from consideration. 
+
+Effectiveness of Context Recovery. The contribution of Context Recovery is evaluated using a variant w/o Context. In this setting, ShadowProbe generates Candidates using only the target function and omits recovered context. This substantially increases the FNR, because unresolved symbols can determine the conditions and state needed to trigger high-cost paths. With Context Recovery enabled, ShadowProbe reconstructs these dependencies and detects additional ACVs that cannot be exposed from incomplete contexts. 
+
+Effectiveness of Multiple Input-Generation Strategies. 
+
+Compared with the default setting, w/o Strat. reduces recall from 71.0% to 53.6% and F1 from 67.6% to 56.5%, while increasing FNR from 29.0% to 46.4%. Its FPR remains nearly unchanged (12.7% versus 11.8%). This indicates that using only a single generator mainly causes ShadowProbe to miss more true ACVs, rather than substantially reducing false positives. These results show that multiple strategies expose worst-case behavior more effectively than a single generator. 
+
+Impact of Dynamic Validation. The contribution of dy-namic validation is evaluated using a variant w/o dynamic validation. In the w/o Dyn. setting, ShadowProbe classifies complexity from the recovered context and generated Candi-date without runtime measurements. This conservative setting lowers the FPR from 12.7% to 3.3%, but sharply increases the FNR from 29.0% to 92.8%, causing most true ACVs to be missed. With dynamic validation enabled, ShadowProbe 
+
+grounds complexity inference in execution-time measurements across input sizes, substantially improving recall and F1. 
+
+Sensitivity to LLM Choice. The robustness of ShadowProbe 
+
+to different LLM backends is evaluated by running 
+
+ShadowProbe with DeepSeek-V4-Flash [21], GPT-4.1 [19], and DeepSeek-V3.2 [20] under identical experimental settings. Across these LLMs, ShadowProbe achieves broadly compara-ble performance, with only moderate variations in FPR, FNR, precision, recall, and F1. This suggests that ShadowProbe 
+
+does not rely on a single proprietary model and that its measurement-based validation provides stable performance across different LLM backends. 
+
+Comparison with Cost-Guided Fuzzing. HypoFuzz [22], a feedback-directed Python fuzzer, is evaluated on 
+
+PyEmailBench using runtime as the feedback objective. We use runtime as the feedback objective and classify a target as an ACV when replay validation over the best discovered input family shows Polynomial or Exponential growth. Making this baseline work required non-trivial adaptation: we had to construct specific generation strategies, connect them to recovered executable harnesses, and replay the best input families for complexity classification. Even after this manual adaptation, HypoFuzz produces no false positives but finds only 5 of 69 ACV-positive targets in the full benchmark, yielding a high FNR. This result indicates that cost-guided fuzzing can discover some worst-case inputs, but its coverage on parsing-heavy API surfaces depends heavily on time-consuming domain-specific strategy engineering. 
+
+Cost and Scalability. LLM usage in ShadowProbe is local-ized to worst-case input construction. Static Analysis, Context Recovery, and Dynamic Validation do not require LLM calls. On PyEmailBench , using DeepSeek-V4-Flash, each target function consumes 32K tokens on average, including 23K input tokens and 9K output tokens. This corresponds to an average monetary cost of approximately $0.006 per target. TABLE III: Sensitivity analysis of major system components, LLM backends, and a cost-guided fuzzing baseline.                                                                         
+
+> Setting Components LLM Metrics (%) Ctx. Strat. Dyn. FPR ↓FNR ↓Prec. ↑Recall ↑F1 ↑
+> Default ✓✓✓DS-V4-F 12.7 29.0 64.5 71.0 67.6
+> w/o Ctx. ×✓✓DS-V4-F 14.2 47.8 54.5 52.2 53.3 w/o Strat. ✓×✓DS-V4-F 11.8 46.4 59.7 53.6 56.5 w/o Dyn. ✓✓×DS-V4-F 3.3 92.8 41.7 7.2 12.3 GPT-4.1 ✓✓✓GPT-4.1 17.5 26.1 58.0 73.9 65.0 DS-V3.2 ✓✓✓DS-V3.2 16.5 34.8 56.2 65.2 60.4
+> Cost-guided fuzzing baseline on PyEmailBench
+> HypoFuzz ––––0.0 92.8 100.0 7.2 13.5
+
+TABLE IV: Real-world projects evaluated by ShadowProbe 
+
+and status of real-world ACV reports.                                   
+
+> Language Project Found Confirmed In Prog. Fixed Python CPython (5ab66a8) 112 61 17 38 Java JDK (a3f9e22) 28 520Zig Zig (1f43e04) 11 11 12Rust Rustc (61d7280) 8410Python vLLM (8cac35b) 3311Total 162 84 22 41
+
+D. RQ3: Real-World Detection 
+
+To answer RQ3, we apply ShadowProbe to the five real-world projects listed in Table IV: CPython, JDK, Zig, Rustc, and vLLM. These projects cover language runtimes and in-frastructure software written in Python, Java, Zig, and Rust. For each language, we implemented only the language-specific parts of the pipeline: parsing and symbol extraction. This required 1,735 LOC for Python, 1,218 LOC for Java, 391 LOC for Zig, and 596 LOC for Rust; the Python implementation was reused unchanged for both CPython and vLLM. Table IV reports the ACV cases found by ShadowProbe 
+
+and the subsequent developer response. In the table, Found 
+
+denotes cases reported by ShadowProbe after manual triage. 
+
+Confirmed denotes cases acknowledged by maintainers as valid issues. In Progress and Fixed summarize subsequent developer responses. Unconfirmed cases are not treated as false positives. They remain pending maintainer confirmation or disclosure discussion. Across these projects, ShadowProbe finds 162 real-world ACV cases, of which 84 have been confirmed by maintainers. Among the confirmed cases, 41 have been fixed and 22 are in progress. The largest numbers of findings come from CPython and JDK, where ShadowProbe analyzes thousands of functions in mature language runtimes. The findings in Zig, Rustc, and vLLM further demonstrate the applicability of the pipeline across different language implementations and infrastructure systems. V. R EAL -W ORLD FINDINGS AND CASE STUDIES 
+
+Building on the real-world detection results, we further analyze where the findings occur and what implementation patterns they reveal. This section first examines their module-CPython JDK                   
+
+> Module % ACVs Package % ACVs
+> argparse 24 sun.security 30
+> idlelib 24 java.internal 25
+> xml 24 jdk.util 15
+> _pyrepl 18 sun.net 15
+> inspect 9java.net 15
+
+Fig. 7: Top-5 packages/modules with the largest shares of identified ACVs in CPython and JDK. level distribution, then summarizes common root causes and representative case studies. 
+
+A. Distribution and Root Causes 
+
+We further examine where the real-world ACV findings occur within CPython and JDK. These two projects contain enough findings to reveal module- and package-level patterns. Figure 7 reports the largest ACV-containing modules and packages in CPython and JDK. For CPython, the domi-nant email module is analyzed separately in Section V-B; the figure shows the largest remaining modules. Overall, the findings are concentrated in parsing- and text-processing modules. argparse , idlelib , and xml account for the largest shares, followed by _pyrepl and inspect . These modules frequently parse structured text, manipulate strings, or incrementally build outputs, which can amplify copying and scanning costs. In the JDK, findings are less concentrated and mainly appear in security, utility, and networking packages. Overall, the findings concentrate in modules that process structured or text-heavy inputs. To understand this concentration, we manually inspect the confirmed polynomial-time findings and identify several recur-ring implementation patterns. The dominant pattern is copy amplification from immutability . This pattern appears when parsers repeatedly slice input buffers (e.g., s = s[i:] ) or when builders repeatedly append to a growing output (e.g., 
+
+out += chunk ). Although each operation is locally linear, placing it inside an input-dependent loop yields quadratic behavior. A second pattern is linear-cost list operations inside loops .Examples include queue-like use of pop(0) and repeated scans over growing lists. We also observe ordering costs and multi-parameter scaling, where both the number of items and the size of each item grow with the input. These patterns ex-plain why parsing-heavy and text-processing modules appear prominently in the distribution. 
+
+B. Case Study: CPython 
+
+Long-lived singledispatch case. ShadowProbe detects a long-lived exponential case in Python’s singledispatch 
+
+implementation in functools . Its internal _c3_mro routine was introduced in 2013 (commit 3720c77e ) as part of PEP 443 [23]. The routine implements C3 superclass lineariza-tion [24], [25] in pure Python. However, it recursively recom-putes sub-results for each base class without memoization. Figure 8 shows the adversarial inheritance pattern used to trigger this behavior. Each class inherits from the previous two classes, causing repeated recursive computation of overlapping superclass linearizations. As shown in Figure 9, the vulnerable implementation grows exponentially with inheritance depth, while a memoized implementation removes the blowup. This case shows that ACVs can remain latent for years in mature standard-library code, even when the underlying fix is local. 
+
+C0 C1 C2 C3 C4 · · · 
+
+Fig. 8: Fibonacci-style class inheritance pattern: each class Ci
+
+inherits from Ci−1 and Ci−2.
+
+Shared email parser. The message.py module in CPython’s email package implements core MIME-message logic, including the public Message and EmailMessage 
+
+abstractions. It is used by mail-related software and appli-cation frameworks that process MIME-formatted data, such as Django’s email subsystem, Flask-Mail, and GNU Mail-man [26]–[28]. These APIs often operate on partially user-controlled inputs, including message headers and multipart parameters. Figure 10 shows how several public APIs share the same underlying complexity bottleneck. Parameter-related meth-ods eventually call _get_params_preserve . This helper reparses the header value and invokes the quadratic-time parser 
+
+_parseparam . Thus, even simple parameter queries can trigger the same worst-case parser. Mutating APIs further reconstruct the header, and higher-level routines may repeat these operations in loops. As a result, multiple findings in 
+
+email/message.py are different entry points to a shared quadratic parser rather than independent bugs. 
+
+C. Case Study: Zig 
+
+Zig compiler frontend case. ShadowProbe also detects a compile-time ACV in Zig’s compiler frontend. The trigger is a valid integer switch statement with many prong items. During semantic analysis, Zig records previously seen integer ranges in a RangeSet ; the original implementation linearly scans existing ranges on each insertion to detect overlaps. This makes switch validation quadratic in the number of prongs. When the number of switch branches becomes large, compilation time increases significantly and can become pro-hibitively slow. The issue applies to all optimization levels and targets because semantic analysis runs before backend code generation. The merged fix keeps the range set sorted and uses binary search to check overlaps, reducing the comparison cost to O(n log n). This case illustrates a compiler front end ACV: an adversarial source program can cause large compile-time slowdowns. VI. D ISCUSSION 
+
+A. Implications for Library Maintenance 
+
+Our real-world findings suggest two implications for main-taining mature libraries and language runtimes. First, long-10 20 30 
+
+> 10 −4
+> 10 −3
+> 10 −2
+> 10 −1
+> 10 0
+> 10 1
+> Inheritance Depth
+> Time (s)
+> Vulnerable
+> Fixed
+
+Fig. 9: Execution time: vulnerable vs. fixed _c3_mro .set_payload  
+
+> set_type
+
+set_charset 
+
+set_param  del_param 
+
+get_params  get_filename 
+
+get_boundary 
+
+set_boundary 
+
+get_param 
+
+get_content_charset 
+
+_get_params_preserve  _parseparam        
+
+> ×n
+> ×n×n
+> ×n:Repeated invocations
+> Amplifiers API Methods
+> Direct Entry
+> Root Cause
+
+Fig. 10: Structural view of exposure, trigger, and root cause for the ACV in email/message.py .lived parsing and text-processing code should be revisited even when its functional behavior remains stable. In CPython’s 
+
+email module, some vulnerable code dates back to 2007, and incremental maintenance allowed inefficient helper patterns to persist across many public entry points. This suggests that complexity-oriented testing can complement functional regres-sion testing for mature library code. Second, implementation-specific optimizations should not be treated as a substitute for robust algorithmic design. For example, CPython can optimize some repeated string concatenation patterns in loops [29], [30], but the optimization applies only under specific conditions and may not hold across runtimes. Using index-based parsing, explicit buffers, or builder-style accumulation provides more portable performance behavior. 
+
+B. Limitations  
+
+> ShadowProbe
+
+is an empirical detection system rather than a complete oracle for all possible ACVs. Although our eval-uation covers multiple ecosystems and languages, extending  
+
+> ShadowProbe
+
+to additional languages or domains may require engineering effort for integration and adaptation to new envi-ronments. ShadowProbe validates findings through executable 
+
+Candidates and measured runtime growth, providing evidence for developer triage but not replacing maintainer assessment. In particular, whether a detected complexity issue should be treated as a security vulnerability or a performance bug can depend on the specific usage context and deployment conditions. VII. R ELATED WORK 
+
+Symbolic Execution and Fuzzing. Crosby and Wallach [1] introduced algorithmic complexity attacks, showing that ad-versarial inputs can induce worst-case execution and denial of service. Subsequent work explored automated detection using fuzzing and symbolic execution. Resource-guided fuzzers such as SlowFuzz [3] and HotFuzz [6] employ evolutionary search to maximize resource usage, while Singularity [10] frames complexity testing as synthesis over input generators. Sym-bolic approaches, including WISE [11] and SPF-WCA [12], provide precise path-level reasoning but suffer from path ex-plosion, with extensions such as XSTRESSOR [31] mitigating this limitation. Hybrid systems such as Badger [13], AC-QUIRER [4], and DISCOVER [5] combine static analysis with guided dynamic exploration, sometimes incorporating human guidance. However, these approaches often have difficulty au-tomatically constructing calling contexts in complex programs. In contrast, ShadowProbe combines context recovery with LLM-assisted worst-case input construction and measurement-based validation to generate executable evidence at scale. 
+
+LLM-assisted Program Analysis. With the advent of LLMs, several efforts have examined their use for vulnerability de-tection and repair [32]–[35]. These studies further evaluate LLMs across diverse vulnerability classes and datasets, and explore their effectiveness in related management tasks such as triaging, severity assessment, and patch validation. Our work differs in that we focus on algorithmic complexity vulnerabili-ties rather than general vulnerability detection or management tasks. We study how LLMs can be used as a supporting component in a language-extensible analysis pipeline to reason about program behavior related to time complexity. 
+
+ACV at Different Layers. Prior work has studied algorithmic complexity vulnerabilities at the network, protocol, and appli-cation layers [36]–[38], focusing on attacks such as request flooding and resource exhaustion. Related efforts on regular-expression DoS [5], [39] address pathological patterns that cause excessive matching overhead. In contrast, ShadowProbe 
+
+targets algorithmic inefficiencies in software components, ex-posing complexity vulnerabilities that can trigger DoS even without high network traffic. VIII. C ONCLUSION 
+
+Algorithmic complexity vulnerabilities remain difficult to detect because their triggering conditions often depend on subtle interactions between program structure, input depen-dencies, and opaque callee behavior. In this work, we identify shadow complexity as a critical blind spot in ACV detec-tion, where hidden computational costs behind API calls can silently amplify worst-case execution behavior. We present ShadowProbe , an LLM-assisted framework for discovering algorithmic complexity vulnerabilities through lightweight screening, context recovery, and measurement-driven validation. Applying ShadowProbe to CPython, JDK, Zig, Rustc, and vLLM uncovered 162 previously unknown ACVs, of which 84 have been confirmed. REFERENCES [1] S. A. Crosby and D. S. Wallach, “Denial of service via algorithmic complexity attacks,” in Proceedings of the 12th USENIX Security Symposium, Washington, D.C., USA, August 4-8, 2003 . USENIX Association, 2003. [Online]. Available: https://www.usenix.org/confere nce/12th-usenix-security-symposium/denial-service-algorithmic-compl exity-attacks [2] X. Cai, Y. Gui, and R. Johnson, “Exploiting unix file-system races via algorithmic complexity attacks,” in 30th IEEE Symposium on Security and Privacy (SP 2009), 17-20 May 2009, Oakland, California, USA . IEEE Computer Society, 2009, pp. 27–41. [Online]. Available: https://doi.org/10.1109/SP.2009.10 [3] T. Petsios, J. Zhao, A. D. Keromytis, and S. Jana, “Slowfuzz: Automated domain-independent detection of algorithmic complexity vulnerabilities,” in Proceedings of the 2017 ACM SIGSAC Conference on Computer and Communications Security, CCS 2017, Dallas, TX, USA, October 30 - November 03, 2017 , B. Thuraisingham, D. Evans, T. Malkin, and D. Xu, Eds. ACM, 2017, pp. 2155–2168. [Online]. Available: https://doi.org/10.1145/3133956.3134073 [4] Y. Liu and W. Meng, “Acquirer: A hybrid approach to detecting algorithmic complexity vulnerabilities,” in Proceedings of the 2022 ACM SIGSAC Conference on Computer and Communications Security, CCS 2022, Los Angeles, CA, USA, November 7-11, 2022 , H. Yin, A. Stavrou, C. Cremers, and E. Shi, Eds. ACM, 2022, pp. 2071–2084. [Online]. Available: https://doi.org/10.1145/3548606.3559337 [5] P. Awadhutkar, G. R. Santhanam, B. Holland, and S. C. Kothari, “DISCOVER: detecting algorithmic complexity vulnerabilities,” in 
+
+Proceedings of the ACM Joint Meeting on European Software Engineering Conference and Symposium on the Foundations of Software Engineering, ESEC/SIGSOFT FSE 2019, Tallinn, Estonia, August 26-30, 2019 , M. Dumas, D. Pfahl, S. Apel, and A. Russo, Eds. ACM, 2019, pp. 1129–1133. [Online]. Available: https: //doi.org/10.1145/3338906.3341177 [6] W. Blair, A. Mambretti, S. Arshad, M. Weissbacher, W. Robertson, E. Kirda, and M. Egele, “Hotfuzz: Discovering algorithmic denial-of-service vulnerabilities through guided micro-fuzzing,” in 27th Annual Network and Distributed System Security Symposium, NDSS 2020, San Diego, California, USA, February 23-26, 2020 . The Internet Society, 2020. [Online]. Available: https://www.ndss-symposium.org/ndss-paper /hotfuzz-discovering-algorithmic-denial-of-service-vulnerabilities-thr ough-guided-micro-fuzzing/ [7] MITRE Corporation, “CWE-407: Inefficient algorithmic complexity,” https://cwe.mitre.org/data/definitions/407.html, accessed: 2025-08-10. [8] NIST, “CVE-2020-10735,” https://nvd.nist.gov/vuln/detail/CVE-2020-1 0735, accessed: 2025-08-10. [9] ——, “CVE-2014-1474,” https://nvd.nist.gov/vuln/detail/CVE-2014-1 474, accessed: 2025-08-10. [10] J. Wei, J. Chen, Y. Feng, K. Ferles, and I. Dillig, “Singularity: pattern fuzzing for worst case complexity,” in Proceedings of the 2018 ACM Joint Meeting on European Software Engineering Conference and Symposium on the Foundations of Software Engineering, ESEC/SIGSOFT FSE 2018, Lake Buena Vista, FL, USA, November 04-09, 2018 , G. T. Leavens, A. Garcia, and C. S. Pasareanu, Eds. ACM, 2018, pp. 213–223. [Online]. Available: https://doi.org/10.1145/ 3236024.3236039 [11] J. Burnim, S. Juvekar, and K. Sen, “WISE: automated test generation for worst-case complexity,” in 31st International Conference on Software Engineering, ICSE 2009, May 16-24, 2009, Vancouver, Canada, Proceedings . IEEE, 2009, pp. 463–473. [Online]. Available: https://doi.org/10.1109/ICSE.2009.5070545 [12] K. S. Luckow, R. Kersten, and C. S. Pasareanu, “Symbolic complexity analysis using context-preserving histories,” in 2017 IEEE International Conference on Software Testing, Verification and Validation, ICST 2017, Tokyo, Japan, March 13-17, 2017 . IEEE Computer Society, 2017, pp. 58–68. [Online]. Available: https://doi.org/10.1109/ICST.2017.13 [13] Y. Noller, R. Kersten, and C. S. Pasareanu, “Badger: complexity analysis with fuzzing and symbolic execution,” in Proceedings of the 27th ACM SIGSOFT International Symposium on Software Testing and Analysis, ISSTA 2018, Amsterdam, The Netherlands, July 16-21, 2018 ,F. Tip and E. Bodden, Eds. ACM, 2018, pp. 322–332. [Online]. Available: https://doi.org/10.1145/3213846.3213868 [14] vLLM Project Contributors, “vllm: A high-throughput and memory-efficient inference and serving engine for large language models,” https://github.com/vllm-project/vllm, accessed: 2026-01-21. [15] M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. de Oliveira Pinto, J. Kaplan, H. Edwards, Y. Burda, N. Joseph, G. Brockman, A. Ray, R. Puri, G. Krueger, M. Petrov, H. Khlaaf, G. Sastry, P. Mishkin, B. Chan, S. Gray, N. Ryder, M. Pavlov, A. Power, L. Kaiser, M. Bavarian, C. Winter, P. Tillet, F. P. Such, D. Cummings, M. Plappert, F. Chantzis, E. Barnes, A. Herbert-Voss, W. H. Guss, A. Nichol, A. Paino, N. Tezak, J. Tang, I. Babuschkin, S. Balaji, S. Jain, W. Saunders, C. Hesse, A. N. Carr, J. Leike, J. Achiam, V. Misra, E. Morikawa, A. Radford, M. Knight, M. Brundage, M. Murati, K. Mayer, P. Welinder, B. McGrew, D. Amodei, S. McCandlish, I. Sutskever, and W. Zaremba, “Evaluating large language models trained on code,” CoRR , vol. abs/2107.03374, 2021. [Online]. Available: https://arxiv.org/abs/2107.03374 [16] H. Li, Y. Hao, Y. Zhai, and Z. Qian, “Assisting static analysis with large language models: A chatgpt experiment,” in Proceedings of the 31st ACM Joint European Software Engineering Conference and Symposium on the Foundations of Software Engineering, ESEC/FSE 2023, San Francisco, CA, USA, December 3-9, 2023 , S. Chandra, K. Blincoe, and P. Tonella, Eds. ACM, 2023, pp. 2107–2111. [Online]. Available: https://doi.org/10.1145/3611643.3613078 [17] M. Schäfer, S. Nadi, A. Eghbali, and F. Tip, “An empirical evaluation of using large language models for automated unit test generation,” 
+
+IEEE Trans. Software Eng. , vol. 50, no. 1, pp. 85–105, 2024. [Online]. Available: https://doi.org/10.1109/TSE.2023.3334955 [18] Tree-sitter Project, “Tree-sitter: An incremental parsing system,” https: //tree-sitter.github.io/, accessed: 2026-02-01. [19] OpenAI, “Introducing GPT-4.1 in the API,” https://openai.com/index/g pt-4-1/, published: 2025-04-14; Accessed: 2026-02-02. [20] DeepSeek-AI, “DeepSeek-V3.2: Pushing the frontier of open large language models,” https://huggingface.co/deepseek-ai/DeepSeek-V3.2, published: 2025-12-01; Accessed: 2026-02-02. [21] ——, “DeepSeek-V4: Towards highly efficient million-token context intelligence,” https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash, 2026, accessed: 2026-06-28. [22] Z. Hatfield-Dodds, “HypoFuzz,” https://github.com/Zac-HD/hypofuzz, accessed: 2026-06-19. [23] Ł. Langa, “PEP 443 – Single-dispatch Generic Functions,” https://peps .python.org/pep-0443/, 2013, accessed: 2026-01-05. [24] K. Barrett, B. Cassels, P. Haahr, D. A. Moon, K. Playford, and P. T. Withington, “A monotonic superclass linearization for dylan,” in Proceedings of the 1996 ACM SIGPLAN Conference on Object-Oriented Programming Systems, Languages & Applications, OOPSLA 1996, San Jose, California, USA, October 6-10, 1996 , L. Anderson and J. Coplien, Eds. ACM, 1996, pp. 69–82. [Online]. Available: https://doi.org/10.1145/236337.236343 [25] M. Simionato, “The python 2.3 method resolution order,” https://www. python.org/download/releases/2.3/mro/, 2003, accessed: 2026-01-05. [26] Django Software Foundation, “Django web framework,” https://github .com/django/django, accessed: 2026-02-01. [27] Pallets Team, “Flask-mail,” https://github.com/pallets-eco/flask-mail, accessed: 2026-02-01. [28] GNU Project, “Gnu mailman,” https://gitlab.com/mailman, accessed: 2026-02-01. [29] A. M. Kuchling, “What’s new in python 2.4: Optimizations,” https: //docs.python.org/2/whatsnew/2.4.html#optimizations, 2005, accessed: 2026-01-25. [30] C. Bolz-Tereick, “Repeated string concatenation is quadratic in PyPy (and CPython),” https://pypy.org/posts/2023/01/string-concatenation-q uadratic.html, 2023, accessed: 2026-01-25. [31] C. Saumya, J. Koo, M. Kulkarni, and S. Bagchi, “XSTRESSOR : Automatic generation of large-scale worst-case test inputs by inferring path conditions,” in 12th IEEE Conference on Software Testing, Validation and Verification, ICST 2019, Xi’an, China, April 22-27, 2019 . IEEE, 2019, pp. 1–12. [Online]. Available: https://doi.org/10.1109/ICST.2019.00011 [32] X. Zhou, S. Cao, X. Sun, and D. Lo, “Large language model for vulnerability detection and repair: Literature review and the road ahead,” 
+
+ACM Trans. Softw. Eng. Methodol. , vol. 34, no. 5, pp. 145:1–145:31, 2025. [Online]. Available: https://doi.org/10.1145/3708522 [33] A. Khare, S. Dutta, Z. Li, A. Solko-Breslin, R. Alur, and M. Naik, “Understanding the effectiveness of large language models in detecting security vulnerabilities,” in IEEE Conference on Software Testing, Verification and Validation, ICST 2025, Napoli, Italy, March 31 - April 4, 2025 . IEEE, 2025, pp. 103–114. [Online]. Available: https://doi.org/10.1109/ICST62969.2025.10988968 [34] Y. Sun, D. Wu, Y. Xue, H. Liu, W. Ma, L. Zhang, M. Shi, and Y. Liu, “Llm4vuln: A unified evaluation framework for decoupling and enhancing llms’ vulnerability reasoning,” CoRR , vol. abs/2401.16185, 2024. [Online]. Available: https://doi.org/10.48550/arXiv.2401.16185 [35] P. Liu, J. Liu, L. Fu, K. Lu, Y. Xia, X. Zhang, W. Chen, H. Weng, S. Ji, and W. Wang, “Exploring chatgpt’s capabilities on vulnerability management,” in 33rd USENIX Security Symposium, USENIX Security 2024, Philadelphia, PA, USA, August 14-16, 2024 , D. Balzarotti and W. Xu, Eds. USENIX Association, 2024. [Online]. Available: https: //www.usenix.org/conference/usenixsecurity24/presentation/liu-peiyu [36] V. Wüstholz, O. Olivo, M. J. H. Heule, and I. Dillig, “Static detection of dos vulnerabilities in programs that use regular expressions,” in 
+
+Tools and Algorithms for the Construction and Analysis of Systems - 23rd International Conference, TACAS 2017, Held as Part of the European Joint Conferences on Theory and Practice of Software, ETAPS 2017, Uppsala, Sweden, April 22-29, 2017, Proceedings, Part II , ser. Lecture Notes in Computer Science, A. Legay and T. Margaria, Eds., vol. 10206, 2017, pp. 3–20. [Online]. Available: https://doi.org/10.1007/978-3-662-54580-5_1 [37] G. Kambourakis, T. Moschos, D. Geneiatakis, and S. Gritzalis, “Detecting DNS amplification attacks,” in Critical Information Infrastructures Security, Second International Workshop, CRITIS 2007, Málaga, Spain, October 3-5, 2007. Revised Papers , ser. Lecture Notes in Computer Science, J. López and B. M. Hämmerli, Eds., vol. 5141. Springer, 2007, pp. 185–196. [Online]. Available: https://doi.org/10.1007/978-3-540-89173-4_16 [38] Y. Afek, A. Bremler-Barr, and L. Shafir, “Nxnsattack: Recursive DNS inefficiencies and vulnerabilities,” in 29th USENIX Security Symposium, USENIX Security 2020, August 12-14, 2020 , S. Capkun and F. Roesner, Eds. USENIX Association, 2020, pp. 631–648. [Online]. Available: https://www.usenix.org/conference/usenixsecurity20/presentation/afek [39] Y. Liu, M. Zhang, and W. Meng, “Revealer: Detecting and exploiting regular expression denial-of-service vulnerabilities,” in 42nd IEEE Symposium on Security and Privacy, SP 2021, San Francisco, CA, USA, 24-27 May 2021 . IEEE, 2021, pp. 1468–1484. [Online]. Available: https://doi.org/10.1109/SP40001.2021.00062

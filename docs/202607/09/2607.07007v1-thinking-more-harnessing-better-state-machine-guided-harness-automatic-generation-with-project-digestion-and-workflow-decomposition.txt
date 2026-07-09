@@ -1,0 +1,1176 @@
+Title: Thinking More, Harnessing Better: State Machine Guided Harness Automatic Generation with Project Digestion and Workflow Decomposition
+
+URL Source: https://arxiv.org/pdf/2607.07007v1
+
+Published Time: Thu, 09 Jul 2026 00:27:56 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+# Thinking More, Harnessing Better: Automatic Harness Generation with Dataflow Aggregation and Workflow Decomposition 
+
+# Xing Zhang 1, †, Zikang Huang 2,1, †, Gang Yang 3, R, CongChong Wang 1, Lu Liu 4,1 , Bin Yin 1, Mingyi Wang 1, Ziquan Zhao 1, Min Li 1, Zhenyu Chen 1, Bo Wu 3, Lingyun Ying 1, R
+
+1QI-ANXIN Technology Research Institute, Beijing, China 
+
+2Wuhan University, Wuhan, China 
+
+3Information Support Force Engineering University, Wuhan, China 
+
+4Shandong University, Jinan, China 
+
+†Both authors contributed equally to this research. 
+
+RCorresponding authors: yanggang11@nudt.edu.cn, yinglingyun@qianxin.com 
+
+## Abstract 
+
+High-quality fuzz harnesses are essential for effective gray-box fuzzing. While Large Language Models (LLMs) offer promise for automating this task, existing one-turn generation methods suf-fer from hallucinations and inadequate coverage due to coarse-grained function targeting and misaligned generation workflows. We present SynapseFlow , an automatic harness generator that addresses these limitations through two key innovations: dataflow-aware function aggregation and a staged, rollback-enabled genera-tion workflow decomposition. SynapseFlow first analyzes source code to construct Structural Flow Graphs and extract coherent Func-tion Triplets. It then synthesizes harnesses via a decomposed four-stage process governed by a staged rollback algorithm to ensure correctness. We evaluated SynapseFlow on 25 real-world open-source software projects. The experimental results indicate that 
+
+SynapseFlow outperforms state-of-the-art tools (OSS-Fuzz-Gen, CKGFuzzer, PromeFuzz), achieving 3.07 ×, 1.71 ×, and 4.26 × higher branch coverage, and 1.77 ×, 1.51 ×, and 1.36 × higher bug detection rates, respectively. Most importantly, SynapseFlow discovered 7 previously unreported bugs (5 assigned CVEs), demonstrating its practical effectiveness in real-world bug discovery. 
+
+## CCS Concepts 
+
+• Security and privacy → Software security engineering .
+
+## Keywords 
+
+Fuzzing, Fuzzing Harness Generation, Large Language Model, Vul-nerability Discovery  
+
+> Permission to make digital or hard copies of all or part of this work for personal or classroom use is granted without fee provided that copies are not made or distributed for profit or commercial advantage and that copies bear this notice and the full citation on the first page. Copyrights for components of this work owned by others than the author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or republish, to post on servers or to redistribute to lists, requires prior specific permission and/or a fee. Request permissions from permissions@acm.org.
+> CCS ’26, The Hague, The Netherlands
+> ©2026 Copyright held by the owner/author(s). Publication rights licensed to ACM. ACM ISBN 978-1-4503-XXXX-X/XXXX/XX https://doi.org/XXXXXXX.XXXXXXX
+
+ACM Reference Format: 
+
+Xing Zhang 1, †, Zikang Huang 2,1, †, Gang Yang 3, R, CongChong Wang 1, Lu Liu 4,1 , Bin Yin 1, Mingyi Wang 1, Ziquan Zhao 1, Min Li 1, Zhenyu Chen 1, Bo Wu 3, Lingyun Ying 1, R . 2026. Thinking More, Harnessing Better: Automatic Harness Generation with Dataflow Aggregation and Workflow Decompo-sition. In Proceedings of Proceedings of the 2026 ACM SIGSAC Conference on Computer and Communications Security (CCS ’26). ACM, New York, NY, USA, 20 pages. https://doi.org/XXXXXXX.XXXXXXX 
+
+## 1 Introduction 
+
+Fuzzing is a cornerstone technique in modern software security analysis. Among its various paradigms, white-box fuzzing, which leverages source code analysis to guide test generation, offers the potential for deep program exploration. High-quality fuzz har-nesses—code segments that invoke target functions with fuzzing inputs—are pivotal for effective function-oriented gray-box fuzzing. They enable direct testing of internal program logic, circumvent-ing the coverage limitations often encountered when fuzzing only through external application interfaces. This need is particularly urgent for C projects, which constitute the backbone of critical system software, libraries, and embedded systems. Due to the prevalence and severity of memory safety vulnerabilities in C, achieving comprehensive coverage is essen-tial [ 1]. However, modern C applications and libraries exhibit intri-cate function dependencies, making comprehensive coverage via whole-application fuzzing challenging [ 2 ]. Consequently, function-oriented fuzzers, which rely on specialized harnesses to test indi-vidual functions directly, have gained widespread adoption [3]. The core challenge lies in automatically synthesizing such har-nesses, which demands a deep understanding of source code to log-ically compose relevant functions. Large Language Models (LLMs), with their strong code comprehension and generation capabilities, have thus emerged as promising candidates for this task [ 4, 5 ]. Prior research endeavors have integrated prompt engineering with proprietary LLMs to generate harnesses through different combi-nations of API mutations [ 6]. Those methods employ zero-shot or few-shot prompting and have also explored various code composi-tion strategies [ 6– 9]. However, prevalent LLM-based approaches are hampered by a monolithic generation paradigm, leading to two core shortcomings: 1) imprecise, often ad-hoc function selection and 2) severe LLM hallucinations. Firstly, lacking systematic dataflow arXiv:2607.07007v1 [cs.CR] 8 Jul 2026 CCS ’26, November 15–19, 2026, The Hague, The Netherlands Xing Zhang, Zikang Huang, Gang Yang, Lingyun Ying, and et al. 
+
+analysis leads to ad-hoc function selection (e.g., misidentifying in-ternal functions), which fails to form a minimal, coherent set for effective testing. This yields harnesses that are either incomplete or burdened with irrelevant code. Secondly, the monolithic genera-tion task commonly overwhelms LLMs, causing hallucinations (e.g., generating incorrect or redundant code) that cripple the harness’s correctness and effectiveness. These limitations collectively result in low code coverage and missed vulnerabilities. Therefore, generating high-quality harnesses presents a dual challenge: 1) intelligently identifying and aggregating a function-ally coherent cluster of functions, and 2) orchestrating a robust, multi-step synthesis process that mitigates LLM errors. This process inherently involves a trade-off between granularity (testing focused units) and comprehensiveness (covering enough logic to trigger deep bugs) [ 10 ]. More importantly, a well-designed harness should ensure that any crash it produces during fuzzing is a meaningful, reproducible bug in the original application context, not an artifact of the harness itself. Thus, automated harness generation can be viewed as a constrained optimization and planning problem over the project’s function call graph. To address these issues, we propose a paradigm shift: moving from monolithic LLM invocation to a structured, decomposition-based workflow akin to expert human reasoning. This workflow first digests the project to form semantically meaningful function groups, then decomposes the code writing into manageable, verifi-able steps to synthesize a high-coverage harness. Furthermore, the process incorporates feedback and rollback mechanisms inspired by task decomposition for AI agents [ 11 ] to contain errors and hallucinations. Following this rationale, achieving high-quality, automated gray-box harness generation necessitates addressing the following two core research questions: 
+
+How to identify and group involved functions for harness generation from source code? This requires analyzing source code to identify functions that process security-critical data (often from external inputs) and group them logically. A key challenge is to move beyond simple metrics (e.g., complexity) and understand dataflow, parameter semantics, and functional cohesion to form minimal yet sufficient groups. Current LLM-only approaches lack the precise program analysis for this. 
+
+How to mitigate the risks of hallucinations and error ac-cumulation in the long-chain generation workflow? When tasked with generating complex harness code in one turn, LLMs fre-quently hallucinate details: they may invent non-existent functions, misuse macros, or insert inefficient I/O operations (e.g., fprintf ), leading to compilation failures or crippled fuzzing performance. While some methods inject knowledge via prompts [ 9, 12 ], this proves inadequate for long, complex generation chains. A robust solution requires decomposing the workflow into sequential, verifi-able sub-tasks with built-in error detection and recovery. To tackle these challenges, we propose SynapseFlow , an LLM-powered framework grounded in dataflow aggregation and workflow decomposition for automatic harness generation. It first employs hy-brid static analysis and LLM reasoning to digest the whole project and construct minimal, coherent function groups. It then orches-trates a multi-stage generation workflow with a staged rollback algorithm to ensure correctness and mitigate hallucinations. This constitutes a paradigm shift from prior monolithic generation: gen-eration steps are dictated by extracted dataflow, and the workflow self-corrects via targeted rollback to isolate hallucinations. We eval-uate SynapseFlow on 25 real-world, open-source C projects. It significantly outperforms state-of-the-art (SOTA) tools (OSS-Fuzz-Gen [ 5 ], CKGFuzzer [ 9], and PromeFuzz [ 12 ]), achieving 3.07x, 1.71x, and 4.26x higher branch coverage and 1.77x, 1.51x, and 1.36x higher crash discovery rates, respectively. Notably, even on these extensively fuzzed projects, harnesses generated by SynapseFlow 
+
+led to the discovery of 7 previously unreported bugs (4 assigned CVEs), demonstrating its ability to find deep, overlooked Bugs. This paper makes the following contributions: 
+
+• A Method for Dataflow-Aware Function Aggregation :We propose a novel method integrating lightweight static dataflow analysis with LLM-based semantic reasoning to identify and aggregate functionally related functions into minimal, self-contained groups. This provides a sound foun-dation for harness generation beyond API-level testing. 
+
+• A Framework for Robust, Decomposed Synthesis : We design a stepwise and reversible prompting framework gov-erned by a staged rollback algorithm. This decomposes com-plex harness synthesis into a sequence of manageable LLM sub-tasks, effectively mitigating hallucinations and error propagation common in single-prompt approaches. 
+
+• Implementation and Extensive Evaluation : We imple-ment our approach in SynapseFlow , an automated harness generation tool for C programs. Extensive evaluation on real-world projects shows that SynapseFlow -generated har-nesses achieve higher coverage and uncover more bugs than SOTA tools, including the discovery of 7 previously unre-ported bugs. 
+
+## 2 Background and Motivation 2.1 Harness in Gray-Box Fuzzing 
+
+In the context of gray-box fuzzing for C source projects, a fuzz harness (or fuzz driver) is a specialized piece of code that acts as a test interface for a specific functional unit. Its primary role is to receive raw fuzzing input (typically a byte array), transform this input into the appropriate program state (e.g., by initializing data structures), and then invoke a sequence of target functions to test their behavior under varied inputs. By isolating and directly testing internal components, harnesses enable more focused and efficient vulnerability discovery compared to whole-application fuzzing. A high-quality harness must satisfy several critical criteria to be effective in practice: 
+
+• Functional Completeness: It must invoke a logically co-herent and minimal set of functions that together implement a meaningful feature. Omitting necessary functions leads to low coverage; including irrelevant ones adds noise and reduces fuzzing efficiency. 
+
+• Semantic Correctness: The harness must respect the us-age specifications and data dependencies of each invoked function (e.g., correct parameter types, proper initialization order, and valid state transitions). SYNAPSEFlow CCS ’26, November 15–19, 2026, The Hague, The Netherlands 
+
+• Syntactic Soundness: The generated code must be compil-able and free of syntax errors. It should also avoid introduc-ing constructs that hinder fuzzing performance, such as file I/O operations or excessive logging. Crafting such a harness manually requires deep understanding of the codebase and is labor-intensive, motivating the need for reliable automation. Existing automated methods, as we discuss next, often fall short of meeting these quality standards. 
+
+## 2.2 Harness Generation 
+
+Automated harness generation techniques can be broadly cate-gorized into two paradigms: traditional program-analysis-based methods and modern LLM-based approaches. 
+
+Traditional methods (e.g., template-based [ 13 ], slicing-based [ 14 ,15 ]) rely on static/dynamic analysis. Their synthesis methods are deterministic but rigid, often failing to generate complex logic and lacking semantic understanding, which leads to poor functional completeness .
+
+LLM-based methods (e.g., OSS-Fuzz-Gen, CKGFuzzer, PromeFuzz) leverage code comprehension to produce more sophisticated code. However, they introduce new critical flaws: 1) their function selec-tion strategies are ad-hoc, lacking principled, dataflow-aware aggre-gation of functions; 2) they predominantly use a monolithic, one-shot generation workflow, which is prone to LLM hallucinations and error cascades without recovery mechanisms. Consequently, they often compromise semantic correctness and functional com-pleteness. In essence, existing methods fall short because they fail to address two core aspects of the problem: systematic function grouping and robust, error-tolerant generation. 
+
+## 2.3 Motivation Example 
+
+To ground the aforementioned challenges in a concrete scenario, we use the j40 project [ 16 ], a widely-used C library for parsing JPEG XL images, as a running example. Constructing an effective harness for j40 requires invoking a specific sequence of functions that manipulate core data structures, as shown in Figure 1 (Listing 1) and as listed in Table 1. 
+
+Table 1: Functions with key data structures in the j40 project. Seq. Function Name Input Struct Output Struct 
+
+1 j40_from_memory ByteStream j40_image 
+
+2 j40_output_format j40_image 
+
+3 j40_next_frame j40_image 
+
+4 j40_current_frame j40_image j40_frame 
+
+5 j40_frame_pixels j40_frame j40_pixels 
+
+6 j40_row j40_pixels 
+
+7 j40_free j40_image 
+
+Figure 1 contrasts a high-quality, developer-written harness (List-ing 1) with harnesses generated by SOTA LLM-based tools (Listings 2, 3, 4). The ideal harness (Listing 1) demonstrates functional com-pleteness by correctly sequencing all seven key functions, following the dataflow from j40_image to j40_pixels . It also exhibits se-mantic correctness (e.g., proper initialization before use, a loop to process multiple frames) and syntactic soundness (no extraneous operations). In contrast, the auto-generated harnesses reveal the limitations of current methods: 
+
+• OSS-Fuzz-Gen (Listing 2) focuses on single-function genera-tion. It completely misses the necessary dataflow, selecting only two unrelated functions and producing a harness that cannot meaningfully test the library (line 7), failing func-tional completeness .
+
+• CKGFuzzer (Listing 3) attempts to use external knowledge but lacks fine-grained dataflow understanding. It generates a plausible but incomplete sequence (only two functions in line 11, 13) and introduces unnecessary operations like man-ual memory allocation/copying ( malloc , memcpy ), which is noisy and potentially incorrect, thus compromising semantic correctness .
+
+• PromeFuzz (Listing 4) identifies more related functions (line 7, 17) yet still fails to cover the full group. It erroneously includes j40_from_memory and j40_from_file (line 5, 14), introducing two external input handlers and violating the single-entry principle of libfuzzer. The added file operations (line 10) further compromise fuzzing efficiency. The core issue is that these tools fail to identify the relationships formed by input and output structures between functions. We de-fine the structural flow graph (SFG) as the representation of these structural dependencies that logically connects functions via their struct parameters. Without this perspective, existing tools can-not derive the SFG (illustrated in Figure 2) required to group the seven functions correctly. Furthermore, their monolithic genera-tion workflows offer no chance to detect and rectify the introduced hallucinations or logical errors. 
+
+## 2.4 Problem Definition 
+
+The motivating example crystallizes the core task of this work: automatically generating high-quality fuzz harnesses for C source code projects. To achieve this automatically, the process must fun-damentally address two intertwined sub-problems: 
+
+Coherent Function Grouping: Given a source project 𝑆 , identify a set of functions 𝐺 = {𝑓 1, 𝑓 2, ..., 𝑓 𝑘 } that collectively implement a distinct, testable feature. The grouping must be grounded in the actual dataflow between functions (via shared data structures), not just call relations or semantic similarity, to ensure functional completeness. 
+
+Robust Harness Synthesis: Given a well-formed function group 
+
+𝐺 , synthesize a harness 𝐻 that correctly sequences the calls to functions in 𝐺 , manages all necessary data structures, and adheres to C semantics. The synthesis process must be robust against LLM hallucinations and errors. To tackle the grouping issue, we require a principled model for un-derstanding and categorizing function-data interactions. To group functions effectively based on dataflow, we analyze their roles in processing data structures. We define three semantic categories for functions in a project: 
+
+• Input Stream Function (ISF) : A function that serves as a unique entry point, consuming unstructured, external data (e.g., from memory, a file) and producing or initializing an CCS ’26, November 15–19, 2026, The Hague, The Netherlands Xing Zhang, Zikang Huang, Gang Yang, Lingyun Ying, and et al.                                       
+
+> 1int LLVMFuzzerTestOneInput ( const uint8_t * data , size_t size ) {
+> 2j40_image image ;
+> 3j40_from_memory (& image ,( void *) data , size , NULL );
+> 4j40_output_format (& image , J40_RGBA , J40_U8X4 );
+> 5while ( j40_next_frame (& image )){
+> 6j40_frame frame =j40_current_frame (& image );
+> 7j40_pixels pixels ;
+> 8pixels =j40_frame_pixels (& frame , J40_RGBA );
+> 9for ( int y=0; y<pixels . height ; ++ y) {
+> 10 j40_row ( pixels , y) ;}}
+> 11 j40_free (& image );
+> 12 return 0;}
+
+Listing 1: An idealical example harness                           
+
+> 1int LLVMFuzzerTestOneInput ( const uint8_t * data , size_t size ) {
+> 2j40_image * image ;
+> 3j40_frame frame ;
+> 4if ( size <sizeof ( j40_image )) {
+> 5return 0;}
+> 6image =( j40_image *) data ;
+> 7frame =j40_next_frame ( image );
+> 8return 0;}
+
+Listing 2: A harness generated by OSS-Fuzz-Gen                                                  
+
+> 1int LLVMFuzzerTestOneInput ( const uint8_t * data , size_t size ) {
+> 2j40_image image ;
+> 3j40_err err ;
+> 4if ( size <1) {
+> 5return 0;}
+> 6void * input_buffer =malloc ( size );
+> 7if (! input_buffer ) {
+> 8return 0;}
+> 9memcpy ( input_buffer , data , size );
+> 10 memset (& image , 0, sizeof ( image ));
+> 11 err =j40_from_memory (& image , input_buffer , size , nullptr );
+> 12 if ( err == 0) {
+> 13 int result =j40_next_frame (& image ) ;}
+> 14 free ( input_buffer );
+> 15 return 0;}
+
+Listing 3: A harness generated by CKGFuzzer                                                                          
+
+> 1int LLVMFuzzerTestOneInput ( const uint8_t * Data , size_t Size ) {
+> 2j40_image * image =( j40_image *) calloc (1 , sizeof ( j40_image ));
+> 3if (! image ) return 0;
+> 4if ( Size >0) {
+> 5j40_err err =j40_from_memory ( image , ( void *) Data , Size , NULL );
+> 6if ( err != 0) {
+> 7const char * err_str =j40_error_string ( image ) ;}
+> 8else {
+> 9while ( j40_next_frame ( image ) == 0) {}}}
+> 10 FILE * input =fopen (" input " , " wb ");
+> 11 if ( input ) {
+> 12 fwrite ( Data , 1, Size , input );
+> 13 fclose ( input );
+> 14 j40_err e=j40_from_file ( image , " input ");
+> 15 if (e != 0) {
+> 16 const char * err_str =j40_error_string ( image ) ;}}
+> 17 j40_free ( image );
+> 18 return 0;}
+
+Listing 4: A harness generated by PromeFuzz Figure 1: A comparison of harnesses generated by distinct approaches for j40 project. j40_from_memory (ByteStream) j40_image 
+
+j40_next_frame (j40_image )
+
+j40_output_format (j40_image )
+
+j40_current_frame (j40_image ) j40_frame 
+
+j40_frame_pixels (j40_frame ) j40_pixels 
+
+j40_row (j40_pixels )j40_free( j40_image )
+
+Figure 2: Structural flow graph for j40 depicting data struc-ture transformations between key APIs, which underpins the logical grouping of functions for harness generation. 
+
+internal data structure, e.g., j40_from_memory in the moti-vation example. 
+
+• Helper Function (HPF) : A function responsible for the lifecycle management (allocation, initialization, deallocation) of a data structure, e.g., j40_free and j40_from_memory in the motivation example. 
+
+• Process Function (PRF) : A function that transforms, val-idates, or reads the content of an already-initialized data structure but does not manage its lifecycle, e.g., j40_next_ frame , j40_frame_pixels and j40_row in the motivation example. Noteworthy, a function can belong to multiple categories simulta-neously, e.g., j40_from_memory in the motivation example is both an ISF and an HPF. Building upon these categories, we define Function Triplet (FT) as the atomic unit for harness generation. An FT represents a minimal, self-contained data processing unit centered around one primary data structure flow. Formally, an FT is an ordered triplet: 
+
+𝐹𝑇 = (𝐼, 𝑃, 𝐻 )
+
+subject to the following constraints: 
+
+• 𝐼 is a unique singleton ISF .
+
+• 𝑃 is an optional set of PRF s. 
+
+• 𝐻 is an optional set of HPF s. We can formalize FT as: 
+
+𝐹𝑇 = (𝐼, 𝑃, 𝐻 ) where 
+
+
+
+|𝐼 | = 1
+
+𝐼 ⊆ F 𝐼𝑆𝐹 
+
+𝑃 ⊆ F 𝑃𝑅𝐹 ∪ ∅ 
+
+𝐻 ⊆ F 𝐻 𝑃𝐹 ∪ ∅ 
+
+where F𝐼𝑆𝐹 , F𝑃𝑅𝐹 and F𝐻 𝑃𝐹 denote the sets of all ISFs, PRFs and HPFs in the project, respectively, and | · | denotes set cardinality. A source project 𝑆 can be digested into multiple, distinct FTs, each anchored by a different ISF: 
+
+𝑆 → { 𝐹𝑇 1, 𝐹𝑇 2, . . . , 𝐹𝑇 𝑛 },
+
+where each 𝐹𝑇 𝑖 = (𝐼 𝑖 , 𝑃 𝑖 , 𝐻 𝑖 ) and ∀𝑖 ≠ 𝑗, 𝐼 𝑖 ≠ 𝐼 𝑗 .The process of discovering these FTs from source code directly addresses the grouping issue. The FT provides a semantically co-herent function group ( 𝐺 = 𝐼 ∪ 𝑃 ∪ 𝐻 ) that is grounded in dataflow (the input/output structures connecting 𝐼 , 𝑃 , and 𝐻 ). For our run-ning example, the functions in Table 1 naturally form a single FT: 𝐼 = {j40_from_memory }, while 𝑃 = {j40_output_format ,
+
+j40_next_frame , j40_current_frame , j40_frame_pixels , j40_ row }, 𝐻 = {j40_from_memory , j40_free }. This model elegantly captures the functional completeness requirement. 
+
+## 2.5 Challenges 
+
+Given the problem definition above, realizing an automated solution like SynapseFlow involves overcoming two major implementation challenges that correspond to sub-problems (in Section 2.4): 
+
+Challenge 1: Dataflow-Aware Function Grouping. How can we accurately identify ISF, HPF, and PRF functions from C source SYNAPSEFlow CCS ’26, November 15–19, 2026, The Hague, The Netherlands 
+
+code and cluster them into correct FTs? This requires going beyond syntactic call graphs to understand how data structures are created, transformed, and passed between functions—a task that demands a fusion of lightweight static analysis for structural tracking and LLM-based reasoning for semantic role disambiguation. 
+
+Challenge 2: Hallucination-Robust Multi-Stage Synthesis. 
+
+Given an FT, how can we design a generation workflow that de-composes the complex harness synthesis task into a sequence of simpler, verifiable sub-tasks (e.g., structure definition, initialization, function chaining, cleanup)? This workflow must incorporate mech-anisms for error detection and recovery (e.g., rollback) to prevent hallucinations and error cascades, ensuring the final harness is both semantically correct and syntactically sound. The design of SynapseFlow , presented in the next section, is our concrete response to these challenges. 
+
+## 3 Methodology 3.1 Overview 
+
+SynapseFlow automates high-quality harness generation for source code by decomposing the process into two core phases (Figure 3) that directly address the challenges defined in Section 2.5. 
+
+Phase 1: Function Grouping with Dataflow Aggregation. This phase digests the source project (Section 3.2.1) to extract coher-ent FTs—minimal, testable function groups grounded in dataflow. The process involves classifying functions by semantic role (IS-F/PRF/HPF), constructing a SFG to model structure propagation (Section 3.2.2), and applying graph algorithms to extract FTs (Sec-tion 3.2.3). 
+
+Phase 2: Harness Generation with Workflow Decomposition. 
+
+Given an FT, this phase synthesizes the final harness. To mitigate the hallucinations and errors inherent in monolithic LLM prompting, we decompose synthesis into a sequence of four simpler, verifi-able stages (Section 3.3.1). Meanwhile, a staged rollback algorithm 
+
+(Section 3.3.2) orchestrates this workflow, enabling recovery from failures by rolling back to previous stages. 
+
+Running Example. We continue with the j40 project. Phase 1 constructs its SFG (Figure 2) and extracts an FT (Table 2) containing the seven key API functions. Phase 2 then transforms this FT into the high-quality harness of Listing 1. The following subsections detail each phase. 
+
+Table 2: Function Triplet of the j40 project. Functions are annotated with their types: ISF, PRF, and HPF. Function Name Type Structural Flow 
+
+j40_from_memory ISF&HPF (null), j40_image j40_output_format PRF j40_image , (null) 
+
+j40_next_frame PRF 
+
+j40_current_frame PRF j40_image , j40_frame j40_frame_pixels PRF j40_frame , j40_pixels j40_row PRF j40_pixels , (null) 
+
+j40_free HPF 
+
+## 3.2 Function Triplet Extraction with Dataflow Aggregation 
+
+This phase aims to automatically discover FTs from the source code. An FT represents a minimal, coherent set of functions that should be tested together, grounded in their dataflow dependencies. The extraction involves three main steps: 1) annotating each function with its semantic type (ISF, PRF, or HPF), 2) constructing an SFG that models data structure propagation between functions, and 3) applying a graph algorithm to the SFG to extract the FTs. We now elaborate on each step. 
+
+3.2.1 Function Annotation. The goal of this step is to label each function in the project as an ISF, PRF, or HPF according to the defi-nitions in Section 3.1. Accurate annotation requires understanding both syntactic features (parameter types) and functional semantics (what the function does). We therefore employ a hybrid approach that combines lightweight static analysis for syntax with LLM-based reasoning for semantics. 
+
+Identifying ISFs. We first use syntax analysis to filter functions that have pointer-type parameters (e.g., void* , uint8_t* ) which could represent raw byte streams. For these candidate functions, we need to distinguish true byte-stream handlers from those that process semantic strings (e.g., filenames). We leverage the LLM’s semantic understanding through a set of distinct prompt templates (detailed in Appendix B.1). These prompts ask the LLM to judge, in different formats, whether a specific parameter represents a contiguous byte input. Next, an LLM uses multiple distinct prompts (detailed in Appendix B.2) to filter functions that reference specific meaningful strings, such as those passed by references, filenames, or path names. A voting mechanism on the LLM’s responses yields the final identification of ISFs. 
+
+Distinguishing PRFs and HPFs. This is a two-stage process. First, syntax analysis isolates functions that operate on structs (have struct parameters or return a struct). Second, for these candi-date functions, specialized LLM prompts (Appendix B.3) infer their functional role. Functions described as performing initialization or cleanup of a struct are labeled HPFs. Functions described as manipulating, transforming, or reading an already-initialized struct are labeled PRFs. A single function can possess multiple labels (e.g., a function that reads a stream and allocates a struct is both an ISF and an HPF). We treat these labels as descriptive attributes. 
+
+3.2.2 Structural Flow Graph Construction. The goal of this step is to construct an SFG, a directed graph that provides a high-level ab-straction of how data structures flow between functions. This graph is crucial for understanding the connectivity and dependencies that will guide FT extraction. 
+
+Structure Directionality Inference. To build the SFG, we must first determine each function’s input and output structures. Return types and non-pointer struct parameters are straightforward. For ambiguous pointer-to-struct parameters, we need to infer if they are input (read-only), output (write-only), or both. We resolve this by prompting the LLM to analyze the function’s operational semantics on that parameter. 
+
+Graph Formalization. With input/output structures identified, we formalize the SFG as a directed graph 𝐺 = (𝑉 , 𝐸 ):CCS ’26, November 15–19, 2026, The Hague, The Netherlands Xing Zhang, Zikang Huang, Gang Yang, Lingyun Ying, and et al. Phase 1:  Function Grouping with Dataflow Aggregation  (§ 3.2 ) Phase 2:  Harness Generation with Workflow Decomposition  (§ 3.3 )             
+
+> Stage 1 Func
+> Doc Generation
+> func1
+> func4
+> func2
+> Stage 2 Edge
+> Snippet Stitching
+> func3
+> func4 sig
+> Stage 3 Rough
+> Code Assembly Stage 4 Harness Optimation
+> Function Triplet
+> Flow Graph Rough Code
+> of FT Harness Code
+> Staged Rollback Algorithm
+> ...
+> Functions C Project Source Code
+> ISF
+> Functionality Analysis Annotated Functions
+> PRF HPF
+> Step 1 Function Annotation
+> Structural Flow Graph Pointer Reference Analysis
+> Step 2 Structural Flow Graph Construction
+> func3
+> func1 func5
+> func2
+> func4
+> Input Struct Ouput Struct
+> Step 3 Function Triplet Extraction
+> func_4 func_4 func_4 func_4
+> ISF:
+> func1
+> PRF:
+> func2 func3
+> HPF:
+> func4
+> func3 doc
+> func1 doc
+> func2 doc
+> func3 doc
+> Validataion
+> Step 4 Staged-rollback Harness Generation
+
+Figure 3: The workflow of SynapseFlow .
+
+• Nodes ( 𝑉 ): Each node represents a unique structure type. A special “(null)” node represents the absence of an input/out-put structure. 
+
+• Edges ( 𝐸 ): A directed edge 𝑒 = ⟨𝑛 𝑖𝑛 , 𝑛 𝑜𝑢𝑡 ⟩ ∈ 𝐸 represents a function 𝑓 that consumes an input structure 𝑛 𝑖𝑛 and produces an output structure 𝑛 𝑜𝑢𝑡 . The edge is labeled with 𝑓 .By processing all project functions, we construct the complete SFG. For our running example, the SFG for j40 is visualized in Figure 2, clearly showing the flow from ByteStream to j40_pixels .
+
+3.2.3 Function Triplet Extraction. The goal of this final step is to extract one FT for each unique ISF in the project. The ISF serves as the natural entry point and anchor for a harness. Our extraction algorithm, detailed in Algorithm 1, works on the annotated SFG. 
+
+Extraction Process. For a given ISF 𝑓 𝐼𝑆𝐹 , the algorithm first prunes the SFG by removing edges corresponding to all other ISFs (their harnesses will be generated separately). From the pruned graph, it performs a forward dataflow analysis starting from the ISF’s out-put structure, collecting all reachable functions. It also performs a backward analysis if needed. The functions within this reachable subgraph are then filtered based on their annotations: all PRFs are included, and relevant HPFs (e.g., destructors for allocated struc-tures) are added. The resulting set {𝑓 𝐼𝑆𝐹 } ∪ 𝑃 ∪ 𝐻 forms the FT. A function appearing in multiple FTs (e.g., a common free function) is handled appropriately in each harness. 
+
+Handling Multi-role Functions. A key nuance is handling func-tions with multiple annotations (e.g., a function that is both an ISF and a PRF). During pruning, only its ISF role is removed from the graph for other FTs; it remains present for its PRF role. If a function in the final FT is both a PRF and an HPF, it is treated as a PRF for generation priority, ensuring the core processing logic is captured. 
+
+## 3.3 Harness Generation with Staged Decomposition and Rollback 
+
+This phase takes an FT as input and synthesizes the corresponding fuzz harness. The core insight is that generating the entire harness in one LLM call is error-prone. Therefore, we decompose the task into a sequence of four simpler stages, each with a clear objective and validation criteria. A staged rollback algorithm orchestrates these stages, providing fault tolerance by allowing the process to roll back to a previous stage upon failure. The detail theoretical 
+
+Algorithm 1 Function Triplet Extraction Algorithm 
+
+Require: 𝑓 𝐼𝑆𝐹 = (𝑛 𝑖𝑛 , 𝑛 𝑜𝑢𝑡 ), F𝐼𝑆𝐹 ,F𝑃𝑅𝐹 ,F𝐻 𝑃𝐹 , Structural Flow Graph 𝐺 .
+
+Ensure: FT for 𝑓 𝐼𝑆𝐹 .
+
+1: 𝑛𝑒𝑤𝐺 ← 𝐺 .remove_edges_from( F𝐼𝑆𝐹 − { 𝑓 𝐼𝑆𝐹 })
+
+2: 𝐼𝑛𝑁𝑜𝑑𝑒𝑠 ← 𝑛𝑒𝑤𝐺 .ancestors( 𝑛 𝑖𝑛 ) + 𝑛 𝑖𝑛 
+
+3: 𝑂𝑢𝑡𝑁𝑜𝑑𝑒𝑠 ← 𝑛𝑒𝑤𝐺 .descendants( 𝑛 𝑜𝑢𝑡 ) + 𝑛 𝑜𝑢𝑡 
+
+4: 𝐹𝑇𝐺𝑟𝑎𝑝ℎ ← 𝑛𝑒𝑤𝐺 .subgraph( 𝐼𝑛𝑁𝑜𝑑𝑒𝑠 + 𝑂𝑢𝑡𝑁𝑜𝑑𝑒𝑠 )
+
+5: 𝐸𝑑𝑔𝑒𝑠 ← 𝐹𝑇𝐺𝑟𝑎𝑝ℎ .edges() 
+
+6: 𝐹 𝑃𝑅𝐹 ← { 𝑓 |𝑓 ∈ 𝐸𝑑𝑔𝑒𝑠, 𝑓 ∈ F 𝑃𝑅𝐹 }
+
+7: 𝐹 𝐻 𝑃𝐹 ← { 𝑓 |𝑓 ∈ 𝐸𝑑𝑔𝑒𝑠, 𝑓 ∈ F 𝐻 𝑃𝐹 , 𝑓 ∉ 𝐹 𝑃𝑅𝐹 }
+
+8: 𝐹𝑇 ← ( 𝑓 𝐼𝑆𝐹 , 𝐹 𝑃𝑅𝐹 , 𝐹 𝐻 𝑃𝐹 )
+
+9: return 𝐹𝑇 
+
+proof of the advantages of decomposition and rollback is shown in Appendix A. 
+
+3.3.1 Stage Design. The stage decomposition follows a progressive refinement strategy. We transform the complex goal of “generate a full harness” into simpler sub-goals: first understand the functions, then generate code for local data transformations, then assemble the pieces, and finally polish the result. This approach aligns with the LLM’s capabilities and limits context length per step. 
+
+Stage 1: Function Documentation Generation. The goal is to convert the raw source code of each function in the FT into struc-tured, textual API documentation. This includes the function signa-ture, a description of its purpose, its usage scenario, and example invocation patterns. This step abstracts away low-level syntax, pro-viding the LLM with high-level semantic knowledge for subsequent code synthesis (by employing prompts in Appendix B.4). For our 
+
+j40 example, this stage converts the seven functions in Table 2 into their corresponding API documentation. 
+
+Stage 2: Structure Snippet Stitching. The goal is to generate small, correct code snippets for localized data transformations. Us-ing the SFG, we identify groups of functions that share the same input and output structure (forming a processing “unit”). For each unit, the LLM is prompted to generate a code snippet that correctly sequences the involved function calls to transform the input struc-ture into the output structure. This breaks down the global code SYNAPSEFlow CCS ’26, November 15–19, 2026, The Hague, The Netherlands 
+
+generation problem into manageable local problems. Figure 4 il-lustrates this process for the five snippets identified in j40 ’s FT (Table 2). The prompt used is listed in Appendix B.5. j40_from_memory(null-image) 
+
+> j40_next_frame
+> j40_output_format
+> j40_current_frame(image-frame) j40_frame_pixels(frame-pixels) j40_row(pixels-null)
+> j40_free
+> ... j40_output_format(image,...);
+> while (!j40_next_frame(image)){ ...
+> snippet image-null
+
+Figure 4: Structural processing snippet generation for the 
+
+j40 project (Stage 2). Each snippet corresponds to a coherent data transformation identified from the FT in Table 2. Stage 3: Rough Code Assembly. The goal is to combine the individual snippets from Stage 2 into a complete, executable pro-totype. The LLM iteratively merges adjacent snippets (following the dataflow order in the SFG) by writing code that connects their inputs and outputs using the prompt in Appendix B.6. The output of this stage is a rough but complete code sequence that correctly invokes all functions in the FT. Figure 5 shows the assembly process for j40 , where the five snippets are logically merged. null-image                           
+
+> j40_free
+> ... j40_image *image =malloc (sizeof (j40_image));
+> int size =2000;
+> uint8 *data =malloc (size); j40_from_memory(image, data, size, NULL); j40_output_format(image,...);
+> while (!j40_next_frame(image)){
+> j40_frame f=j40_current_frame(image,...);
+> j40_pixels p=j40_frame_pixels(&f,...);
+> for (int i=0;i<p.weight;i++){
+> printf (...);
+> j40_row(p,i);} j40_free(image);
+> Gen Code I:ByteStream O:j40_frame Gen Code I:ByteStream O:j40_pixels
+> Gen Code I:ByteStream O:null Rough Code I:ByteStream O:
+> image-null pixels-null frame-pixels image-frame
+> Sruct Snippets
+
+Figure 5: Rough code assembly for the j40 project (Stage 3). Structural snippets are iteratively merged following the dataflow order. Stage 4: Code Optimization and Harness Transformation. 
+
+The goal is to convert the rough prototype into a final, fuzzing-ready harness. The LLM performs several tasks: it wraps the code into the standard LLVMFuzzerTestOneInput function signature, removes any operations harmful to fuzzing performance (e.g., file I/O, excessive prints), and ensures proper resource cleanup. The output is the final harness code, which for j40 matches the high-quality harness shown in Listing 1. 
+
+3.3.2 Staged Rollback Algorithm. Decomposing the workflow im-proves quality but introduces more steps. To manage potential failures efficiently and avoid restarting from scratch, we introduce the staged rollback algorithm (Algorithm 2). Its core idea is simple: if the final harness (Stage 4 output) fails compilation or a basic runtime test, instead of discarding all previous work, we roll back to the output of Stage 3 and regenerate Stage 4. If repeated fail-ures occur, we roll back further (to Stage 2, then Stage 1). This provides a cost-effective recovery mechanism, saving significant LLM inference time compared to a full restart. 
+
+Algorithm Mechanics. The algorithm maintains a current stage pointer ( cur ) and a rollback target pointer ( cycState ). It executes stages sequentially from 1 to 4. Upon a Stage 4 failure, the failure counter ( regen ) increments, and the process rolls back to cycState 
+
+(initially Stage 3). If failures persist (exceeding a threshold), cycState 
+
+is set to an earlier stage, enabling a deeper rollback. This mechanism ensures that persistent errors in later stages can be addressed by regenerating earlier, potentially problematic components. 
+
+Algorithm 2 Staged Rollback Algorithm for Harness Generation 
+
+Require: 𝑟𝑒𝑔𝑒𝑛 , 𝑐𝑢𝑟 , 𝑐𝑦𝑐𝑆𝑡𝑎𝑡𝑒 and state union 
+
+{𝑠𝑡𝑎𝑔𝑒 1, 𝑠𝑡𝑎𝑔𝑒 2, 𝑠𝑡𝑎𝑔𝑒 3, 𝑠𝑡𝑎𝑔𝑒 4}.
+
+Ensure: 𝐻𝑎𝑟𝑛𝑒𝑠𝑠 code or FAIL.  
+
+> 1:
+
+𝑐𝑢𝑟 ← 𝑠𝑡𝑎𝑔𝑒 1 
+
+> 2:
+
+𝑐𝑦𝑐𝑆𝑡𝑎𝑡𝑒 ← 𝑠𝑡𝑎𝑔𝑒 4 ⊲ Initial rollback target  
+
+> 3:
+
+𝑟𝑒𝑔𝑒𝑛 ← 0 
+
+> 4:
+
+while 𝑇𝑟𝑢𝑒 do  
+
+> 5:
+
+if 𝑐𝑢𝑟 == 𝑠𝑡𝑎𝑔𝑒 1 then  
+
+> 6:
+
+𝑔𝑒𝑛𝐴𝑃𝐼𝐷𝑜𝑐 ()  
+
+> 7:
+
+else if 𝑐𝑢𝑟 == 𝑠𝑡𝑎𝑔𝑒 2 then  
+
+> 8:
+
+𝑔𝑒𝑛𝑆𝑡𝑟𝑢𝑐𝑡𝑢𝑟𝑒𝐶𝑜𝑑𝑒 ()  
+
+> 9:
+
+else if 𝑐𝑢𝑟 == 𝑠𝑡𝑎𝑔𝑒 3 then  
+
+> 10:
+
+𝑔𝑒𝑛𝑅𝑜𝑢𝑔ℎ𝐶𝑜𝑑𝑒 ()  
+
+> 11:
+
+else if 𝑐𝑢𝑟 == 𝑠𝑡𝑎𝑔𝑒 4 then  
+
+> 12:
+
+𝑐𝑜𝑑𝑒 ← 𝑔𝑒𝑛𝐻𝑎𝑟𝑛𝑒𝑠𝑠𝐶𝑜𝑑𝑒 ()  
+
+> 13:
+
+𝑟𝑒𝑠𝑢𝑙𝑡 ← 𝑐𝑜𝑚𝑝𝑖𝑙𝑒 _𝑎𝑛𝑑 _𝑟𝑢𝑛𝐶ℎ𝑒𝑐𝑘 (𝑐𝑜𝑑𝑒 ) 
+
+> 14:
+
+if 𝑟𝑒𝑠𝑢𝑙𝑡 then return 𝑐𝑜𝑑𝑒 ⊲ Success  
+
+> 15:
+
+else  
+
+> 16:
+
+𝑟𝑒𝑔𝑒𝑛 ← 𝑟𝑒𝑔𝑒𝑛 + 1 
+
+> 17:
+
+𝑐𝑢𝑟 ← 𝑐𝑦𝑐𝑆𝑡𝑎𝑡𝑒 ⊲ Rollback to target stage  
+
+> 18:
+
+if 𝑟𝑒𝑔𝑒𝑛 > 3 then ⊲ Too many attempts  
+
+> 19:
+
+if 𝑐𝑦𝑐𝑆𝑡𝑎𝑡𝑒 == 𝑠𝑡𝑎𝑔𝑒 1 then return FAIL ⊲ Fail  
+
+> 20:
+
+end if  
+
+> 21:
+
+𝑟𝑒𝑔𝑒𝑛 ← 0 
+
+> 22:
+
+𝑐𝑦𝑐𝑆𝑡𝑎𝑡𝑒 ← 𝑐𝑦𝑐𝑆𝑡𝑎𝑡𝑒 − 1 ⊲ Move rollback target earlier  
+
+> 23:
+
+end if  
+
+> 24:
+
+end if  
+
+> 25:
+
+end if  
+
+> 26:
+
+𝑐𝑢𝑟 ← 𝑐𝑢𝑟 + 1 ⊲ Proceed to next stage  
+
+> 27:
+
+end while 
+
+## 3.4 Implementation 
+
+We implemented SynapseFlow in Python, using tree-sitter [ 17 ]for lightweight, robust syntax analysis. This approach trades off precise dataflow for generality, with subsequent LLM reasoning (Section 3.2.1) resolving ambiguities. The codebase comprises ap-proximately 4.7K lines of code and 139 prompt templates (modular components constituting our multi-stage pipeline; we list only the CCS ’26, November 15–19, 2026, The Hague, The Netherlands Xing Zhang, Zikang Huang, Gang Yang, Lingyun Ying, and et al. 
+
+core templates in the Appendix B, with the full set available in our repository). While our methodology is general, the current imple-mentation targets C code. Below, we highlight key implementation decisions that differentiate our approach. 
+
+Prompt Design Strategy. SynapseFlow uses LLMs for two dis-tinct tasks: function identification (in the grouping phase) and code generation (in the harness phase). For identification tasks (e.g., de-termining whether a parameter is a byte stream), validation is inherently difficult. We therefore employ a three-prompt voting scheme: we craft three prompt variants (direct extraction, yes/no question, multiple-choice) for the same query and take the majority vote of the LLM’s responses. This significantly improves accuracy over single-prompt or repeated-same-prompt approaches. For code generation tasks, we rely on syntactic validation and the rollback algorithm for error correction. 
+
+Validation of Intermediate Outputs. Each stage’s output under-goes lightweight syntactic validation before proceeding. We check for undefined functions or macros (e.g., calls to non-existent APIs), references to external libraries not in the project, and duplicate definitions. The final harness from Stage 4 must additionally pass compilation and a 30 - second test (executing with empty input to ensure no immediate crash). This layered validation catches er-rors early, prevents them from propagating to later stages, and is therefore essential for the rollback algorithm to function correctly. 
+
+Why Rollback, Not LLM-Based Repair? A deliberate design choice is to use staged rollback instead of prompting the LLM to “fix” erroneous code. Our experiments show that LLM-based repair is often non-deterministic and can introduce new, unrelated errors while attempting to fix the original one. The rollback mechanism provides a more reliable and efficient recovery path by reverting to a known-good earlier state and regenerating, leveraging the deterministic nature of our staged prompts. 
+
+## 4 Evaluation 
+
+In this section, we conducted comprehensive experiments to address the following research questions: 
+
+• RQ1 (Coverage): How effective are SynapseFlow -generated harnesses in coverage? 
+
+• RQ2 (Bug Detection Ability): How effective are Synapse-Flow -generated harnesses in triggering known bugs? 
+
+• RQ3 (Real-world Bug Discovery): Can SynapseFlow dis-cover previously unreported bugs? 
+
+• RQ4 (Efficiency): How efficient is SynapseFlow compared to the competitors? 
+
+• RQ5 (LLM Sensitivity): How sensitive is SynapseFlow to the choice of LLM? 
+
+• RQ6 (SFG Quality & Ablation Study): What is the quality of SFG and how do SFG and staged decomposition mecha-nism individually contribute to overall effectiveness? 
+
+Environment. 
+
+All experiments ran on an Ubuntu 24.04 node (Xeon Platinum 8160, 96 GB RAM, 4 × NVIDIA V100 GPUs / 64 GB). 
+
+Baselines. We selected OSS-Fuzz-Gen (git commit hash: 26b3259), CKGFuzzer (git commit hash: bb50d2f) and PromeFuzz (git commit 92df4c2) as baseline comparators. OSS-Fuzz-Gen, an LLM-based har-ness auto generation tool developed by Google, has been integrated into the OSS-Fuzz platform and is widely adopted in open-source projects. CKGFuzzer and PromeFuzz represents the current SOTA in academic research. A functional comparison of these tools is summarized in Table 3. To eliminate LLM choice as a confounding variable, all tools used the same backend model (Qwen3-32B) for the main experiments. For CKGFuzzer, feeding its entire call graph into the prompt caused token counts to exceed 2M, making gen-eration infeasible (a limitation also noted in prior work [ 12 ]); we therefore truncated the call graph input to ensure a fair comparison. We exclude traditional non - LLM baselines because the transitive hierarchy (PromeFuzz > Hopper/libErator) is already known [12]. 
+
+Table 3: A brief functional comparison with baselines. Approach Scope Target #Funcs Feedback 
+
+OSS-Fuzz-Gen All Funcs Auto. Single None CKGFuzzer API only Manual Multiple None PromeFuzz API only Auto. Multiple None 
+
+SynapseFlow All Funcs Auto. Multiple Iterative Dataset. We select 25 open-source C projects from GitHub (17 li-braries, 8 applications; details in Appendix C, Table 10). Our dataset design follows three principles to ensure rigorous and unbiased evaluation: 
+
+• Benchmarking: We include 6 established targets (c-ares, cjson, zlib, libtiff, lcms, sqlite3) commonly used in prior work [8, 9, 12, 18, 19], ensuring direct comparability. 
+
+• Stress Testing: We incorporate projects with complex pro-tocol or file-parsing logic to push the boundaries of current generation methods. 
+
+• Mitigating Data Contamination: We introduce 11 libraries never studied in related work. Since LLMs may have seen harnesses for popular libraries, evaluating on these novel targets better isolates the intrinsic performance of the gen-eration techniques themselves. Additionally, we include 8 applications to test tools beyond their original library-focused scope (CKGFuzzer and PromeFuzz were designed solely for libraries). 
+
+Experimental Setup. All generated harnesses were compiled with LLVM and executed with libFuzzer; branch coverage was measured using llvm-cov show (Appendix D). All fuzzing campaigns started from empty seeds (no initial corpus). Each harness ran for 24 hours over 5 trials (averaged and then rounded to the nearest integer) on a dedicated CPU core with no additional scheduling—each harness was tested independently immediately after successful generation. Generation settings varied by research question: for RQ1 (coverage), RQ5 (LLM sensitivity), and RQ6 (SFG quality & ablation study), we generated one harness per function triplet (FT); for RQ2 (bug detec-tion), we generated ten distinct harnesses per target bug function (Section 4.2); for RQ3 (real -world bug discovery), we generated ten harnesses per FT; and for RQ4 (efficiency), we measured genera-tion time and token consumption only, without performing fuzzing. Our experimental design follows the prudent evaluation practices recommended for fuzzing research [ 20 ]: standardized metrics, uni-form fuzzing budgets (24 hours), cross - tool comparison on a unified SYNAPSEFlow CCS ’26, November 15–19, 2026, The Hague, The Netherlands 
+
+Table 4: Evaluation results of branch coverage (RQ1) and bug detection ability (RQ2). #Br/#Func: Total number of branches/func-tions, OF: OSS-Fuzz-Gen, CK: CKGFuzzer, PF: PromeFuzz, SF: SynapseFlow , #Harness: Number of harnesses that trigger bugs. Project Type #Br/#Func #Covered Br/Func Bug ID #Harnesses OF CK PF SF OF CK PF SF 
+
+c-ares Lib 8714 / 534 3914 / 69 3547 / 89 3848 / 112 4299 / 66 CVE-2020-22217 5 4 7 9
+
+fribidi Lib 1748 / 60 727 / 30 465 / 15 774 / 16 1039 / 16 CVE-2022-25310 4 5 8 8
+
+libyaml Lib 6402 / 58 2671 / 23 3099 / 38 3078 / 57 4020 / 49 issue:42486502 7 8 7 8
+
+cjson Lib 1546 / 92 699 / 25 670 / 27 792 / 78 1117 / 78 CVE-2024-31755 7 8 7 10 
+
+sqlite3 Lib 40236 / 2432 16879 / 39 19874 / 74 22580 / 246 28063 / 528 CVE-2020-13434 5 7 8 9
+
+zlib Lib 2670 / 209 543 / 75 1436 / 69 1739 / 91 1810 / 68 CVE-2013-0899 2 3 5 9
+
+opus Lib 11470 / 532 1422 / 8 1789 / 12 4556 / 53 7296 / 143 CVE-2024-47607 5 7 7 8
+
+libxml2 Lib 59620 / 973 5831 / 160 4876 / 65 1965 / 88 6316 / 76 CVE-2025-27113 4 5 6 9
+
+lz4 Lib 1964 / 188 489 / 59 552 / 48 874 / 60 1167 / 45 CVE-2023-35955 3 6 7 10 
+
+libssh2 Lib 6184 / 347 88 / 79 96 / 22 66 / 26 172 / 25 CVE-2020-22218 3 5 6 10 
+
+expat Lib 6650 / 244 2598 / 26 3348 / 52 3720 / 76 4246 / 48 CVE-2022-40674 2 1 4 8
+
+avahi Lib 5506 / 815 654 / 42 668 / 44 288 / 99 993 / 41 CVE-2023-38473 7 6 8 8
+
+libxslt Lib 42964 / 155 5741 / 145 5411 / 86 5275 / 198 9190 / 88 CVE-2024-55549 1 1 3 8
+
+libtiff Lib 14328 / 319 4698 / 102 4896 / 107 5290 / 193 5906 / 165 CVE-2023-6277 4 3 5 7
+
+lcms Lib 8956 / 487 2578 / 165 2887 / 138 3424 / 358 3256 / 277 CVE-2025-29069 6 7 8 8
+
+libarchive Lib 21204 / 637 576 / 52 4687 / 98 6446 / 382 8313 / 146 CVE-2025-5914 6 7 7 10 
+
+xz Lib 2672 / 323 968 / 42 876 / 48 1356 / 78 1955 / 120 CVE-2025-31115 4 2 6 8
+
+jq App 18942 / 342 596 / 13 N/A 235 / 12 2909 / 28 CVE-2025-48060 4 5 8 9
+
+pjsip App 41674 / 2980 98 / 9 N/A 145 / 104 482 / 198 CVE-2023-27585 6 5 6 7
+
+kamailio App 143066 / 2494 887 / 58 N/A 112 / 143 2024 / 230 CVE-2025-12206 6 1 5 7
+
+postfix App 5778 / 1526 631 / 53 N/A 52 / 69 1286 / 540 issue:42488602 3 2 5 8
+
+gdbm App 2204 / 156 205 / 20 N/A 96 / 39 668 / 114 issue:42533836 7 6 6 7
+
+file App 7886 / 246 765 / 111 N/A 1196 / 114 2653 / 166 issue:391975635 8 6 7 8
+
+hpn-ssh App 8832 / 1661 55 / 20 N/A 44 / 164 415 / 495 issue:371061096 5 4 4 7
+
+dropbear App 8012 / 432 34 / 22 N/A 56 / 62 118 / 27 issue:391975635 8 7 8 9
+
+Aver. Rate(%) 46.9 55.0 61.3 83.3 
+
+backend, and full reporting of both coverage and bug discovery results. 
+
+## 4.1 RQ1: Coverage 
+
+4.1.1 Experimental Setup. We tested 25 source projects by generat-ing harnesses with each tool and running every harness for 24 hours from empty seeds. For each project, we aggregated the coverage data from all harnesses and computed the overall coverage. For branch coverage, we collected dynamic execution traces us-ing llvm-cov . All tools utilize libFuzzer as the backend in their implementations. The specific operations for collecting branch cov-erage are detailed in Appendix D. This setup differs from Prome-Fuzz’s approach, which relies on the AFL-LTO backend. Notably, while PromeFuzz claims to utilize llvm-cov in their paper [ 12 ], our inspection of their source code reveals that they actually employ 
+
+llvm-cov in gcov compatibility mode to collect branch coverage 1.For function coverage, we extracted all callable functions exposed in the header files as the total function set. For each generated harness, we identified the functions directly invoked within it as the covered set. 
+
+> 1https://github.com/pvz122/PromeFuzz/blob/master/database/utils/gcov.py:219
+
+4.1.2 Metrics. We quantified the relative improvement of Synapse-Flow over each baseline as the mean ratio of branch coverage and function coverage across all projects. For each project 𝑖 and base-line 𝐵 , we computed 𝑅 𝑖,𝐵 = BrCov (SynapseFlow 𝑖 )/ BrCov (𝐵 𝑖 ) and 
+
+𝑅 𝑖,𝐹 = FuncCov (SynapseFlow 𝑖 )/ FuncCov (𝐵 𝑖 ), then took the aver-age of 𝑅 𝑖,𝐵 and 𝑅 𝑖,𝐹 over all projects 𝑖 .
+
+4.1.3 Results. The coverage evaluation results are shown in Table 4 (the #Covered Br/Func column). SynapseFlow outperforms OSS-Fuzz-Gen, CKGFuzzer, and PromeFuzz in 24 out of 25 projects in branch coverage. Overall, SynapseFlow achieves 3.07 ×, 1.71 ×,and 4.26 × higher branch coverage than OSS-Fuzz-Gen, CKGFuzzer, and PromeFuzz, respectively. For function coverage, SynapseFlow 
+
+achieves 4.97 ×, 2.33 ×, and 1.52 × higher coverage than OSS-Fuzz-Gen, CKGFuzzer, and PromeFuzz, respectively. Specifically, for libraries, SynapseFlow improves branch cov-erage by factors of 2.64 ×, 1.71 ×, and 1.60 × over OSS-Fuzz-Gen, CKGFuzzer, and PromeFuzz. For applications, where CKGFuzzer is inapplicable, SynapseFlow achieves 3.98 × and 9.9 × higher cover-age compared to OSS-Fuzz-Gen and PromeFuzz. Notably, although baselines occasionally cover a larger number of functions in some individual projects, their branch coverage re-mains substantially lower. Manual inspection of baseline-generated CCS ’26, November 15–19, 2026, The Hague, The Netherlands Xing Zhang, Zikang Huang, Gang Yang, Lingyun Ying, and et al. 
+
+harnesses reveals that many perform superficial invocations with-out properly routing external fuzz inputs ( data parameter) into the target functions. Consequently, they achieve high function counts but fail to exercise internal control-flow paths. In contrast, Synapse-Flow ’s SFG-driven generation explicitly models data dependencies, ensuring that harnesses correctly channel external inputs into tar-get functions. This data-aware construction enables deeper logical exploration and explains why SynapseFlow consistently triggers more branches despite occasionally covering fewer functions. This indicates that SynapseFlow -generated harnesses exhibit superior path discovery capability. Our manual analysis reveals three key factors contributing to this performance gap: 
+
+Comprehensive Function Selection. The superior coverage of 
+
+SynapseFlow stems from identifying a more complete set of rele-vant functions through deep dataflow aggregation. While Prome-Fuzz relies on heuristics based on direct code consumption (lack-ing transitivity), SynapseFlow constructs an SFG to model global function relationships, capturing transitive dependencies and long-range data flows that baselines systematically miss. CKGFuzzer’s API-only focus and OSS-Fuzz-Gen’s single-function approach fur-ther restrict their achievable coverage. 
+
+Staged Generation Process. The quality and reliability of our generated harnesses are ensured by the staged generation pipeline. This contrasts sharply with the monolithic generation paradigm of the baselines. By breaking the complex task into incremental stages with validation at each step, we transform a high-risk process into a series of simple, verifiable steps. The baselines’ monolithic approach is fragile; a single incorrect API usage can invalidate the entire output, yielding low-quality code. 
+
+Input Function Isolation. SynapseFlow maintains a one-to-one correspondence between ISFs and harnesses, whereas CKGFuzzer and PromeFuzz often combine multiple ISFs into a single harness. When these functions process divergent input formats, the fuzzer’s genetic algorithm may skew coverage and reduce effectiveness—as observed in c-ares where merging ares_parse_soa_reply and 
+
+ares_parse_aaaa_reply diminished coverage feedback specificity. The primary reason for SynapseFlow ’s slightly lower coverage on lcms compared to PromeFuzz stems from our use of a tree-sitter-based parser. lcms uses complex macro definitions that can confuse syntax-based analysis, causing some functions to be missed during extraction. Five protocol implementations ( hpn-ssh , pjsip ,
+
+libssh2 , dropbear , proftpd ) presented challenges for all tools due to strict input validation and cryptographic requirements. This delineates the effective scope of our approach: Synapse-Flow excels at testing data-processing libraries with clear structural dataflow, while stateful protocols with complex validation logic rep-resent a known boundary for fuzz driver-based testing in general. 
+
+Answer to RQ1 : SynapseFlow achieves superior branch cov-erage by systematically generating high-quality harnesses for a broader range of functions. This stems from two key innovations: a principled function classification and grouping mechanism based on deep dataflow analysis, and a robust staged decompo-sition and rollback process that ensures code reliability. 
+
+## 4.2 RQ2: Bug Detection Ability 
+
+4.2.1 Experimental Setup. We selected 25 known bugs comprising 19 representative CVEs and 6 documented OSS-Fuzz issues [ 21 ] as our evaluation targets. For each tool, we specified the target bug functions, gener-ated corresponding harnesses, then executed them to verify bug-triggering capability: for SynapseFlow , we identified the smallest FTs containing the target bug functions to minimize interference; for OSS-Fuzz-Gen, we directly provided the target bug functions; for CKGFuzzer, we selected from its output API list those interfaces that either contained or might invoke the bug functions; and for PromeFuzz, we identified function sets containing the target bug functions. For each bug function, we generated 10 compilable harnesses per tool and executed them for 24 hours. Manual crash analysis then confirmed successful bug triggering. 
+
+4.2.2 Metrics. We calculated the average trigger rate (Aver. Rate) as the fraction of harnesses successfully triggering a bug over the total allocated quota (10 × #targets) for comparison with baselines. 
+
+4.2.3 Results. Table 4 (the #Harness column) demonstrates that 
+
+SynapseFlow ’s harnesses achieved significantly higher average bug detection rates. Quantitatively, SynapseFlow achieves 1.77 ×,1.51 ×, and 1.36 × higher average trigger rates than OSS-Fuzz-Gen, CKGFuzzer, and PromeFuzz, respectively. Our manual analysis re-veals the following factors: 
+
+Robust Parameter Initialization. These baseline tools often pro-duce harnesses with incorrect parameter initialization, hindering crash reproduction. SynapseFlow addresses this through its staged approach, where Stage 1 handles independent parameter initializa-tion and subsequent stages refine it (detailed in Section 3.3.1). 
+
+Comprehensive Verification. We observed that baseline har-nesses often omitted critical function calls (LLM forgetting) or redundantly defined target functions (masking the real function). 
+
+SynapseFlow enforces tree-sitter-based syntactic and semantic val-idation at each generation stage, ensuring functional completeness. 
+
+Optimal Function Aggregation. PromeFuzz and CKGFuzzer pro-duce harnesses containing multiple ISFs, which reduces bug detec-tion efficiency. SynapseFlow ’s one-ISF-per-harness strategy avoids this pitfall. 
+
+Answer to RQ2 : SynapseFlow ’s staged generation with multi-stage validation ensures proper function invocation, leading to significantly higher bug detection rates than baselines. 
+
+## 4.3 RQ3: Real-world Bug Discovery 
+
+4.3.1 Experimental Setup. We generated 10 validated harnesses per native target unit for each tool (FTs for SynapseFlow , function sets for PromeFuzz, API combinations for CKGFuzzer, single functions for OSS-Fuzz-Gen), and fuzzed each for 24 hours with an empty seed corpus. Our crash analysis pipeline employed: 1) automated filtering to remove crashes in harness code, 2) call stack-based deduplication using libFuzzer traces to identify unique crash sites and 3) manual inspection to discard false positives (including API misuse cases), with true bugs confirmed through expert review. The manual verification revealed the following crash discovery results and previously unreported bugs. SYNAPSEFlow CCS ’26, November 15–19, 2026, The Hague, The Netherlands 
+
+4.3.2 Results. Table 5 summarizes the crash discovery results. Af-ter crash call-stack deduplication, SynapseFlow obtained 40 unique crashes. Manual analysis classified 9 as false positives stemming from API misuse, and 31 as genuine bugs, resulting in a 77.5% precision. For comparison, PromeFuzz had a precision of 42.9%, and CKGFuzzer and OSS-Fuzz-Gen achieved precisions of 5.6% and 2.1%, confirming SynapseFlow ’s superior reliability. This low false-positive rate is primarily due to our dataflow -aware function grouping, which prevents irrelevant API combinations, and the staged rollback validation, which filters out harnesses that misuse APIs before fuzzing. 
+
+Table 5: Crash discovery results from OSS-Fuzz-Gen, CKG-Fuzzer, PromeFuzz and SynapseFlow .Type OF CK PF SF 
+
+FP API Contract Violations 28 15 17 2Resource Lifecycle Mismatches 12 14 8 4Unsafe Memory Operations 6 5 3 3TP Bugs in Standard Functions 0 0 0 7Bugs in Deprecated Functions 0 0 6 7Bugs in Unsafe Functions 1 2 15 17 
+
+Precision Rate(%) 2.1 5.6 42.9 77.5 Table 6: Bugs found by SynapseFlow -generated harness. Project Bug Type Bug ID Status 
+
+expat Heap Overflow - Reported lz4 Heap Overflow - Reported file Stack Overflow Commit id:acfbd73 Fixed libarchive Infinite Loop CVE-2025-61467 Fixed hpn-ssh Stack Overflow CVE-2025-51519 Confirmed hpn-ssh Use After Free CVE-2025-51521 Confirmed sqlite3 Heap Overflow CVE-2025-51644 Confirmed For SynapseFlow , among the 9 false positives, 2 violated docu-mented parameter constraints (e.g., passing non-null-terminated byte streams to functions expecting C-strings, triggering crashes in strlen ). 4 resulted from incorrect resource management (e.g., double-free vulnerabilities caused by harnesses explicitly freeing re-sources already managed internally by the target API). The remain-ing 3 were harness-induced memory safety errors that manifested as crashes within the target code. 
+
+SynapseFlow identified 31 genuine bugs. Among them, 7 re-side in deprecated (but still callable) functions, and 17 in functions explicitly marked as unsafe—i.e., requiring callers to guarantee pa-rameter validity and discouraged for general use. We have reported all bugs in these two categories to the respective maintainers. The remaining 7 bugs were submitted as standard bug reports; 5 have been confirmed, with 2 already patched, while none of the competing tools discovered any new bugs. These confirmed bugs are summarized in Table 6. Our analysis reveals that the vulnera-ble functions predominantly reside outside OSS-Fuzz’s target set, explaining why they evaded detection despite approximately five years of continuous fuzzing [ 21 ]. SynapseFlow effectively gener-ated valid harnesses for these overlooked APIs, uncovering bugs missed by existing infrastructure. 
+
+4.3.3 Impact. All discovered bugs constitute high-severity risks. Maintainers responded promptly to our reports: patches for libarchive and file were merged shortly after disclosure, and 5 bugs have been assigned CVE IDs. These rapid remediations and official acknowl-edgments validate both the criticality of our findings and Synapse-Flow ’s practical utility [ 22 ] in enabling responsible disclosure and timely patching of real-world vulnerabilities. 
+
+4.3.4 Case Study. Listing 5 shows a heap overflow bug in ex-pat. In this case, Function1 calls directly calls VulnFunc with-out checking the size of mem , VulnFunc writes sizeof(struct normal_encoding) size to mem buffer without checking size of 
+
+mem either. When the size of mem is less than sizeof(struct normal_encoding) (line 10), heap overflow occurs.                                            
+
+> 1Function1 ( void * mem , int * table , CONVERTER convert , void *userData ) {
+> 2ENCODING * enc =VulnFunc ( mem , table , convert , userData );
+> 3if ( enc )
+> 4(( struct normal_encoding *) enc ) -> type [ ASCII_COLON ] =BT_COLON ;
+> 5return enc ;}
+> 6VulnFunc ( void * mem , int * table , CONVERTER convert , void * userData ) {
+> 7int i;
+> 8struct unknown_encoding *e =( struct unknown_encoding *) mem ;
+> 9// crash here
+> 10 memcpy ( mem ,& latin1_encoding , sizeof ( struct normal_encoding ));
+> 11 ...}
+
+Listing 5: A heap overflow bug in expat. 
+
+Listing 6 shows a heap overflow bug in lz4. In this case, the bug occurs during the handling of the final uncompressed literals (last_literals ) in the VulnFunc (line 9 and 12). A heap over-flow is triggered when LZ4_memcpy is executed due to incorrect calculations of the remaining space in the destination buffer. Be-cause the VulnFunc ’s parameter must be initialized correctly by 
+
+LZ4_resetStream function and only SynapseFlow can generate the harness that contains such call chain. Our case study demon-strates the effectiveness of SynapseFlow in detecting real-world bugs.                                                                  
+
+> 1VulnFunc ( LZ4_stream_t_internal * const cctx , const char * const source ,...) {
+> 2const BYTE * anchor =( const BYTE *) source ;
+> 3...
+> 4_last_literals :
+> 5size_t lastRun =( size_t )( iend -anchor );
+> 6if (( outputDirective ) &&
+> 7( op +lastRun +1+(( lastRun +255 - RUN_MASK ) /255) >olimit )) {
+> 8if ( outputDirective == fillOutput ) {
+> 9lastRun =( size_t )( olimit -op ) -1; // maybe negetive
+> 10 lastRun -= ( lastRun +256 -RUN_MASK ) /256;}}
+> 11 ...
+> 12 LZ4_memcpy (op , anchor , lastRun ); // crash here
+
+Listing 6: A heap overflow bug in lz4. CCS ’26, November 15–19, 2026, The Hague, The Netherlands Xing Zhang, Zikang Huang, Gang Yang, Lingyun Ying, and et al. 
+
+Answer to RQ3 : The results demonstrate that SynapseFlow ’s SFG-based function selection and staged rollback generation collectively enabled the discovery of 7 previously unreported bugs across 25 projects, conclusively validating its efficacy. 
+
+## 4.4 RQ4: Efficiency 
+
+4.4.1 Experimental Setup. Based on the harness generation process in Section 4.1, we logged intermediate pipeline data across all 25 projects. We quantified the efficiency overhead of SynapseFlow 
+
+by tracking generation latency and LLM resource consumption. 
+
+4.4.2 Metrics. The execution pipeline comprises two phases: project pre-processing and harness generation. We report four metrics: PreT, the static pre-processing time per project in hours (reported as ‘-’ for OSS-Fuzz-Gen because its target selection is interleaved with generation, not a separate preprocessing phase) ; GenT, the average generation time to produce one valid harness in hours; Tokens, the total LLM token consumption per project in millions, which directly correlates with GPU compute cycles under our local deployment; and #S, the average number of pipeline stages executed per valid harness for SynapseFlow , quantifying the overhead of the staged-rollback mechanism. 
+
+4.4.3 Results. Table 7 summarizes the mean efficiency metrics across all projects, with per-project distributions in Figure 6 and detailed efficiency statistics in Appendix E. 
+
+SynapseFlow averages 3.84h for pre-processing, outperforming CKGFuzzer (4.33h) and PromeFuzz (6.64h) by replacing heavy static analysis pipelines (CodeQL, embedding extraction, LibClang) with lightweight tree-sitter parsing, reserving LLM invocation solely for ambiguous pointer resolution. During generation, SynapseFlow 
+
+achieves a mean GenT of 0.33h and consumes 23.55M tokens, sub-stantially lower than OSS-Fuzz-Gen (1.64h, 35.47M) and PromeFuzz (1.39h, 31.26M). Baselines rely on monolithic prompts that accu-mulate unbounded context (expanding up to 32K tokens), where excessive prompt length induces quadratic scaling in Time-To-First-Token of LLM latency, compounding token waste upon regeneration failures. SynapseFlow mitigates this by enforcing a strict 8K token cap per stage and localizing retries through staged rollback. This ar-chitecture avoids costly full restarts, maintaining controlled latency and token overhead despite a higher API call frequency. The aver-age execution depth remains low at 7.78 stages (only 3.78 above the ideal 4), confirming that rollbacks are shallow and computationally inexpensive. CKGFuzzer’s lower token usage (17.54M) reflects its library-only scope rather than inherent efficiency. As Figure 6 illustrates, applica-tion targets inherently increase average generation time and token consumption on all tools. Isolating libraries for a controlled compar-ison, SynapseFlow averages 0.23h and 13.82M tokens, substantially outperforming OSS-Fuzz-Gen (0.75h, 19.65M), CKGFuzzer(0.94h, 17.54M) and PromeFuzz (0.95h, 14.92M). SynapseFlow achieves the lowest per-valid-harness cost across all scopes (see Appendix E for detailed #Harness numbers). This confirms that the staged archi-tecture delivers consistent efficiency gains while scaling robustly to complex applications, translating compute savings directly into higher-quality, coverage-driving outputs. 
+
+Table 7: Average efficiency analysis results across all 25 tar-get projects. PreT: mean pre-processing time (hours); GenT: mean generation time per harness (hours); Tokens: mean LLM token consumption (millions); #S: mean number of gen-eration stages per harness. Tool PreT(h) GenT(h) Tokens(M) #S 
+
+Oss-Fuzz-Gen - 1.64 35.47 -CKGFuzzer 4.33 0.94 17.54 -PromeFuzz 6.64 1.39 31.26 -
+
+SynapseFlow 3.84 0.33 23.55 7.78 0
+
+> 10
+> 20
+> 30
+> PreT (hour)
+> 0
+> 5
+> 10
+> 15
+> GenT (hour)
+> c-ares
+> fribidi
+> libyaml
+> cjson
+> sqlite3
+> zlib
+> opus
+> libxml2
+> lz4
+> libssh2
+> expat
+> avahi
+> libxslt
+> libtiff
+> lcms
+> libarchive
+> xz
+> jq
+> pjsip
+> kamailio
+> postfix
+> gdbm
+> file
+> hpn-ssh
+> dropbear
+
+Project    
+
+> 0
+> 50
+> 100
+> 150
+> Tokens (million)
+> OF CK PF SF
+
+Figure 6: Efficiency metrics across 25 projects. PreT: pre-processing time (hours), GenT: average generation time per harness (hours), Tokens: LLM token consumption(millions). Answer to RQ4 : SynapseFlow achieves competitive efficiency: lightweight tree-sitter parsing eliminates heavy static analy-sis overhead, while the staged rollback mechanism controls generation latency and token consumption by strictly capping per-stage context length and localizing retries. The modest stage count (7.78 vs. ideal 4) confirms that rollbacks remain shallow, introducing negligible cost while substantially improving har-ness validity. 
+
+## 4.5 RQ5: LLM Sensitivity 
+
+4.5.1 Experimental Setup. Due to cost constraints, we selected four representative targets (comprising two libraries and two ap-plications) to assess the impact of different LLM backends. Since SYNAPSEFlow CCS ’26, November 15–19, 2026, The Hague, The Netherlands 
+
+SynapseFlow relies on a structured prompt template with only minor payload variations, the prompts from these targets provide sufficient coverage to reflect the backend’s overall influence. We evaluated performance using four models: Qwen3-32B (primary), Qwen3-14B (lower), DeepSeek-V3 [ 23 ] (intermediate), and Claude-3.5-Opus [ 24 ] (higher performance [ 25 ]), with each harness running continuously for 24 hours. 
+
+4.5.2 Metrics. We analyzed the branch coverage of harnesses gen-erated by different LLMs to evaluate how LLM selection affects the effectiveness of generated harnesses. 
+
+Table 8: Branch coverage with different LLMs. Project #Covered Branches Qwen14B Qwen32B DeepSeek Claude 
+
+lz4 957 1167 1421 1445 
+
+libyaml 3211 3937 4231 4421 
+
+proftpd 58 120 120 120 
+
+dropbear 110 118 118 118 
+
+4.5.3 Results. As shown in Table 8, Qwen3-32B performs compara-bly to DeepSeek-V3 and Claude-3.5-Opus on two projects. It slightly trails in two projects, primarily due to weaker enumeration type parameter selection. However, branch coverage differences are mar-ginal overall. Qwen3-14B lags significantly in all metrics, attributed to its smaller size and inferior sub-task processing under the LLM scaling law. The results suggest that once model scaling reaches a sufficient threshold, SynapseFlow ’s effectiveness becomes less dependent on raw model performance, as the decomposed subtasks are manageable. 
+
+Answer to RQ5 : This result demonstrates that SynapseFlow ’s effectiveness becomes less dependent on model performance once a sufficient scale is reached, confirming that our decom-position processes effectively mitigate reliance on raw model capability. 
+
+## 4.6 RQ6: SFG Quality & Ablation Study 
+
+4.6.1 Experimental Setup. We evaluate the structural quality of extracted SFGs and the individual contributions of SFG construction and the Staged Decomposition and Rollback (SDR) mechanism. For ablation, we construct two variants: SF-PF, which replaces our SFG with PromeFuzz’s heuristic-based function grouping, and -SDR, which collapses the four-stage pipeline prompts into a single monolithic prompt (capped at 10 retries per target). All variants are evaluated under identical same fuzzing campaigns as in Section 4.1. 
+
+4.6.2 Metrics. SFG quality is measured by precision and the ab-solute number of omitted relevant functions: Precision = #FT −#FP  
+
+> #FT
+
+,where #FT is the total number of extracted Function Triplets and 
+
+#FP is the number of false-positive FTs (FTs containing irrelevant functions). #O denotes the number of relevant functions missing from the extracted SFG (function-level false negatives) — not the number of omitted FTs. A very small #O implies near-complete coverage. Ablation performance is quantified as the relative branch coverage drop compared to the full SynapseFlow configuration. 
+
+4.6.3 Results. Table 9 summarizes the evaluation. Across all 25 projects, SynapseFlow extracts 11,326 FTs, of which 1,098 are false positives, giving a precision of 90.3%. False positives primarily stem from the inherent limitations of static dataflow tracking, which cap-tures parameter propagation but cannot verify semantic processing constraints. These FPs are naturally filtered during harness compi-lation and validation, thus not impacting fuzzing effectiveness. The overall false negative count is minimal, with only 19 relevant func-tions missed across all projects. These omissions are concentrated exclusively in lcms (7) and dropbear (12), where macro-dependent function names bypass our syntax-based parser. Replacing our SFG with PromeFuzz function grouping (SF-PF) reduces branch coverage by 29.6% relative to the full SynapseFlow 
+
+configuration. Manual analysis reveals that heuristic grouping fre-quently omits critical ISFs, introduces irrelevant functions, and breaks transitive dataflow dependencies. Consequently, generated harnesses fail to correctly route external inputs through deep call chains. This confirms that SynapseFlow ’s SFG accurately models inter-procedural data dependencies, enabling harnesses to exercise complex internal logic. Notably, SF-PF still outperforms the original PromeFuzz, isolating the remaining performance gain to our SDR generation mechanism. Disabling SDR (-SDR) causes a coverage decline of 46.7% relative to the full SynapseFlow configuration. Generating a harness for a complete FT in a single monolithic prompt exceeds the LLM’s effec-tive reasoning capacity, leading to syntactic errors, incorrect API sequencing, and frequent generation failures. The staged pipeline decomposes this complex task into verifiable sub-steps, while local-ized rollback prevents cascading failures. This demonstrates that SDR is not merely an optimization but a structural necessity for synthesizing valid harnesses targeting deep dataflow sequences. 
+
+Answer to RQ6 : SFG extraction achieves high fidelity (90.3% precision filtered at compilation; only 19 global function-level omissions). Ablation proves both components indispensable: the SFG captures transitive dataflows missed by heuristics, while SDR prevents LLM reasoning collapse on complex sequences, jointly enabling robust, coverage-driving harness synthesis. 
+
+## 5 Discussion 5.1 Function Classification Sufficiency 
+
+As defined in Section 2.4, our three categories (ISF, PRF, HPF) target functions involved in input-driven dataflow. They suffice to char-acterize all functions that process fuzzer inputs within Synapse-Flow ’s intended scope (C projects with identifiable ISFs and typed struct propagation). Pure output functions (e.g., printf ) are ex-cluded as irrelevant. This classification has proven effective, en-abling SynapseFlow to generate high-quality harnesses for a wide range of data-processing libraries and applications. 
+
+## 5.2 Comparison with Non-LLM Approaches 
+
+SynapseFlow inherits the generality of LLM-based generation while mitigating its key drawbacks (hallucinations, error cascades) via dataflow-aware aggregation and staged rollback. Compared to CCS ’26, November 15–19, 2026, The Hague, The Netherlands Xing Zhang, Zikang Huang, Gang Yang, Lingyun Ying, and et al. 
+
+Table 9: SFG quality and ablation results. #FP/#FT: ratio of FTs containing irrelevant functions to total FTs. #O: the number of relevant functions missing from the extracted SFG. SF-PF: variant replacing SFG with PromeFuzz’s heuristic grouping; -SDR: variant without staged decomposition and rollback. Coverage drops ( ↓) are relative to the full SynapseFlow con-figuration. Project SFG Quality #Covered Branches #FP/#FT #O SF SF-PF -SDR 
+
+c-ares 7/323 0 4299 3787 ↓12% 2544 ↓41% 
+
+fribidi 2/30 0 999 820 ↓18% 545 ↓45% 
+
+libyaml 0/36 0 4020 3200 ↓20% 2152 ↓47% 
+
+cjson 0/154 0 1117 830 ↓26% 449 ↓60% 
+
+sqlite3 18/626 0 28063 23765 ↓15% 17373 ↓38% 
+
+zlib 0/165 0 1810 1776 ↓2% 1115 ↓38% 
+
+opus 8/395 0 7296 5267 ↓28% 4086 ↓44% 
+
+libxml2 45/431 0 6316 2087 ↓67% 3416 ↓46% 
+
+lz4 4/174 0 1167 730 ↓37% 494 ↓58% 
+
+libssh2 13/145 0 172 66 ↓62% 104 ↓40% 
+
+expat 0/173 0 4246 3987 ↓6% 1914 ↓55% 
+
+avahi 16/278 0 993 345 ↓65% 535 ↓46% 
+
+libxslt 0/130 0 9190 6763 ↓26% 3685 ↓60% 
+
+libtiff 13/452 0 5906 5376 ↓9% 2510 ↓58% 
+
+lcms 47/309 7 3256 3198 ↓2% 1614 ↓50% 
+
+libarchive 3/774 0 8313 5678 ↓32% 4025 ↓52% 
+
+xz 1/188 0 1955 1543 ↓21% 1228 ↓37% 
+
+jq 38/195 0 2909 220 ↓92% 1359 ↓53% 
+
+pjsip 207/1748 0 482 109 ↓77% 303 ↓37% 
+
+kamailio 392/1784 0 2024 147 ↓93% 1244 ↓39% 
+
+postfix 223/1384 0 1286 130 ↓90% 624 ↓52% 
+
+gdbm 0/113 0 668 149 ↓78% 316 ↓53% 
+
+file 0/226 0 2653 67 ↓97% 1092 ↓59% 
+
+hpn-ssh 28/852 0 415 33 ↓92% 261 ↓37% 
+
+dropbear 33/241 12 118 76 ↓36% 62 ↓48% 
+
+traditional non-LLM methods (e.g., consumer-code slicing [ 14 , 15 ], binary analysis [ 26 , 27 ], dynamic API graphs [ 28 ]), SynapseFlow 
+
+offers distinct advantages. Traditional methods are deterministic and resource-efficient, but their rigid synthesis often fails to cap-ture long-range dataflow dependencies or generate semantically correct harnesses for complex libraries, resulting in low coverage on similar benchmarks. In contrast, SynapseFlow understands API semantics, infers usage patterns, and generates complex initializa-tion sequences without relying on existing consumer code or unit tests. Consequently, SynapseFlow achieves significantly higher coverage and bug detection than both LLM-based and traditional baselines, offering a practical trade-off: an acceptably higher up-front computational cost for substantially improved effectiveness. 
+
+## 5.3 Limitations 
+
+SynapseFlow ’s current design entails several inherent limitations: 
+
+C++ Paradigm Support. The framework focuses on C and lacks support for C++’s object-oriented constructs. Projects that initial-ize data via direct member assignment, rather than identifiable functions, also remain out of scope. 
+
+Semantic Validation. Targets requiring strict, stateful semantic validation—such as protocol implementations and compiler com-ponents—present challenges, as their correctness conditions often exceed libFuzzer’s input-space exploration model. 
+
+Limitations for Stateful Targets. Targets that require strict, multi-stage stateful interaction (e.g., protocol implementations) or complex input validation (e.g., compiler components) exceed the capabilities of libFuzzer’s stateless, input-space exploration model. Consequently, SynapseFlow is not designed for such targets and achieves low coverage on them like all other libFuzzer-based tools. 
+
+## 6 Related Work 
+
+Function-oriented Fuzzing. Function-oriented fuzzing tests spe-cific interfaces (e.g., libFuzzer [ 29 ]) rather than entire programs, improving coverage through a divide-and-conquer strategy [ 30 , 31 ]. Techniques automate this for diverse targets, from libraries (e.g., Hopper [ 18 ]) to virtual machines (LibAFL QEMU [ 32 ]), enhanc-ing bug discovery [ 3]. Recent work continues to optimize, such as libErator [ 33 ] which balances resource allocation between driver generation and deep testing. A persistent challenge is understand-ing the project to select appropriate target functions. Our work addresses this via project digestion to annotate and group func-tions, improving target selection. 
+
+Automatic Harness Generation. Given the pivotal role of har-nesses, automated generation is crucial to reduce manual effort [ 14 ,15 , 19 , 34 ]. A common strategy analyzes runtime traces or consumer code to craft API sequences [ 26 , 27 , 35 ]. For instance, Fudge [ 14 ]and FuzzGen [ 15 ] synthesize harnesses from consumer code, while others like WINNIE [ 26 ] extend this to binaries. Recent approaches improve accuracy and diversity: NEXZZER [ 28 ] uses a dynamic API relation graph, WildSync [ 36 ] recovers patterns from external projects, and POIROT [ 37 ] targets Android native libraries. These methods require deep API usage understanding to construct valid sequences. Our approach employs LLMs for more accurate and automated generation without such reliance on external artifacts. 
+
+LLM-assisted Fuzzing. LLMs are increasingly integrated into fuzzing for diverse tasks, from seed mutation to harness gener-ation [ 7 , 38 ]. For mutation-based fuzzing, Fuzz4All [ 39 ] and White-Fox [ 40 ] employ GPT-4 [ 41 ] and StarCoder [ 42 ] as universal testers. For input generation, InputBlaster [ 43 ] produces high-quality seeds via LLMs, ELFUZZ [ 44 ] synthesizes fuzzers through LLM-driven evolutionary search, and recent work [ 45 ] generate complex in-puts (e.g., XPS documents) through leverages LLM-assisted repair. In library fuzzing, studies confirm LLM feasibility and coverage gains over traditional methods [ 6, 38 ]. Dataflow-guided approaches like FlowFusion [ 46 ] further show the value of leveraging data dependencies. Specifically for harness generation, methods vary: PromptFuzz [ 8] and OSS-Fuzz-Gen [ 5] rely on function signatures; CKGFuzzer [ 9 ] incorporates call graphs; PromeFuzz [ 12 ] builds a structured knowledge base for retrieval-augmented generation; and semantics-aware works include AIMFuzz [ 47 ] for binary analysis SYNAPSEFlow CCS ’26, November 15–19, 2026, The Hague, The Netherlands 
+
+and OGHarn [ 48 ] for oracle-guided synthesis. Our work builds upon these advances but introduces a fundamental structural departure: a synthesis workflow whose stages are dictated by dataflow ag-gregation and which actively self-corrects via targeted rollback—a mechanism designed explicitly to contain the cascading errors typ-ical of LLM-based code generation. 
+
+## 7 Conclusion and Future Work 
+
+In this paper, we presented SynapseFlow , a novel framework for automatically generating high-quality fuzz harnesses for C projects. It addresses the limitations of prior LLM-based methods through dataflow-aware function aggregation and a staged rollback-enabled workflow decomposition. Extensive evaluation on 25 real-world C projects shows that SynapseFlow substantially outperforms SOTA tools (OSS-Fuzz-Gen, CKGFuzzer, PromeFuzz) , while main-taining acceptable efficiency. Crucially, SynapseFlow discovered 7 previously unreported bugs, demonstrating its practical effec-tiveness. Our work shows that integrating deep program analysis with a structured, fault-tolerant generation process unlocks LLMs’ potential for complex software engineering tasks. Future work in-cludes extending to 1) C++ via class parsing, 2) handling projects without clear ISFs, and 3) collecting workflow data for specialized fine-tuning. 
+
+## Acknowledgment 
+
+In this paper, we utilized DeepSeek solely for grammar refinement and stylistic polishing of pre-drafted content. 
+
+## References 
+
+[1] Laszlo Szekeres, Mathias Payer, Tao Wei, and Dawn Song. Sok: Eternal war in memory. In 2013 IEEE Symposium on Security and Privacy , SP ’13, page 48–62, USA, 2013. IEEE Computer Society. [2] Valentin JM Manès, HyungSeok Han, Choongwoo Han, Sang Kil Cha, Manuel Egele, Edward J Schwartz, and Maverick Woo. The art, science, and engineering of fuzzing: A survey. IEEE Transactions on Software Engineering , 47(11):2312–2331, 2019. [3] Kosta Serebryany. Continuous fuzzing with libfuzzer and addresssanitizer. In 
+
+2016 IEEE Cybersecurity Development (SecDev) , pages 157–157. IEEE, 2016. [4] Sarah Fakhoury, Aaditya Naik, Georgios Sakkas, Saikat Chakraborty, and Shu-vendu K Lahiri. Llm-based test-driven interactive code generation: User study and empirical evaluation. IEEE Transactions on Software Engineering , 2024. [5] Dongge Liu, Oliver Chang, Jonathan metzman, Martin Sablotny, and Mihai Maruseac. OSS-Fuzz-Gen: Automated Fuzz Target Generation, May 2024. [6] Cen Zhang, Mingqiang Bai, Yaowen Zheng, Yeting Li, Wei Ma, Xiaofei Xie, Yuekang Li, Limin Sun, and Yang Liu. Understanding large language model based fuzz driver generation. arXiv e-prints , pages arXiv–2307, 2023. [7] Cen Zhang, Yaowen Zheng, Mingqiang Bai, Yeting Li, Wei Ma, Xiaofei Xie, Yuekang Li, Limin Sun, and Yang Liu. How effective are they? exploring large language model based fuzz driver generation. In 33rd ACM SIGSOFT International Symposium on Software Testing and Analysis , pages 1223–1235, 2024. [8] Yunlong Lyu, Yuxuan Xie, Peng Chen, and Hao Chen. Prompt fuzzing for fuzz driver generation. In 2024 ACM SIGSAC Conference on Computer and Communi-cations Security , pages 3793–3807, 2024. [9] Hanxiang Xu, Wei Ma, Ting Zhou, Yanjie Zhao, Kai Chen, Qiang Hu, Yang Liu, and Haoyu Wang. Ckgfuzzer: Llm-based fuzz driver generation enhanced by code knowledge graph. In 47th International Conference on Software Engineering: Companion Proceedings , ICSE ’25, page 243–254. IEEE Press, 2025. [10] Philipp Görz, Joschua Schilling, Thorsten Holz, and Marcel Böhme. An empirical study of fuzz harness degradation. arXiv preprint arXiv:2505.06177 , 2025. [11] Xu Huang, Weiwen Liu, Xiaolong Chen, Xingmei Wang, Hao Wang, Defu Lian, Yasheng Wang, Ruiming Tang, and Enhong Chen. Understanding the planning of llm agents: A survey. arXiv preprint arXiv:2402.02716 , 2024. [12] Yuwei Liu, Junquan Deng, Xiangkun Jia, Yanhao Wang, Minghua Wang, Lin Huang, Tao Wei, and Purui Su. Promefuzz: A knowledge-driven approach to fuzzing harness generation with large language models. In 2025 ACM SIGSAC Conference on Computer and Communications Security , CCS ’25, page 1559–1573, New York, NY, USA, 2025. Association for Computing Machinery. [13] Mingrui Zhang, Jianzhong Liu, Fuchen Ma, Huafeng Zhang, and Yu Jiang. In-telligen: Automatic driver synthesis for fuzz testing. In 2021 IEEE/ACM 43rd International Conference on Software Engineering: Software Engineering in Practice (ICSE-SEIP) , pages 318–327. IEEE, 2021. [14] Domagoj Babić, Stefan Bucur, Yaohui Chen, Franjo Ivancic, Tim King, Markus Kusano, Caroline Lemieux, László Szekeres, and Wei Wang. Fudge: fuzz driver generation at scale. pages 975–985, 08 2019. [15] Kyriakos Ispoglou, Daniel Austin, Vishwath Mohan, and Mathias Payer. 
+
+{FuzzGen }: Automatic fuzzer generation. In 29th USENIX Security Symposium (USENIX Security 20) , pages 2271–2287, 2020. [16] j40. https://github.com/lifthrasiir/j40, Accessed: 2024. [17] T. sitter Contributors. Tree-sitter: An incremental parsing system for program-ming tools, 2025. [18] Peng Chen, Yuxuan Xie, Yunlong Lyu, Yuxiao Wang, and Hao Chen. Hopper: Interpretative fuzzing for libraries. pages 1600–1614, 11 2023. [19] Yuwei Liu, Yanhao Wang, Xiangkun Jia, Zheng Zhang, and Purui Su. Afgen: Whole-function fuzzing for applications and libraries. In 2024 IEEE Symposium on Security and Privacy (SP) , pages 1901–1919. IEEE, 2024. [20] Moritz Schloegel, Nils Bars, Nico Schiller, Lukas Bernhard, Tobias Scharnowski, Addison Crump, Arash Ale-Ebrahim, Nicolai Bissantz, Marius Muench, and Thorsten Holz. Sok: Prudent evaluation practices for fuzzing. In 2024 IEEE Symposium on Security and Privacy (SP) , pages 1974–1993. IEEE, 2024. [21] OSS-Fuzz Tracker. https://issues.oss-fuzz.com, Accessed: Jan 2026. [22] Moritz Schloegel, Daniel Klischies, Simon Koch, David Klein, Lukas Gerlach, Malte Wessels, Leon Trampert, Martin Johns, Mathy Vanhoef, Michael Schwarz, et al. Confusing value with enumeration: Studying the use of {CVEs } in academia. In 34th USENIX Security Symposium (USENIX Security 25) , pages 2887–2906, 2025. [23] DeepSeek-AI. Deepseek-v3 technical report. Technical report, DeepSeek-AI, 2025. [24] Anthropic. Claude 3.5 series update, 2024. [25] Tianchen Gao, Jiashun Jin, Zheng Tracy Ke, and Gabriel Moryoussef. A compari-son of deepseek and other llms. arXiv preprint , arXiv:2502.03688, 2025. [26] Jinho Jung, Stephen Tong, Hong Hu, Jungwon Lim, Yonghwi Jin, and Taesoo Kim. Winnie: Fuzzing windows applications with harness synthesis and fast cloning. In 2021 Network and Distributed System Security Symposium (NDSS 2021) , 2021. [27] Cen Zhang, Xingwei Lin, Yuekang Li, Yinxing Xue, Jundong Xie, Hongxu Chen, Xinlei Ying, Jiashui Wang, and Yang Liu. APICraft: Fuzz driver generation for closed-source SDK libraries. In 30th USENIX Security Symposium (USENIX Security 21) , pages 2811–2828, 2021. [28] Jiayi Lin, Qingyu Zhang, Junzhe Li, Chenxin Sun, Hao Zhou, Changhua Luo, and Chenxiong Qian. Automatic library fuzzing through api relation evolvement. In 
+
+2025 Network and Distributed System Security Symposium (NDSS 2025) , 2025. [29] libfuzzer. https://llvm.org/docs/LibFuzzer.html, Accessed: Jan 2026. [30] Addison Crump, Andrea Fioraldi, Dominik Maier, and Dongjia Zhang. Libafl libfuzzer: Libfuzzer on top of libafl. In 2023 IEEE/ACM International Workshop on Search-Based and Fuzz Testing (SBFT) , pages 70–72. IEEE, 2023. [31] Emre Güler, Philipp Görz, Elia Geretto, Andrea Jemmett, Sebastian Österlund, Herbert Bos, Cristiano Giuffrida, and Thorsten Holz. Cupid: Automatic fuzzer selection for collaborative fuzzing. In 36th Annual Computer Security Applications Conference , pages 360–372, 2020. [32] Romain Malmain, Andrea Fioraldi, and Aurélien Francillon. Libafl qemu: A library for fuzzing-oriented emulation. In BAR 2024, Workshop on Binary Analysis Research, colocated with NDSS 2024 , 2024. [33] Flavio Toffalini, Nicolas Badoux, Zurab Tsinadze, and Mathias Payer. Liberating libraries through automated fuzz driver generation: Striking a balance without consumer code. volume 2, New York, NY, USA, June 2025. Association for Computing Machinery. [34] Chi Thien Tran and Shamil Kurmangaleev. Futag: Automated fuzz target genera-tor for testing software libraries. In 2021 Ivannikov Memorial Workshop (IVMEM) ,pages 80–85. IEEE, 2021. [35] Bokdeuk Jeong, Joonun Jang, Hayoon Yi, Jiin Moon, Junsik Kim, Intae Jeon, Taesoo Kim, WooChul Shim, and Yong Ho Hwang. Utopia: Automatic generation of fuzz driver using unit tests. In 2023 IEEE Symposium on Security and Privacy (SP) , pages 2676–2692. IEEE, 2023. [36] Wei-Cheng Wu, Stefan Nagy, and Christophe Hauser. Wildsync: Automated fuzzing harness synthesis via wild api usage recovery. volume 2, New York, NY, USA, June 2025. Association for Computing Machinery. [37] Luca Di Bartolomeo, Philipp Mao, Yu-Jye Tung, Jessy Ayala, Samuele Doria, Paolo Celada, Marcel Busch, Joshua Garcia, Eleonora Losiouk, and Mathias Payer. Hercules droidot and the murder on the jni express. In 34th USENIX Conference on Security Symposium , SEC ’25, USA, 2025. USENIX Association. [38] Yinlin Deng, Chunqiu Steven Xia, Chenyuan Yang, Shizhuo Dylan Zhang, Shujing Yang, and Lingming Zhang. Large language models are edge-case generators: Crafting unusual programs for fuzzing deep learning libraries. In 46th Interna-tional Conference on Software Engineering , ICSE ’24, New York, NY, USA, 2024. Association for Computing Machinery. CCS ’26, November 15–19, 2026, The Hague, The Netherlands Xing Zhang, Zikang Huang, Gang Yang, Lingyun Ying, and et al.                      
+
+> [39] Chunqiu Steven Xia, Matteo Paltenghi, Jia Le Tian, Michael Pradel, and Ling-ming Zhang. Fuzz4all: Universal fuzzing with large language models. In 46th International Conference on Software Engineering , pages 1–13, 2024. [40] Chenyuan Yang, Yinlin Deng, Runyu Lu, Jiayi Yao, Jiawei Liu, Reyhaneh Jabbar-vand, and Lingming Zhang. Whitefox: White-box compiler fuzzing empowered by large language models. Proceedings of the ACM on Programming Languages ,8(OOPSLA2):709–735, 2024. [41] Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Floren-cia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al. Gpt-4 technical report. arXiv preprint arXiv:2303.08774 , 2023. [42] R Li, LB Allal, Y Zi, N Muennighoff, D Kocetkov, C Mou, M Marone, C Akiki, J Li, J Chim, et al. Starcoder: May the source be with you! Transactions on machine learning research , 2023. [43] Zhe Liu, Chunyang Chen, Junjie Wang, Mengzhuo Chen, Boyu Wu, Zhilin Tian, Yuekai Huang, Jun Hu, and Qing Wang. Testing the limits: Unusual text inputs generation for mobile app crash detection with large language model. In 46th International Conference on Software Engineering , pages 1–12, 2024. [44] Chuyang Chen, Brendan Dolan-Gavitt, and Zhiqiang Lin. Elfuzz: efficient input generation via llm-driven synthesis over fuzzer space. In 34th USENIX Conference on Security Symposium , USA, 2025. USENIX Association. [45] Yunpeng Tian, Feng Dong, Junhai Wang, Mu Zhang, Zhiniang Peng, Zesen Ye, Xiapu Luo, and Haoyu Wang. Error messages to fuzzing: Detecting xps parsing vulnerabilities in windows printing components. In 2025 ACM SIGSAC Conference on Computer and Communications Security , CCS ’25, page 798–812, New York, NY, USA, 2025. Association for Computing Machinery. [46] Yuancheng Jiang, Chuqi Zhang, Bonan Ruan, Jiahao Liu, Manuel Rigger, Roland H. C. Yap, and Zhenkai Liang. Fuzzing the php interpreter via dataflow fusion. In 34th USENIX Conference on Security Symposium , SEC ’25, USA, 2025. USENIX Association. [47] Taewook Kim, Seokhyun Hong, and Yeongpil Cho. Aimfuzz: Automated function-level in-memory fuzzing on binaries. In 19th ACM Asia Conference on Computer and Communications Security , ASIA CCS ’24, page 1510–1522, New York, NY, USA, 2024. Association for Computing Machinery. [48] Gabriel Sherman and Stefan Nagy. No harness, no problem: Oracle-guided harnessing for auto-generating c api fuzzing harnesses. In 2025 IEEE/ACM 47th International Conference on Software Engineering (ICSE) , pages 775–775. IEEE Computer Society, 2025.
+
+## Open Science 
+
+To ensure transparency and reproducibility, we provide the follow-ing artifacts to facilitate the evaluation of our core contributions: 
+
+Provided Artifacts: 
+
+• An executable version of SynapseFlow (encrypted) along with experiment scripts and detailed documentation. 
+
+• Scripts to build and run the baseline tools (CKGFuzzer, OSS-Fuzz-Gen, PromeFuzz) for comparison. 
+
+• Harnesses generated by SynapseFlow for RQ1 (Branch Cov-erage, Section 4.1) and RQ2 (Bug Detection Ability, Sec-tion 4.2). 
+
+• Complete steps and configurations to reproduce RQ4 (LLM Sensitivity, Section 4.5) and RQ5 (Ablation Study, Section 4.2). 
+
+Artifact Limitations and Justifications: 
+
+• The full source code of SynapseFlow will be released upon paper acceptance. For the review process, we provide an encrypted executable that runs in the specified environment and reproduces all experimental results. 
+
+• For RQ3, we cannot provide harnesses that trigger the CVE bugs due to responsible disclosure policies and anonymity. We will release these harnesses once the disclosure policies permit. 
+
+• Results from baseline tools are not included; we provide the build and execution scripts to ensure fair comparison can be performed. 
+
+Anonymous Access for Reviewers: https://anonymous.4ope n.science/r/experiment-D67F (Read-only access, no credentials required) 
+
+Target Projects: All 25 evaluated projects are specified by their public GitHub URLs and commit hashes, allowing reviewers to build them independently. 
+
+## Ethical Considerations 
+
+This research focuses on automated harness generation, and we follow a responsible disclosure process. All identified vulnerabili-ties are promptly and privately reported to the responsible parties, with public disclosure only occurring after confirmation that the issues have been resolved. Since this study does not involve human subjects, no personally identifiable or sensitive data is included in the analyses or reports. For identified bugs, we adhere to estab-lished disclosure protocols, omitting undisclosed vulnerabilities and updating relevant sections progressively after official disclosure. 
+
+## Appendix A Theoretical Proof of the Advantages of Decomposition and Rollback 
+
+Essentially, a fuzz harness refers to a piece of independent code responsible for feeding mutated input from fuzzers to targeted func-tions accordingly. While current LLMs show substantial improve-ments in single-attempt code generation success rates (pass@1), their test harness code generation accuracy remains inadequate. To this issue, we decompose harness code generation into sequential stages mapping to improve precision. We mathematically demon-strate the staged decomposition and rollback’s superiority in en-hancing code generation accuracy through the following derivation. The staged decomposition and rollback improves fault tolerance by: 
+
+• decomposing complex tasks into discrete states with defined transition conditions; 
+
+• enabling rollback mechanisms at failed stages instead of terminating the entire process. Let 𝑃 𝑜 represents the success probability of the original harness generation task. The task is decomposed into 𝑛 independent states where each state success probability 𝑃 𝑖 satisfies 𝑃 𝑖 > 𝑃 1/𝑛 𝑜 .For sequential execution without retries, the compound success probability can be calculated as: 
+
+𝑃 seq  
+
+> 𝑜
+
+=
+
+> 𝑛
+
+Ö
+
+> 𝑖 =1
+
+𝑃 𝑖 (1) In the staged rollback algorithm, allowing up to 𝑘 retries for each stage modifies the success probability of an individual stage to: 
+
+𝑃 ′ 
+
+> 𝑖
+
+= 1 − ( 1 − 𝑃 𝑖 )𝑘 +1 (2) When incorporating rollback with compensation success proba-bility 𝑐 , the modified system success probability is: 
+
+𝑃 rollback  
+
+> 𝑜
+
+=
+
+> 𝑛
+
+Ö
+
+> 𝑖 =1
+
+ 𝑃 ′ 
+
+> 𝑖
+
++ ( 1 − 𝑃 ′ 
+
+> 𝑖
+
+) · 𝑐  (3) SYNAPSEFlow CCS ’26, November 15–19, 2026, The Hague, The Netherlands 
+
+The derivation proves 𝑃 rollback  
+
+> 𝑜
+
+> 𝑃 seq  
+
+> 𝑜
+
+> 𝑃 𝑜 , demonstrating the stage decomposition and rollback’s dual advantage over both se-quential execution and single-attempt approaches. 
+
+## Appendix B Prompts Used in SynapseFlow 
+
+## B.1 Parameter Analysis 
+
+Parameter Analysis 1 
+
+User Query: “Is the following {parameter_name} a function pa-rameter by reference? The answer is output in json format. Below is a sample output: { "answer": "yes or no" }” 
+
+Expected Output: “{"anser": "yes"}” or “{"anser": "no"}” 
+
+Parameter Analysis 2 
+
+User Query: “Please list the following function reference param-eters in detail. The answer is output in json format. Below is a sample output: { “answer”: [param_list] }” 
+
+Expected Output: “{ “answer”: [param_list] }” 
+
+Parameter Analysis 3 
+
+User Query: “Answer from the perspective of function input and output, what is the following situation of parameter_name in the function? A. Input B. Output C. Other Below is a sample output: { “answer”: “A” }” 
+
+Expected Output: “{ “answer”: “A” }” 
+
+## B.2 Input Parameter Determination 
+
+Input Parameter Determination 1 
+
+User Query: “Identify the name of the input parameter in the fol-lowing function that points to a parsed memory region, where this parameter points to a contiguous sequence of bytes or contiguous text data (excluding filenames or other semantically meaningful content), rather than pathnames, filenames, structs, floating-point numbers, or other specifically structured data. Below is a sample output: { “pointer_name:” name of the parame-ter that points to the memory region, ‘none’ if there is no such parameter" }” 
+
+Expected Output: “{ “pointer_name”: “name of the parameter that points to the memory region, ‘none’ if there is no such pa-rameter.” }” 
+
+Input Parameter Determination 2 
+
+User Query: “Does the function parameter 𝑃𝑎𝑟𝑎𝑚 below point to a contiguous byte stream? The region it points to should be a continuous sequence of bytes or contiguous text data (excluding filenames or other semantically meaningful content), rather than pathnames, filenames, structs, floating-point numbers, or other specifically structured data. Below is a sample output: { “answer”: “yes” or “no” }” 
+
+Expected Output: “{“answer”: “yes”}” or “{“answer”: “no”}” 
+
+Input Parameter Determination 3 
+
+User Query: “Based on the following function, determine which of the following data types the parameter 𝑃𝑎𝑟𝑎𝑚 belongs to: A. Binary data B. Text data C. Struct D. Floating-point number E. Other Below is a sample output: { “answer”: “A” }” 
+
+Expected Output: “{“answer”: “A”}” 
+
+## B.3 Functionality Analysis 
+
+Functionality Analysis 1 
+
+User Query: “Which category does the following code belong to? Return in json format with reason: A. Function processing B. Function/resource initialization C. Resource recovery D. Test class E. None of the above Below is a sample output: { “reason”:“reason why select the an-swer”, “answer”: “A” }” 
+
+Expected Output: “{“answer”: “A”}” 
+
+Functionality Analysis 2 
+
+User Query: “Is the following function a structure destruction function? The answer is output in json format. Below is a sample output: { “answer”: “yes” }” 
+
+Expected Output: “{“answer”: “yes”}” or “{“answer”: “no”}” CCS ’26, November 15–19, 2026, The Hague, The Netherlands Xing Zhang, Zikang Huang, Gang Yang, Lingyun Ying, and et al. 
+
+## B.4 Function Documentation Generation 
+
+Function Documentation Generation 
+
+User Query: “Analyze the function’s functionality, and based on its usage scenario, provide a code snippet that calls the function in accordance with its scenario. The answer must strictly follow the markdown template below. *Function Signature* <!– Briefly introduce the function’s signature –> *Functionality* <!– Briefly describe the function’s functionality –> *Application Scenario* <!– Briefly describe the function’s usage scenario –> *Example Code* <!– Provide an example code snippet that calls the function, ensuring the code is as concise as possible –>” 
+
+Expected Output: “- Function Signature: ... - Functionality: ... - Application Scenario: ... - Example Code: // example code here ”
+
+## B.5 Structure Snippet Stitching 
+
+Structure Snippet Stitching 
+
+User Query: “The following lists the functions and call snippets of {len(func_list)} functions. According to the use scenarios of the functions and the logical relationship of the function pro-cessing the ‘bytearray2str(one_parameter.name)’ structure during the call process, write sample code that meets the call scenar-ios of {len(func_list)} functions and {func_name_str} and calls {len(func_list)} functions at the same time. The answer should be as accurate and concise as possible. First, arrange the call se-quence and the corresponding program structure according to the logical relationship of normal calls to these functions, out-put the reasons and then generate the code. The code should be optimized as much as possible and conform to the *logical call* relationship of the function functions. Note: It must be ensured that {len(func_list)} functions {func_name_str} must be called ex-plicitly, and finally explain how {func_name_str} are called. After the generation is completed, check the generated code to check whether the {func_name_str} functions are all called explicitly. If not, regenerate the code. When generating, please note: 1. The functions and structures that appear in the code have been defined elsewhere, so there is no need to complete the code implementa-tion. 2. The functions that appear in the code have been defined in the header file, so do not define them repeatedly. 3. Do not include functions that do not appear in the sample code. The ‘{parameter_name}’ is as follows: {parameter_body)} Below is a sample output: {func_api_doc}” 
+
+Expected Output: “ // code snippet that invokes {func_list} ” 
+
+## B.6 Rough Code Assembly 
+
+Rough Code Assembly 
+
+User Query: “The following two code snippets with de-scriptions are the snippets for processing the structure {parameter_name_list_str} and the structure {parame-ter_code.output_all_parameter_name_str()} respectively. According to the logical relationship between the two code snippets and the function calls, give the code for processing the structure ‘{parameter_name_list_str}‘ and the structure ‘{bytearray2str(parameter_code.parameter.name)}‘ at the same time. The answer should be as accurate and concise as possible. The functions appearing in the following code snippets should be called explicitly. The code should be optimized as much as possible and should conform to the logical calling relationship of the function functions. Note: The generated code is all C language code, not C++. Do not invent code not mentioned above. Below is a sample output: {Content}” 
+
+Expected Output: “ // code that invokes entire FT in a main function ” 
+
+## Appendix C Target Details 
+
+Table 10: Detailed project information: commit hash and star counts. Project Commit ID (Version) Stars 
+
+c-ares 16c873c 2k fribidi b28f43b 0.4k libyaml 840b65c 1k cjson 12c4bf1 11.5k sqlite3 3.51.1 -zlib 5a82f71 6.1k opus 2785f8d 2.6k libxml2 1039cd5 0.6k lz4 67a385a 10.9k libssh2 8a871d0 1.4k expat 5dd4a63 1.2k avahi 6d801ab 1.3k libxslt c8b1ea4 0.1k libtiff d31dd34 -lcms 9ac94ea 0.6k libarchive dcbf1e0 3.4k xz dd4a1b2 0.9k jq 0b1ef46 33.2k pjsip 6c24457 2.5k kamailio a05a758 2.7k postfix e66967d 0.5k gdbm 0d3d46c -file 5184ca2 1.4k hpn-ssh c03bd45 0.5k dropbear bd12a86 1.9k SYNAPSEFlow CCS ’26, November 15–19, 2026, The Hague, The Netherlands 
+
+## Appendix D Operations of collecting branch coverage for all baselines.  
+
+> 1
+
+# copy all profile (*. profraw ) and fuzzer (*. out ) to workdir  
+
+> 2
+
+> cd workdir  
+
+> 3
+
+> llvm - profdata merge - sparse *. profraw -o merged . profdata  
+
+> 4
+
+> for fuzzer in " *. out "; do  
+
+> 5
+
+llvm - cov report ${ fuzzer } - instr - profile = merged . profdata >${ fuzzer } _cov_report . txt  
+
+> 6
+
+> done  
+
+> 7
+
+> llvm - cov show fuzzer_with_max_total_branches . out - instr -profile = merged . profdata -- format = html - output - dir = final_coverage 
+
+Listing 7: Operations of collecting branch coverage. 
+
+## Appendix E Efficiency Statistics Details CCS ’26, November 15–19, 2026, The Hague, The Netherlands Xing Zhang, Zikang Huang, Gang Yang, Lingyun Ying, and et al. 
+
+Table 11: Detail results of efficiency. PreT: pre-processing time (hours), GenT: generation time per harness (hours), Tokens: token consumption (millions), #Harness: number of harness generated. OF: OSS-Fuzz-Gen, CK: CKGFuzzer, PF: PromeFuzz, SF: 
+
+SynapseFlow . #S. denotes the average number of stages executed per successfully generated harness for SynapseFlow .Project PreT (h) GenT (h) Tokens (M) #Harness #S. OF CK PF SF OF CK PF SF OF CK PF SF OF CK PF SF 
+
+c-ares - 4.02 3.32 2.23 0.42 0.25 0.17 0.12 20.25 8.72 4.02 3.47 74 100 94 164 7.22 fribidi - 3.97 0.52 0.25 0.13 0.86 0.22 0.22 2.31 5.78 1.02 1.86 32 15 16 30 7.72 libyaml - 4.07 0.30 0.37 0.20 0.66 0.10 0.23 3.19 5.31 0.85 2.13 27 30 28 36 7.46 cjson - 3.83 2.67 0.42 0.11 0.43 0.08 0.21 3.72 6.77 1.78 7.75 58 40 64 150 7.08 sqlite3 - 5.47 8.62 4.48 1.46 1.18 1.17 0.28 44.89 38.09 37.87 49.15 45 112 104 603 7.33 zlib - 3.93 1.55 1.33 0.17 0.40 0.10 0.15 10.78 9.16 1.79 4.77 104 69 63 156 7.04 opus - 4.63 7.32 2.68 6.23 3.19 2.84 0.11 24.49 28.16 32.22 9.01 6 24 29 377 7.28 libxml2 - 4.35 5.15 5.03 0.32 0.43 0.84 0.18 30.22 17.32 19.53 16.13 147 97 53 266 7.29 lz4 - 3.85 0.72 1.10 0.26 0.91 0.30 0.16 11.21 9.54 2.75 3.74 65 42 44 158 7.22 libssh2 - 4.52 3.88 1.88 0.27 1.15 1.56 0.26 18.92 10.37 11.74 5.15 105 21 17 55 7.28 expat - 4.27 3.05 1.30 0.55 0.79 0.47 0.36 9.77 9.95 6.44 9.52 30 50 58 134 6.98 avahi - 4.45 3.77 3.03 0.74 1.05 0.39 0.20 22.23 18.69 15.83 9.27 50 36 84 126 7.49 libxslt - 3.87 2.85 5.23 0.18 0.69 1.19 0.61 15.29 19.48 21.7 16.64 153 74 62 121 7.24 libtiff - 4.87 4.92 2.10 0.40 0.45 0.20 0.17 42.85 23.00 7.26 13.19 128 153 128 353 11.14 lcms - 4.15 3.57 2.27 0.19 0.22 0.20 0.26 26.48 24.49 13.69 27.02 200 234 141 245 8.31 libarchive - 4.93 10.17 2.65 0.70 2.06 1.57 0.24 35.52 41.07 54.75 43.38 68 76 124 709 8.00 xz - 4.48 10.40 1.50 0.35 1.43 0.93 0.27 11.88 22.34 20.41 12.7 55 46 60 157 7.17 jq - N/A 3.25 2.05 2.10 N/A 2.88 0.35 17.24 N/A 16.85 8.39 13 N/A 10 57 7.09 pjsip - N/A 11.77 10.82 14.28 N/A 4.61 0.46 123.11 N/A 142.95 45.3 12 N/A 75 405 8.11 kamailio - N/A 16.17 28.85 2.49 N/A 2.70 0.63 140.58 N/A 76.85 53.32 43 N/A 87 316 9.12 postfix - N/A 10.92 5.02 0.89 N/A 6.32 0.21 90.89 N/A 77.59 36.35 125 N/A 38 959 8.60 gdbm - N/A 12.82 0.72 0.53 N/A 1.40 0.20 6.82 N/A 16.82 7.18 20 N/A 27 113 6.92 file - N/A 10.60 1.55 0.09 N/A 0.10 0.50 18.47 N/A 2.37 14.12 290 N/A 90 162 7.99 hpn-ssh - N/A 18.28 6.07 6.85 N/A 3.17 0.85 120.79 N/A 174.96 161.91 21 N/A 122 474 9.02 dropbear - N/A 9.47 2.98 1.35 N/A 1.45 1.12 34.78 N/A 19.35 27.22 36 N/A 45 85 8.28

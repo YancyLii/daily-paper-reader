@@ -1,0 +1,1640 @@
+Title: Safety Hacking in Constrained Best-of-N Inference-time Scaling
+
+URL Source: https://arxiv.org/pdf/2608.22915v1
+
+Published Time: Tue, 25 Aug 2026 01:44:02 GMT
+
+Number of Pages: 29
+
+Markdown Content:
+# Safety Hacking in Constrained Best-of-N
+
+# Inference-time Scaling 
+
+Akifumi Wachi 1 Takumi Tanabe 1 Youhei Akimoto 2,3 1LY Corporation 2University of Tsukuba 3RIKEN AIP Correspondence: akifumi.wachi@lycorp.co.jp 
+
+## Abstract 
+
+Inference-time pipelines often sample multiple outputs, filter them with a learned safety model, and return the proxy-feasible output with the highest learned reward. We show that this composition creates a two-stage failure: an imperfect safety proxy first contaminates the feasible set with unsafe outputs, and reward maximization can then amplify this residual contamination. We define safety hacking 
+
+as selecting an output that passes the learned constraint but violates the true safety criterion. For constrained Best-of-N sampling, we derive finite-N bounds governed by the joint upper reward tails of safe and unsafe outputs within the proxy-feasible set. If unsafe-but-feasible outputs have the heavier tail, safety hacking becomes asymptotically certain as N grows, even when false-positive mass and average safety- and reward-proxy errors are arbitrarily small. We also show that policies within a bounded χ2
+
+divergence from the proxy-feasible reference distribution admit an N-independent safety-hacking bound, and instantiate this general coverage-control principle with constrained pessimistic sampling. Coverage control limits amplification but cannot repair a contaminated feasible set: admitted unsafe outputs may still be favored, and regularized selection is not necessarily safer than constrained Best-of-N for every reward proxy. Toy and language-model experiments characterize both contamination and its reward-tail amplification, which exposes an inherent difficulty in inference-time scaling with learned safety models. 
+
+## 1. Introduction 
+
+Foundation-model inference increasingly relies on learned models both to enforce safety and to assess response quality [Snell et al., 2024; Amodei et al., 2016; Hendrycks et al., 2021]. A typical pipeline samples candidate responses, rejects those deemed unsafe by a safety model, and ranks the remainder with a reward model [Wang et al., 2025; Ji et al., 2025; Inan et al., 2023; Zeng et al., 2024b]. As a representative instance, constrained Best-of-N (CBo N) sampling follows this pattern: it draws N
+
+responses and returns the proxy-feasible response with the largest learned reward. Filtering and ranking errors can interact. The safety model may admit a response that violates the true safety criterion, thereby contaminating the proxy-feasible set; the reward model may then assign that response a high score. We call the resulting selection event safety hacking : the returned response satisfies the learned safety constraint but violates the true one. Such unsafe-but-feasible responses remain inside the feasible set and are therefore exposed to downstream reward optimization, which can amplify a small amount of contamination into a large selection probability. Existing work on reward overoptimization shows that excessive optimization against an imperfect reward proxy can eventually reduce the true reward [Skalse et al., 2022; Gao et al., 2023]. Our setting adds a distinct source of misspecification: the optimization domain is itself defined by an imperfect safety proxy. The resulting failure is governed by the interaction between 1) contamination that determines which unsafe outputs enter the proxy-feasible set, and 2) amplification that determines how strongly reward optimization favors them. Our main result shows that amplification depends not only arXiv:2608.22915v1 [cs.LG] 24 Aug 2026 Safety Hacking in Constrained Best-of-N Inference-time Scaling 
+
+on how often the filter admits unsafe responses, but also on the relative upper tails of learned rewards among safe and unsafe proxy-feasible responses. When the unsafe group has the heavier upper tail, its maximum eventually dominates under CBo N, and the probability of selecting an unsafe response tends to 1 as N → ∞. This can occur even as the mass of unsafe false acceptances and average safety-and reward-proxy errors vanish. Average filter accuracy is therefore insufficient to predict safety under inference-time scaling; the joint tail behavior of the two proxies also matters. Safety hacking is related to reward overoptimization and Bo N jailbreaking [Gao et al., 2023; Hughes et al., 2024], but it is not ordinary reward hacking restricted to a benign feasible set. A main reason for safety hacking is that reward optimization operates on a set that may already contain false acceptances from the safety filter and can favor those errors over other candidates. The cleanest example is Corollary 4.3: an unsafe-but-feasible reference mass ε can coexist with safety- and reward-proxy errors of order √ε, yet a budget N = O(1/ ε) suffices to produce high-probability safety hacking. Pessimistic inference can provide scaling-monotonic guarantees for reward overoptimization under suitable conditions [Huang et al., 2025], but it cannot determine which responses were wrongly admitted by a safety proxy. We show that any policy close to the proxy-feasible reference distribution in χ2 divergence admits an N-independent safety-hacking bound. Our concrete example is constrained pessimistic sampling ( cPes ), a χ2-regularized reweighting of the proxy-feasible reference distribution. The guarantee limits concentration on residual errors but cannot eliminate them. Depending on the reward proxy, regularized selection may still exhibit substantial safety hacking. Our contributions are: 1. We formalize safety hacking as selection of a response that satisfies a learned safety constraint while violating the true safety criterion. 2. We characterize how safety-filter contamination is amplified by reward maximization. We derive finite-N bounds for CBo N in terms of the joint reward tails of safe and unsafe proxy-feasible outputs, and give conditions under which safety hacking becomes asymptotically certain even as unsafe false acceptances and average proxy errors vanish. 3. We derive N-independent safety-hacking bounds under coverage control and study cPes as a concrete instance. These bounds limit amplification but cannot repair contamination introduced by an imperfect safety constraint. 4. Controlled and language-model experiments measure both stages of the mechanism. An exact finite-N decomposition separates exposure to unsafe-but-feasible responses from the probability that they outrank every safe candidate. The latter increases with scale and drives the increase in safety hacking. Reward-model ablations isolate the role of reward ranking in amplification, and we observe the same decomposition pattern with an alternative safety filter. 
+
+## 2. Related Work 
+
+Reward overoptimization. Optimizing an imperfect proxy can produce unintended behavior, a concern studied through reward hacking or Goodhart’s law [Amodei et al., 2016; Manheim and Garrabrant, 2018]. In language-model alignment, learned reward models are used both during training [Ouyang et al., 2022; Bai et al., 2022] and to rank responses at inference time [Stiennon et al., 2020]. Prior work shows that excessive optimization of an imperfect reward proxy, through reinforcement learning or inference-time scaling, can eventually reduce true reward [Gao et al., 2023; Khalaf et al., 2025]. Our setting includes misspecification in both the reward and the safety constraint (i.e., optimization domain). A learned safety proxy defines a feasible set that can contain unsafe false acceptances,  
+
+> 2Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+which reward maximization may then amplify through upper-tail selection. We analyze the interaction between these two sources of error. 
+
+Safety-constrained inference-time alignment. Chittepu et al. [2026] formulate inference-time alignment with learned reward and safety cost models, using a calibrated Lagrangian reward for sequence-level Bo N under an expected-cost constraint. While Chittepu et al. [2026] optimize against the learned cost signal, we instead study a misspecified hard safety filter. In our settings, false acceptances contaminate the feasible set, and subsequent reward maximization can amplify them. 
+
+Inference-time pessimism and coverage control. Huang et al. [2025] study coverage and scaling in inference-time alignment and propose pessimistic alternatives to naïve Bo N. Also, regularized Bo N has been studied under a minimum-Bayes-risk objective [Jinnai et al., 2025]. We condition the reference distribution on proxy feasibility and apply coverage control to the resulting distribution. The bound limits downstream amplification of safety-filter errors but leaves any contamination already present in the conditioned reference. The distinction from prior work lies in separating contamination from amplification. Coverage control limits amplification after conditioning on proxy feasibility. 
+
+Learned safety filters and evaluator errors. LLM systems often use learned filters, moderation models, or guardrails to classify prompts and responses. Llama Guard casts safeguarding as safety-risk classification [Inan et al., 2023], while ShieldGemma provides open models for detecting risks in model inputs and outputs [Zeng et al., 2024b]. These systems make safety constraints operational but remain imperfect proxies for the true criterion [Zheng et al., 2023]. We study how errors in the two proxies interact: unsafe false acceptances determine which responses enter the feasible set, and reward-proxy errors determine which response is selected. 
+
+Jailbreaks and red teaming. HarmBench [Mazeika et al., 2024], JailbreakBench [Chao et al., 2024], and StrongREJECT [Souly et al., 2024] provide benchmarks for harmful behavior, jailbreak, and refusal robustness. Bo N jailbreaking shows that repeated randomized attempts can substantially increase attack success rates [Hughes et al., 2024], demonstrating that search can expose rare safety failures. We instead hold the prompt fixed and search over sampled model outputs. The filter may admit unsafe outputs, and reranking can make them increasingly likely to be selected. 
+
+## 3. Problem Statement 
+
+We consider safety-constrained reward maximization at inference time. For clarity, we write the theory for a fixed prompt x ∈ X whenever possible; hence, all probabilities and expectations are conditional on this prompt. We take Y to be finite or countable, and the measurable-space extension is obtained by replacing sums with integrals. We suppose that there are an unknown reward function 
+
+r⋆ : X × Y → R+ and an unknown binary safety function g⋆ : X × Y → { 0, 1 }. For a prompt x, an output y is truly safe if g⋆(x, y) = 1. Define the following truly safe and unsafe sets of outputs: 
+
+S⋆
+
+> +
+
+(x) := {y ∈ Y : g⋆(x, y) = 1}, S⋆
+
+> −
+
+(x) := Y \ S ⋆
+
+> +
+
+(x). (1) Thus, the ideal constrained inference problem is 
+
+max  
+
+> y∈Y
+
+r⋆(x, y) subject to g⋆(x, y) = 1. (2) The agent cannot evaluate r⋆ or g⋆ directly, but instead has a reference policy πref ( · | x), a learned reward proxy ̂︀ r : X × Y → R, and a learned safety proxy ̂︀ g : X × Y → [0, 1 ]. For a safety threshold  
+
+> 3Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+b ∈ (0, 1 ], define the proxy-feasible set ̂︀ 
+
+S+(x, b) := {y ∈ Y :̂︀ g(x, y) ≥ b}. (3) The proxy-feasible set decomposes into true positives and false positives: 
+
+A(x, b) := S⋆
+
+> +
+
+(x) ∩̂︀ S+(x, b), B(x, b) := S⋆
+
+> −
+
+(x) ∩̂︀ S+(x, b). (4) Both sets contain outputs accepted by the safety proxy: A(x, b) contains the truly safe ones, whereas 
+
+B(x, b) contains the unsafe ones. 
+
+Definition 3.1 (Safety hacking) . Fix x ∈ X and b ∈ (0, 1 ]. If an inference-time procedure outputs ̂︀ 
+
+y ∈̂︀ S+(x, b), we say that safety hacking occurs when ̂︀ 
+
+y ∈ B(x, b). (5) 
+
+Equivalently, the output passes the learned safety proxy but violates the true safety constraint. Note that if the procedure abstains (e.g., when ̂︀ S+(x, b) = ∅), this is not considered safety hacking. 
+
+The following joint upper-tail quantities are the central objects in the CBo N analysis. For ♢ ∈ { A, B}
+
+and t ∈ R, define the learned-score tail ̂︀ 
+
+Ψ♢(t; x, b) := Py∼πref ( · |x) [y ∈ ♢(x, b),̂︀ r(x, y) > t] . (6) These tails combine 1) the probability that the reference policy πref reaches a class of outputs ♢ and 2) the upper-tail behavior of the learned reward score inside that class. Although we use a contextual bandit setting for simplicity, the formulation also covers open-loop trajectory selection. Let τ denote a trajectory. Set y = τ and let πref (τ | x) be the trajectory distribution induced by a fixed reference policy and the environment dynamics, with reward and safety defined at the trajectory level. The results require N i.i.d. trajectories from this distribution and therefore exclude beam search, Monte Carlo tree search, and other non-i.i.d. or stepwise procedures. 
+
+## 4. Safety-Filter Contamination and Reward-Tail Amplification 
+
+A natural baseline to solve (2) is CBo N. Given N i.i.d. candidates y1, . . . , yN ∼ πref ( · | x), define a proxy-feasible index set IN (x, b) := {i ∈ [N] : yi ∈̂︀ S+(x, b)}. If IN (x, b)̸ = ∅, CBo N returns ̂︀ 
+
+yBoN  
+
+> N
+
+(x) ∈ argmax  
+
+> i∈I N(x,b)
+
+̂︀ 
+
+r(x, yi) (7) with arbitrary tie-breaking. In the case of IN (x, b) = ∅, the procedure simply abstains. The failure of CBo N has two stages. First, false positives from the safety proxy contaminate the proxy-feasible set with outputs in B(x, b). Second, maximizing ̂︀ r over that set can amplify the contamination by searching the extreme upper tail of the learned reward score. Increasing N therefore does more than increase exposure to unsafe-but-feasible outputs: it also intensifies their reward-based competition with safe proxy-feasible outputs. The following theorem identifies the joint score tails in (6) as the finite-N quantities governing this competition.  
+
+> 4Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+Theorem 4.1 (Finite-N safety-hacking probability bounds) . Fix a prompt x ∈ X and a threshold 
+
+b ∈ (0, 1 ]. Let y1, . . . , yN
+
+> iid
+
+∼ πref ( · | x), and let ̂︀ yBoN  
+
+> N
+
+(x) be defined by (7) . For any t, s ∈ R, define ̂︀ 
+
+LN (t; x, b) :=(︀ 1 −̂︀ ΨA(t; x, b))︀ N −(︀ 1 −̂︀ ΨA(t; x, b) −̂︀ ΨB(t; x, b))︀ N , (8) ̂︀ 
+
+UN (s; x, b) := 1 −(︀ 1 −̂︀ ΨB(s; x, b))︀ N +(︀ 1 −̂︀ ΨB(s; x, b) −̂︀ ΨA(s; x, b))︀ N . (9) 
+
+Then, for every t, s ∈ R,̂︀ 
+
+LN (t; x, b) ≤ P[︁̂︀ yBoN  
+
+> N
+
+(x) ∈ B(x, b)]︁ ≤̂︀ UN (s; x, b). (10) 
+
+Taking the supremum over t and the infimum over s gives the tightest bounds in this family. 
+
+The lower bound is the probability that no sample from A(x, b) has learned reward above t and at least one sample from B(x, b) does. CBo N selects from B(x, b) on this event. The upper bound follows because CBo N cannot select from B(x, b) when some sample from A(x, b) scores above s and none from B(x, b) does. Corollary A.1 states the corresponding guarantees in terms of the effective tail masses N̂︀ ΨA and N̂︀ ΨB. Let ¯t := ess sup y∈A(x,b)̂︀ r(x, y), so that ̂︀ ΨA(¯t; x, b) = 0. Theorem 4.1 then gives 
+
+P[̂︀ yBoN  
+
+> N
+
+(x) ∈ B(x, b)] ≥ 1 − (1 −̂︀ ΨB(¯t; x, b)) N . If ̂︀ ΨB(¯t; x, b) = 0.01 , the lower bound in Theorem 4.1 is approximately 0.63 at N = 100 and 0.99 at N = 500 .Contamination determines the mass of B(x, b). The relative joint tails determine whether CBo N selects from it. The next result gives the following tail-separation condition under which the safety-hacking probability converges to one. 
+
+Theorem 4.2 (Asymptotic safety hacking) . Fix x ∈ X and b ∈ (0, 1 ]. If there exists a sequence tN ∈ R
+
+such that N̂︀ ΨA(tN ; x, b) → 0, and N̂︀ ΨB(tN ; x, b) → ∞, then 
+
+lim  
+
+> N→∞
+
+P[︁̂︀ yBoN  
+
+> N
+
+(x) ∈ B(x, b)]︁ = 1. (11) In the boundary case discussed above, ̂︀ ΨA(¯t; x, b) = 0 and ̂︀ ΨB(¯t; x, b) > 0. Setting tN = ¯t, the theorem shows that the safety-hacking probability converges to one. More generally, even an arbitrarily small contaminated region can dominate Bo N search when the reward tails separate. The fixed-prompt result extends directly to prompt distributions: if the tail-separation condition holds on a set of prompts with probability mass at least ρ, the aggregate hacking probability has liminf at least ρ; see Corollary A.2. 
+
+Corollary 4.3 (Vanishing proxy error still allows amplification) . Fix x and b ∈ (0, 1 ]. For every ε ∈ (0, 1 )
+
+and ξ > 0, there exists a two-output instance whose unsafe-but-feasible reference mass is ε, whose safety-and reward-proxy RMSEs are respectively b√ε and ξ√ε, and for which 
+
+P[︁̂︀ yBoN  
+
+> N
+
+(x) ∈ B(x, b)]︁ = 1 − (1 − ε)N ≥ 1 − e−Nε. (12) 
+
+Consequently, any N ≥ ε−1 log (1/ δ) yields safety hacking with probability at least 1 − δ. Thus, even as the false-positive mass and both average proxy errors vanish, a budget N = Θ(1/ ε) can amplify the residual error to high probability. 
+
+When the true-reward range over proxy-feasible outputs is bounded, tail separation also follows if reward overestimation has a heavier Gaussian upper tail on unsafe-but-feasible outputs than on safe-feasible outputs. The relevant threshold scales as √︀ log N; see Proposition A.6.  
+
+> 5Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+## 5. Coverage Control Limits Amplification, Not Contamination 
+
+The preceding analysis separates two sources of risk. Contamination is the unsafe mass admitted by the safety proxy; amplification is the additional concentration on that mass induced by downstream reward optimization. This distinction suggests a general mitigation principle: bounded deviation from the proxy-feasible reference distribution limits amplification as N grows, although it cannot remove the underlying contamination. Let q(x, b) := Py∼πref ( · |x)[y ∈̂︀ S+(x, b)] denote the reference probability that a sampled output passes the learned safety filter. Throughout this section, we assume q(x, b) > 0. Conditioning the reference policy on this event gives the proxy-feasible reference distribution 
+
+π♯
+
+> ref
+
+(y | x) := πref (y | x) · I{y ∈̂︀ S+(x, b)}
+
+q(x, b) . (13) This distribution is the baseline against which we measure how strongly an inference procedure concentrates on feasible outputs. We write π( · | x) ≪ π♯
+
+> ref
+
+( · | x) when π(y | x) > 0 implies 
+
+π♯
+
+> ref
+
+(y | x) > 0 for every y ∈ Y . For any such policy, define the following coverage coefficient by 
+
+C♯ 
+
+> π
+
+(x) :=∑︁ 
+
+> y∈Y
+
+π(y | x)2
+
+π♯
+
+> ref
+
+(y | x) = 1 + χ2(︁ π( · | x)⃦⃦⃦ π♯
+
+> ref
+
+( · | x))︁ . (14) Small C♯ 
+
+> π
+
+(x) means that the final policy retains broad coverage of the proxy-feasible reference distribu-tion, whereas a large value indicates strong concentration. 
+
+Theorem 5.1 (Coverage-controlled contamination amplification) . Define the residual unsafe mass under 
+
+π♯ 
+
+> ref
+
+as κ(x, b) := Py∼π♯ 
+
+> ref (
+
+· |x)[y ∈ B(x, b)] . Any proxy-feasible policy π( · | x) ≪ π♯
+
+> ref
+
+( · | x) satisfies ⃒⃒⃒ 
+
+Py∼π( · |x)[y ∈ B(x, b)] − κ(x, b)⃒⃒⃒ ≤√︁(︀ C♯ 
+
+> π
+
+(x) − 1)︀ κ(x, b)(︀ 1 − κ(x, b))︀ . (15) 
+
+Define ¯εg(x) :=√︁ Ey∼πref ( · |x) [( ̂︀ g(x, y) − g⋆(x, y)) 2]. Then, 
+
+κ(x, b) ≤ min {︃ 1, ¯εg(x)2
+
+b2q(x, b)}︃ . (16) The theorem applies to any inference procedure with bounded proxy-feasible coverage, regardless of how its final policy is constructed. Thus coverage control limits how much downstream selection can amplify the baseline contamination of the proxy-feasible set, but it cannot remove that contamination itself. In particular, C♯ 
+
+> π
+
+(x) = 1 implies π = π♯ 
+
+> ref
+
+and the safety-hacking probability equals κ(x, b).
+
+5.1. A Regularized Instantiation 
+
+To prevent arbitrarily large learned reward scores from inducing extreme concentration, fix clipping levels −∞ <̂︀ Rmin <̂︀ Rmax < ∞ and set ̂︀ Rspan :=̂︀ Rmax −̂︀ Rmin . Then, define ̃︀ 
+
+r(x, y) := clip (︁̂︀ r(x, y),̂︀ Rmin ,̂︀ Rmax )︁ . (17) We use ̃︀ r only for the coverage-controlled policy below; the CBo N analysis in Section 4 continues to use the original learned score ̂︀ r. 
+
+> 6Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+For β > 0, consider the regularized proxy-feasible policy 
+
+ˆπ ∈ argmax 
+
+> π≪π♯
+> ref
+
+{︂ 
+
+Eπ [̃︀ r(x, y)] − β
+
+2(︀ C♯ 
+
+> π
+
+(x) − 1)︀}︂ . (18) 
+
+Proposition 5.2 (Regularized reweighting) . There is a unique λ(x) ∈ [̂︀ Rmin − β,̂︀ Rmax ) satisfying 
+
+Ey∼π♯ 
+
+> ref (
+
+· |x)[︁ ReLU (︁ ̃︀ r(x,y)−λ(x)
+
+> β
+
+)︁]︁ = 1, and the unique optimizer of (18) is 
+
+ˆπ(y | x) = π♯
+
+> ref
+
+(y | x) ReLU (︂̃︀ r(x, y) − λ(x)
+
+β)︂ . (19) 
+
+Moreover, its concentration relative to the proxy-feasible reference is bounded as 
+
+C♯ 
+
+> ˆπ
+
+(x) ≤ 1 +̂︀ Rspan /β. (20) Hereinafter, we call the resulting algorithm constrained pessimistic sampling ( cPes ). A finite-sample implementation replaces the expectations above by their empirical analogues over the proxy-feasible candidates and samples according to the resulting reweighting. Full pseudocode and consistency are given in Algorithm 1 and proposition A.8. Let mN = |I N (x, b)| be the number of proxy-feasible candidates, and let ̂︀ ycPes, N (x) denote the output of finite-sample cPes .
+
+Corollary 5.3 (Safety of cPes ). Conditional on mN > 0, the sample implementation satisfies 
+
+P[̂︀ ycPes, N (x) ∈ B(x, b) | mN > 0] ≤ min 
+
+⎧⎨⎩1, ¯εg(x)2
+
+b2q(x, b) + ¯εg(x)
+
+b√︃̂︀ 
+
+Rspan 
+
+βq(x, b)
+
+⎫⎬⎭ . (21) 
+
+The same bounds hold for the population policy (19) . With an abstaining fallback, the sample bounds hold unconditionally for every N.
+
+## 6. Experiments 
+
+6.1. Toy Problem 
+
+We illustrate tail separation with a three-class toy problem. Each candidate belongs to a latent class A,
+
+B, or C with probabilities (0.39, 0.01, 0.60 ). Class A is truly safe and proxy-feasible, class B is unsafe but proxy-feasible, and class C is correctly rejected by the safety proxy. We set 
+
+g⋆ = ( 1, 0, 0 ),̂︀ g = ( 0.95, 0.90, 0.05 ), b = 0.8, 
+
+and use true rewards r⋆ = ( 0.8, 0.2, 0.5 ). The learned reward is 
+
+ˆr = r⋆ + σk Z, Z ∼ N (0, 1 ),
+
+with (σA, σB, σC ) = ( 0.2, 1.0, 0.2 ). Thus the unsafe false-positive class B is rare, but has a substantially heavier upper tail of reward-proxy overestimation than the safe class A. We compare random feasible selection, CBo N, and cPes over increasing candidate budgets. Random feasible selection chooses uniformly among the candidates accepted by the safety proxy, without using the learned reward. CBo N
+
+uses the unclipped learned score ˆr, whereas cPes applies the clipping with [̂︀ Rmin ,̂︀ Rmax ] = [ 0, 4 ].       
+
+> 7Safety Hacking in Constrained Best-of-NInference-time Scaling 222528211
+> Budget N
+> 0.0 0.5 1.0
+> Hacking rate  CBoN random_feasible cPes = 0.1
+> cPes = 0.2
+> cPes = 1.0
+
+(a) Conditional safety-hacking rate. 22 25 28 211     
+
+> Budget N
+> 0.2 0.4 0.6 0.8
+> True reward
+> CBoN random_feasible cPes = 0.1
+> cPes = 0.2
+> cPes = 1.0
+
+(b) Conditional mean true reward. 0.25 0.50 0.75 1.00 1.25      
+
+> B
+> 0.0 0.5 1.0
+> Hacking rate  N= 128
+> N= 512
+> N= 2048
+> N= 8192
+
+(c) False-positive tail scale. 
+
+Figure 1: Toy results. As the search budget grows, CBo N increasingly selects the rare unsafe-but-feasible class B, whose reward-proxy upper tail dominates that of the safe class A. Random feasible selection does not exhibit this amplification, while cPes limits the resulting concentration. Panel (c) varies the false-positive reward-noise scale σB.Figure 1 shows the predicted amplification. As N grows, CBo N shifts from selecting the safe class 
+
+A to the unsafe-but-feasible class B. The conditional safety hacking rate rises from 0.023 at N = 1
+
+to 0.9996 at N = 8192 , while the mean true reward falls from about 0.786 to 0.200 . Random feasible selection remains near the baseline false-positive rate, showing that exposure to class B alone does not explain the failure. cPes substantially limits this amplification in the toy problem. Controls varying the reward-error tails and removing false positives confirm that the effect requires an unsafe proxy-feasible class with a sufficiently advantageous learned-reward tail; see Appendix A.15. 
+
+6.2. LLM Experiments 
+
+We next evaluate safety hacking in a more practical setting using LLMs. 
+
+Experimental settings. Our evaluation uses 714 test and 179 validation prompts from Jail-breakBench [Chao et al., 2024], HarmBench [Mazeika et al., 2024], and AdvBench [Chen et al., 2022], after removing duplicates. For each prompt, we sample 256 responses from 
+
+Qwen/Qwen2.5-7B-Instruct [Team, 2024] (temperature 1.0, top-p 0.95, 512 new tokens), giving 228,608 candidates. We evaluate all selection methods on the same candidates. We filter candidates with meta-llama/Llama-Guard-3-8B [Llama Team, 2024] and rank them with PKU-Alignment/beaver-7b-v1.0-reward [Dai et al., 2024]. We report the pri-mary safety threshold b = 0.95 and compare random feasible selection, CBo N, and cPes for 
+
+N ∈ { 1, 2, 4, 8, 16, 32, 64, 128, 256 }. Random feasible selection controls for exposure to filter false positives without reward maximization; cPes uses calibration-fixed clipping levels and β = 1.0 . Point estimates are averaged over 100 random candidate-order permutations. For each prompt, we first average the metric over permutations and then compute standard errors across prompts; shaded bands show ±1.96 standard errors. Because latent safety and reward are unobservable for open-ended responses, we use the HarmBench classifier as the operational safety criterion and define a safety-hacking event as selecting a response that passes Llama Guard but is classified as unsafe by HarmBench. Reported safety-hacking rates condition on non-abstention. Separately, we use gpt-5-mini [Singh et al., 2025] to evaluate safety-aware reward under the safety_aware_v1 rubric. These evaluators operationalize g⋆ and r⋆ for the experiments; neither is treated as ground truth. Evaluator and scoring details are given in Appendix B.1. 
+
+Safety-hacking amplification and finite-N decomposition. For a fixed prompt, candidate ordering,  
+
+> 8Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+1 4 16 64 256 0.0 0.1 0.2 0.3 JailbreakBench 
+
+1 4 16 64 256 
+
+HarmBench 
+
+1 4 16 64 256 
+
+AdvBench 
+
+1 4 16 64 256 
+
+combined Probability Budget N         
+
+> Pr( KB>0, K A= 0) Pr( KA>0, K B>0, M B> M A)
+> CBoN Random feasible
+
+Figure 2: Finite-N decomposition of conditional CBo N safety hacking on adversarial prompts under the HarmBench operational safety criterion. The total (green) is the sum of unsafe-only exposure (blue) and competitive unsafe wins (orange); random feasible selection is shown in gray. The competitive term corresponds to the joint-tail mechanism in Theorem 4.1. Points are averaged over 100 candidate-order permutations; bands show ±1.96 standard errors across prompts after permutation averaging. and budget N, let KA and KB be the numbers of proxy-feasible candidates labeled safe and unsafe by HarmBench. When the corresponding class is nonempty, let MA and MB denote its largest proxy reward. Because the proxy scores have no ties, CBo N selects an unsafe response in one of two cases: no safe feasible candidate is available, or the best unsafe candidate outscores the best safe candidate. Conditional on non-abstention, this gives 
+
+Pr [︁̂︀ yBoN  
+
+> N
+
+∈ B(x, b) | KA + KB > 0]︁ 
+
+= Pr [KB > 0, KA = 0 | KA + KB > 0] + Pr [KA > 0, KB > 0, MB > MA | KA + KB > 0] . (22) The first term measures unsafe-only exposure, where no safe feasible candidate is available. The second measures reward-based competition when both classes are present, and is the empirical finite-N
+
+counterpart of the joint-tail competition in Theorem 4.1. The decomposition in Figure 2 attributes the increase in safety hacking primarily to competitive selection. For the HarmBench subset and the combined evaluation, the unsafe-only term decreases with N, indicating that increased exposure to unsafe proxy-feasible responses does not account for the observed scaling behavior. By contrast, the competitive-selection term increases: conditional on both classes being present, the unsafe class more frequently attains the larger maximum proxy reward. This trend is consistent with the finite-N behavior implied by the relative joint tails in Theorem 4.1. Accordingly, the CBo N hacking rate increasingly exceeds the random-feasible contamination baseline, whereas cPes remains closer to the baseline (Figure 3a). Repeating the analysis with a calibration-matched google/shieldgemma-2b [Zeng et al., 2024a] filter gives the same pattern, but a smaller overall increase in safety hacking: unsafe-only exposure falls with N, while competitive unsafe wins become more common (Appendix B.2). 
+
+Proxy reward versus safety-aware reward. Larger budgets improve the objective optimized by CBo N:its proxy reward increases well above the random-feasible reference (Figure 3c). Yet its gpt-5-mini -judged safety-aware reward, which penalizes unsafe and non-responsive outputs, deteriorates with N
+
+(Figure 3b). cPes produces smaller departures on both measures. Thus aggressive proxy optimization exploits proxy errors rather than improving the intended objective. 
+
+Reward-proxy ablation. To isolate the effect of the reward proxy, we replace PKU-Alignment/ 
+
+> 9
+
+Safety Hacking in Constrained Best-of-N Inference-time Scaling 1 2 4 8 16 32 64 128 256  
+
+> Budget N
+> 46810 12 14
+> Safety-hacking rate (%)
+> CBoN cPes Random feasible
+
+(a) Safety-hacking rate. 1 2 4 8 16 32 64 128 256   
+
+> Budget N
+> 0.86 0.88 0.90 0.92 0.94
+> Safety-aware true reward
+> CBoN cPes Random feasible
+
+(b) Safety-aware true reward. 1 2 4 8 16 32 64 128 256   
+
+> Budget N
+> 2.5 5.0 7.5 10.0 12.5 15.0
+> Mean proxy reward  CBoN cPes Random feasible
+
+(c) Mean proxy reward. 
+
+Figure 3: Safety and reward under constrained inference-time scaling on adversarial prompts. Harm-Bench evaluates safety, and gpt-5-mini evaluates safety-aware reward. As N grows, CBo N improves proxy reward but worsens both safety measures, while cPes limits these effects. Points are averaged over 100 candidate-order permutations; bands show ±1.96 standard errors across prompts after permutation averaging. 1 2 4 8 16 32 64 128 256 
+
+Budget N
+
+> 5.0 7.5 10.0 12.5 15.0
+> Safety-hacking rate (%)
+> Beaver CBoN Beaver cPes Skywork CBoN Skywork cPes
+
+(a) Safety-hacking rate. 1 2 4 8 16 32 64 128 256                 
+
+> Budget N
+> 0.0 2.5 5.0 7.5 10.0 12.5
+> Conditional probability (%)  Beaver
+> 124816 32 64 128 256
+> Budget N
+> Skywork
+> Bpresent, Aabsent
+> Bbeats Ain reward tail Total CBoN hacking
+
+(b) Finite-N decomposition for CBo N.
+
+Figure 4: Reward-proxy ablation with fixed candidate pools, safety-filter decisions, and HarmBench labels. Replacing Beaver with Skywork reverses the scaling trend in CBo N safety hacking (left). The unsafe-only component is unchanged, whereas the competitive component decreases under Skywork (right), indicating that amplification depends on reward-based competition within the contaminated proxy-feasible set. 
+
+beaver-7b-v1.0-reward with Skywork/Skywork-Reward-V2-Llama-3.1-8B [Liu et al., 2025], while keeping the candidate pools, safety filter, and HarmBench labels fixed. With Beaver, CBo N safety hacking increases from 9.1% at N = 1 to 13.4% at N = 256 ; with Skywork, it decreases to 6.8% . At N = 256 , the unsafe-only term is 1.6% under both proxies, whereas the competitive unsafe-win term decreases from 11.7% with Beaver to 5.3% with Skywork (Figure 4). The reversal is therefore attributable to how the two reward proxies rank the same safe and unsafe proxy-feasible candidates, rather than to filtering or exposure. The corresponding conditional reward-tail survival curves are reported in Figure 5. This ablation is the empirical counterpart of the finite-N bounds in Theorem 4.1 and corollary A.1, which depend on the joint tails ̂︀ ΨA and ̂︀ ΨB rather than false-positive mass alone. A favorable safe tail can prevent amplification over the evaluated budgets without providing an asymptotic guarantee. At 
+
+N = 256 , Skywork CBo N has a lower safety-hacking rate than Skywork cPes (6.8% versus 8.7% ). The guarantee for cPes is therefore not pointwise dominance over CBo N, but an N-independent bound under adverse tail configurations (Corollary 5.3 and Theorem 5.1). 
+
+10 Safety Hacking in Constrained Best-of-N Inference-time Scaling 
+
+## 7. Discussion and Limitations 
+
+Coverage control limits amplification, not contamination or misranking. The proxy-feasible reference already assigns mass κ(x, b) to unsafe false positives. cPes limits further concentration on this residual mass but cannot identify it, and may still favor unsafe outputs with high learned rewards. Its 
+
+N-independent bound therefore implies neither absolute safety nor pointwise dominance over CBo N,as illustrated by the Skywork ablation. 
+
+Robust inference requires intervention at multiple points. Our analysis points to three complemen-tary interventions: improving the safety filter, limiting downstream concentration, and choosing reward proxies with favorable safe-versus-unsafe tail behavior. The Skywork ablation shows that reward-tail ordering can substantially change risk over the observed budget range. These interventions address different parts of the failure: filtering controls contamination, while reward-tail behavior and coverage control govern selection within the resulting feasible set. 
+
+Limitations. We analyze a fixed, non-adaptive pipeline in which independently sampled candidates are filtered once and then ranked. Our theory therefore does not cover adaptive search, self-refinement, tree search, or agentic planning, whose candidate distributions can depend on previous proxy evaluations. By repeatedly steering generation toward high proxy scores, such procedures may amplify residual safety-filter errors more strongly than i.i.d. scaling, but our results do not establish or quantify this behavior. Extending the contamination–amplification analysis to such feedback-driven procedures is an important direction for future work. 
+
+## 8. Conclusion 
+
+We studied safety hacking in constrained inference-time scaling, where reward maximization can amplify residual errors in a learned safety filter. The filter may admit unsafe responses, and downstream selection may favor them more strongly as inference compute grows. Our finite-N analysis shows that this behavior is governed by the joint reward tails of safe and unsafe proxy-feasible responses, and our asymptotic result establishes that a heavier unsafe tail can make safety hacking nearly certain even when average proxy errors are small. Coverage control yields an N-independent bound, instantiated by cPes , but cannot remove unsafe responses already admitted by the filter. Toy and language-model experiments provide finite-budget evidence for this amplification mechanism, while the reward-proxy ablation shows that ranking within the contaminated feasible set is central to the observed outcome. The analysis therefore separates two requirements for safe inference-time scaling: controlling entry into the feasible set and controlling downstream concentration. Extending this characterization to adaptive and agentic search remains an important direction for future work.  
+
+> 11 Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+## References 
+
+Dario Amodei, Chris Olah, Jacob Steinhardt, Paul Christiano, John Schulman, and Dan Mané. Concrete problems in AI safety. arXiv preprint arXiv:1606.06565 , 2016. Yuntao Bai, Saurav Kadavath, Sandipan Kundu, Amanda Askell, Jackson Kernion, Andy Jones, Anna Chen, Anna Goldie, Azalia Mirhoseini, Cameron McKinnon, et al. Constitutional ai: Harmlessness from ai feedback. arXiv preprint arXiv:2212.08073 , 2022. Patrick Chao, Edoardo Debenedetti, Alexander Robey, Maksym Andriushchenko, Francesco Croce, Vikash Sehwag, Edgar Dobriban, Nicolas Flammarion, George J Pappas, Florian Tramer, et al. Jailbreakbench: An open robustness benchmark for jailbreaking large language models. Advances in Neural Information Processing Systems , 37:55005–55029, 2024. Yangyi Chen, Hongcheng Gao, Ganqu Cui, Fanchao Qi, Longtao Huang, Zhiyuan Liu, and Maosong Sun. Why should adversarial perturbations be imperceptible? rethink the research paradigm in adversarial nlp. In Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing , pages 11222–11237, 2022. Yaswanth Chittepu, Ativ Joshi, Sohini Chintala, and Scott Niekum. Safe inference-time alignment via lagrangian reward augmentation. arXiv preprint arXiv:2607.02781 , 2026. Juntao Dai, Xuehai Pan, Ruiyang Sun, Jiaming Ji, Xinbo Xu, Mickel Liu, Yizhou Wang, and Yaodong Yang. Safe rlhf: Safe reinforcement learning from human feedback. In International Conference on Learning Representations , volume 2024, pages 50750–50777, 2024. Leo Gao, John Schulman, and Jacob Hilton. Scaling laws for reward model overoptimization. In 
+
+International Conference on Machine Learning , pages 10835–10866. PMLR, 2023. Dan Hendrycks, Nicholas Carlini, John Schulman, and Jacob Steinhardt. Unsolved problems in ML safety. arXiv preprint arXiv:2109.13916 , 2021. Audrey Huang, Adam Block, Qinghua Liu, Nan Jiang, Akshay Krishnamurthy, and Dylan J Foster. Is best-of-n the best of them? coverage, scaling, and optimality in inference-time alignment. In 
+
+International Conference on Machine Learning , pages 25075–25126. PMLR, 2025. John Hughes, Sara Price, Aengus Lynch, Rylan Schaeffer, Fazl Barez, Sanmi Koyejo, Henry Sleight, Erik Jones, Ethan Perez, and Mrinank Sharma. Bestof-n jailbreaking. arXiv preprint arXiv:2412.03556 ,2024. Hakan Inan, Kartikeya Upasani, Jianfeng Chi, Rashi Rungta, Krithika Iyer, Yuning Mao, Michael Tontchev, Qing Hu, Brian Fuller, Davide Testuggine, et al. Llama guard: Llm-based input-output safeguard for human-ai conversations. arXiv preprint arXiv:2312.06674 , 2023. Xiaotong Ji, Shyam Sundhar Ramesh, Matthieu Zimmer, Ilija Bogunovic, Jun Wang, and Haitham Bou Ammar. On almost surely safe alignment of large language models at inference-time. arXiv preprint arXiv:2502.01208 , 2025. Yuu Jinnai, Tetsuro Morimura, Kaito Ariu, and Kenshi Abe. Regularized best-of-n sampling with minimum bayes risk objective for language model alignment. In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) , pages 9321–9347, 2025. Hadi Khalaf, Claudio Mayrink Verdun, Alex Oesterling, Himabindu Lakkaraju, and Flavio Calmon.  
+
+> 12 Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+Inference-time reward hacking in large language models. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. URL https://openreview.net/forum?id= hSX7Dd8dxy .Chris Yuhao Liu, Liang Zeng, Yuzhen Xiao, Jujie He, Jiacai Liu, Chaojie Wang, Rui Yan, Wei Shen, Fuxiang Zhang, Jiacheng Xu, Yang Liu, and Yahui Zhou. Skywork-reward-v2: Scaling preference data curation via human-ai synergy. arXiv preprint arXiv:2507.01352 , 2025. AI @ Meta Llama Team. The llama 3 herd of models, 2024. URL https://arxiv.org/abs/2407. 21783 .David Manheim and Scott Garrabrant. Categorizing variants of goodhart’s law. arXiv preprint arXiv:1803.04585 , 2018. Mantas Mazeika, Long Phan, Xuwang Yin, Andy Zou, Zifan Wang, Norman Mu, Elham Sakhaee, Nathaniel Li, Steven Basart, Bo Li, et al. Harmbench: A standardized evaluation framework for automated red teaming and robust refusal. arXiv preprint arXiv:2402.04249 , 2024. Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al. Training language models to follow instructions with human feedback. Advances in neural information processing systems , 35:27730–27744, 2022. Aaditya Singh, Adam Fry, Adam Perelman, Adam Tart, Adi Ganesh, Ahmed El-Kishky, Aidan McLaugh-lin, Aiden Low, AJ Ostrow, Akhila Ananthram, et al. Openai gpt-5 system card. arXiv preprint arXiv:2601.03267 , 2025. Joar Skalse, Nikolaus Howe, Dmitrii Krasheninnikov, and David Krueger. Defining and characterizing reward gaming. Advances in neural information processing systems , 35:9460–9471, 2022. Charlie Snell, Jaehoon Lee, Kelvin Xu, and Aviral Kumar. Scaling llm test-time compute optimally can be more effective than scaling model parameters. arXiv preprint arXiv:2408.03314 , 2024. Alexandra Souly, Qingyuan Lu, Dillon Bowen, Tu Trinh, Elvis Hsieh, Sana Pandey, Pieter Abbeel, Justin Svegliato, Scott Emmons, Olivia Watkins, et al. A strongreject for empty jailbreaks. Advances in Neural Information Processing Systems , 37:125416–125440, 2024. Nisan Stiennon, Long Ouyang, Jeffrey Wu, Daniel Ziegler, Ryan Lowe, Chelsea Voss, Alec Radford, Dario Amodei, and Paul F Christiano. Learning to summarize with human feedback. Advances in neural information processing systems , 33:3008–3021, 2020. Qwen Team. Qwen2.5: A party of foundation models, September 2024. URL https://qwenlm. github.io/blog/qwen2.5/ .Haoyu Wang, Zeyu Qin, Li Shen, Xueqian Wang, Dacheng Tao, and Minhao Cheng. Safety reasoning with guidelines. In Forty-second International Conference on Machine Learning , 2025. Wenjun Zeng, Yuchi Liu, Ryan Mullins, Ludovic Peran, Joe Fernandez, Hamza Harkous, Karthik Narasimhan, Drew Proud, Piyush Kumar, Bhaktipriya Radharapu, Olivia Sturman, and Oscar Wahltinez. Shieldgemma: Generative ai content moderation based on gemma, 2024a. URL 
+
+https://arxiv.org/abs/2407.21772 .Wenjun Zeng, Yuchi Liu, Ryan Mullins, Ludovic Peran, Joe Fernandez, Hamza Harkous, Karthik Narasimhan, Drew Proud, Piyush Kumar, Bhaktipriya Radharapu, et al. Shieldgemma: Generative ai content moderation based on gemma. arXiv preprint arXiv:2407.21772 , 2024b.  
+
+> 13 Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric Xing, et al. Judging llm-as-a-judge with mt-bench and chatbot arena. 
+
+Advances in neural information processing systems , 36:46595–46623, 2023. 
+
+## A. Appendix 
+
+A.1. Operational Finite-N Safety-hacking Criteria Corollary A.1. Under the conditions of Theorem 4.1, the following hold. 1. If there exist t ∈ R, αA ∈ [0, 1 ), and γB > 0 such that N̂︀ ΨA(t; x, b) ≤ αA and N̂︀ ΨB(t; x, b) ≥ γB,then 
+
+P[︁̂︀ yBoN  
+
+> N
+
+(x) ∈ B(x, b)]︁ ≥ (1 − αA)(︀ 1 − e−γB)︀ . (23) 
+
+2. If there exist s ∈ R, αB ≥ 0, and γA > 0 such that N̂︀ ΨB(s; x, b) ≤ αB, and N̂︀ ΨA(s; x, b) ≥ γA,then 
+
+P[︁̂︀ yBoN  
+
+> N
+
+(x) ∈ B(x, b)]︁ ≤ αB + e−γA . (24) 
+
+Proof. Let ψA =̂︀ ΨA(t; x, b) and ψB =̂︀ ΨB(t; x, b). From Theorem 4.1, ̂︀ 
+
+LN (t; x, b) = ( 1 − ψA)N[︃ 1 −(︂ 1 − ψB
+
+1 − ψA)︂ 
+
+> N
+
+]︃ 
+
+. (25) If NψA ≤ αA < 1, then (1 − ψA)N ≥ 1 − NψA ≥ 1 − αA. Since ψB/(1 − ψA) ≥ ψB and NψB ≥ γB,
+
+1 −(︂ 1 − ψB
+
+1 − ψA)︂ 
+
+> N
+
+≥ 1 − e−NψB ≥ 1 − e−γB . (26) This proves the first claim. For the second claim, let ψA =̂︀ ΨA(s; x, b) and ψB =̂︀ ΨB(s; x, b). The upper bound gives ̂︀ 
+
+UN (s; x, b) ≤[︀ 1 − (1 − ψB)N]︀ + ( 1 − ψA)N ≤ NψB + e−NψA ≤ αB + e−γA . (27) This completes the proof. Corollary A.1 gives an experimentally testable diagnostic: as N increases, estimate whether the effective unsafe-but-feasible score-tail mass N̂︀ ΨB( · ) crosses a constant before the true-positive score-tail mass 
+
+N̂︀ ΨA( · ) does. If so, CBo N should display compute-amplified safety hacking. 
+
+A.2. Prompt-distribution Amplification Corollary A.2 (Prompt-distribution amplification) . Let X ∼ D be a prompt drawn from a prompt distribution, and fix b ∈ (0, 1 ]. For each prompt x, define the conditional CBo N hacking probability, where the probability is over the N candidate samples drawn from πref ( · | x), by 
+
+pN (x) := Py1: N ∼πref ( · |x)[︁̂︀ yBoN  
+
+> N
+
+(x) ∈ B(x, b)]︁ . (28) 
+
+Suppose there exist a measurable set of prompts E ⊆ X and ρ ∈ [0, 1 ] such that 
+
+PX∼D [X ∈ E ] ≥ ρ, 
+
+> 14 Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+and, for every x ∈ E, there exists a sequence tN (x) ∈ R satisfying N̂︀ ΨA(tN (x); x, b) → 0 and 
+
+N̂︀ ΨB(tN (x); x, b) → ∞. Then the aggregate safety-hacking probability satisfies 
+
+lim inf  
+
+> N→∞
+
+P[︁̂︀ yBoN  
+
+> N
+
+(X) ∈ B(X, b)]︁ ≥ ρ, (29) 
+
+where the probability is over X ∼ D and the candidate samples drawn conditionally from πref ( · | X).Proof. By Theorem 4.2, for every x ∈ E we have pN (x) → 1. Moreover, 0 ≤ pN (x) ≤ 1 for all x and N.Therefore 
+
+P[︁̂︀ yBoN  
+
+> N
+
+(X) ∈ B(X, b)]︁ = EX∼D [pN (X)] ≥ EX∼D [pN (X)I{X ∈ E } ]. (30) Fatou’s lemma gives 
+
+lim inf  
+
+> N→∞
+
+E[pN (X)I{X ∈ E } ] ≥ E[︂ lim inf  
+
+> N→∞
+
+pN (X)I{X ∈ E } ]︂ (31) 
+
+= PX∼D [X ∈ E ] ≥ ρ. (32) This proves the claim. Corollary A.2 lifts the fixed-prompt tail condition to distribution-level evaluations: if a positive-measure subset of prompts is tail-amplifiable, then the average safety-hacking rate cannot vanish as the search budget grows. 
+
+A.3. Direct score dominance Remark A.3 (Direct score dominance) . If there exists a threshold t ∈ R such that ̂︀ ΨA(t; x, b) = 0 and ̂︀ 
+
+ΨB(t; x, b) > 0, then Theorem 4.2 applies with the constant sequence tN = t, and 
+
+P[̂︀ yBoN  
+
+> N
+
+(x) ∈ B(x, b)] → 1. (33) 
+
+This holds, for example, when a positive-reference-mass subset of B(x, b) receives learned scores above the essential upper endpoint on A(x, b).
+
+A.4. Gaussian error-tail separation Definition A.4 (Proxy-feasible reward range) . Fix x ∈ X and b ∈ (0, 1 ] with ̂︀ S+(x, b)̸ = ∅. Define 
+
+∆(x, b) := sup   
+
+> y∈̂︀ S+(x,b)
+
+r⋆(x, y) − inf   
+
+> y∈̂︀ S+(x,b)
+
+r⋆(x, y). (34) 
+
+Assumption A.5 (Local bounded reward range) . For the prompt x ∈ X and threshold b ∈ (0, 1 ] under consideration, ̂︀ S+(x, b)̸ = ∅ and ∆(x, b) < ∞.
+
+Proposition A.6 (Gaussian error-tail separation) . We define the pointwise proxy errors 
+
+εr (x, y) :=̂︀ r(x, y) − r⋆(x, y), (35) 
+
+εg(x, y) :=̂︀ g(x, y) − g⋆(x, y). (36)  
+
+> 15 Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+Also, for ♢ ∈ { A, B}, define 
+
+η♢(x, b) := Py∼πref ( · |x)[y ∈ ♢(x, b)] . (37) 
+
+Fix x ∈ X and b ∈ (0, 1 ], and suppose Assumption A.5 holds. Assume that ηA(x, b) > 0 and ηB(x, b) > 0.Suppose further that there exist constants 0 < σA(x) < σB(x) such that the conditional upper tails of the reward-proxy error satisfy, as u → ∞,
+
+log P [εr (x, y) > u | y ∈ A(x, b)] = − u2
+
+2σ2
+
+> A
+
+(x) + o(u2), (38) 
+
+log P [εr (x, y) > u | y ∈ B(x, b)] = − u2
+
+2σ2
+
+> B
+
+(x) + o(u2). (39) 
+
+Let 
+
+R⋆
+
+> A
+
+(x, b) := sup 
+
+> y∈A(x,b)
+
+r⋆(x, y). (40) 
+
+Then, for any constant c ∈(︁ √2σA(x), √2σB(x))︁ , the sequence 
+
+τN := R⋆
+
+> A
+
+(x, b) + c√︀ log N (41) 
+
+satisfies the score-tail separation condition in Theorem 4.2; that is, 
+
+N̂︀ ΨA(τN ; x, b) → 0, N̂︀ ΨB(τN ; x, b) → ∞. (42) 
+
+Consequently, 
+
+lim  
+
+> N→∞
+
+P[︁̂︀ yBoN  
+
+> N
+
+(x) ∈ B(x, b)]︁ = 1. (43) 
+
+The fixed shift ∆(x, b) only enters when converting reward-error tails into learned-score tails, and it does not change the Gaussian large-deviation exponent. Proof. For ♢ ∈ { A, B} and t ∈ R, define the joint reward-error tail 
+
+Ψ♢(t; x, b) := Py∼πref ( · |x) [y ∈ ♢(x, b), εr (x, y) > t] . (44) These tails combine the reference probability of a class with the upper-tail behavior of reward-proxy overestimation inside that class. For ♢ ∈ { A, B}, we can write 
+
+Ψ♢(u; x, b) = η♢(x, b)P [εr (x, y) > u | y ∈ ♢(x, b)] .
+
+Let 
+
+tN = c√︀ log N, c ∈ (√2σA(x), √2σB(x)) ,
+
+and set 
+
+τN = R⋆
+
+> A
+
+(x, b) + tN . 
+
+> 16 Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+Using the assumed tail exponent on A(x, b),
+
+log (NΨA(tN ; x, b)) = log N + log ηA(x, b) − t2
+
+> N
+
+2σ2
+
+> A
+
+(x) + o(t2 
+
+> N
+
+) (45) 
+
+=(︂ 1 − c2
+
+2σ2
+
+> A
+
+(x) + o(1))︂ log N + O(1). (46) Since c > √2σA(x), the coefficient of log N is negative, and therefore 
+
+NΨA(tN ; x, b) → 0. (47) Moreover, for y ∈ A(x, b), r⋆(x, y) ≤ R⋆
+
+> A
+
+(x, b). Hence 
+
+{y ∈ A(x, b),̂︀ r(x, y) > τN } ⊆ { y ∈ A(x, b), εr (x, y) > tN }, (48) and so 
+
+N̂︀ ΨA(τN ; x, b) ≤ NΨA(tN ; x, b) → 0. (49) For the B tail, since ∆(x, b) < ∞ by assumption, 
+
+(tN + ∆(x, b)) 2 = c2 log N + o(log N). (50) Using the assumed tail exponent on B(x, b),
+
+log (NΨB(tN + ∆(x, b); x, b)) = log N + log ηB(x, b) − (tN + ∆(x, b)) 2
+
+2σ2
+
+> B
+
+(x) + o(︀ (tN + ∆(x, b)) 2)︀ (51) 
+
+=(︂ 1 − c2
+
+2σ2
+
+> B
+
+(x) + o(1))︂ log N + O(1). (52) Since c < √2σB(x), the coefficient of log N is positive, and therefore 
+
+NΨB(tN + ∆(x, b); x, b) → ∞. (53) For every y ∈ B(x, b), we have y ∈̂︀ S+(x, b) and A(x, b) ⊆̂︀ S+(x, b). Hence R⋆
+
+> A
+
+(x, b) ≤
+
+sup z∈̂︀ S+ (x,b) r⋆(x, z) and r⋆(x, y) ≥ inf z∈̂︀ S+ (x,b) r⋆(x, z), so 
+
+R⋆
+
+> A
+
+(x, b) − r⋆(x, y) ≤ ∆(x, b). (54) Thus 
+
+{y ∈ B(x, b), εr (x, y) > tN + ∆(x, b)} ⊆ { y ∈ B(x, b),̂︀ r(x, y) > τN }, (55) and hence 
+
+N̂︀ ΨB(τN ; x, b) ≥ NΨB(tN + ∆(x, b); x, b) → ∞. (56) Therefore the score-tail separation conditions in Theorem 4.2 hold with threshold τN . The final claim follows from Theorem 4.2. 
+
+Remark A.7 (Boundary behavior) . When ̂︀ ΨA and ̂︀ ΨB are asymptotically comparable on the relevant score scale, finer tail constants and class masses determine the limit. In error-tail conditions such as Proposition A.6, the finite reward range ∆(x, b) can affect boundary constants without changing the Gaussian exponent away from the boundary.  
+
+> 17 Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+Algorithm 1 Constrained Pessimistic Inference ( cPes ), sample implementation 
+
+Require: Prompt x, reference policy πref ( · | x), proxies ̂︀ r,̂︀ g, threshold b, parameter β, clipping levels ̂︀ 
+
+Rmin <̂︀ Rmax , budget N 
+
+> 1:
+
+Sample y1, . . . , yN
+
+> iid
+
+∼ πref ( · | x) 
+
+> 2:
+
+Set IN (x, b) = {i ∈ [N] :̂︀ g(x, yi) ≥ b} and mN = |I N (x, b)| 
+
+> 3:
+
+if mN = 0 then  
+
+> 4:
+
+Return a predefined fallback, e.g., abstention  
+
+> 5:
+
+end if  
+
+> 6:
+
+Set ̃︀ ri = clip (̂︀ r(x, yi),̂︀ Rmin ,̂︀ Rmax ) for each i ∈ I N (x, b) 
+
+> 7:
+
+Find ˆλN (x) ∈ [̂︀ Rmin − β,̂︀ Rmax ) such that 
+
+1
+
+mN∑︁ i∈I N (x,b)
+
+ReLU (︃̃︀ ri − ˆλN (x)
+
+β)︃ = 1 
+
+> 8:
+
+Set ˆpi = 1 
+
+> mN
+
+ReLU (︁ ̃︀ ri − ˆλN (x)
+
+> β
+
+)︁ for each i ∈ I N (x, b) 
+
+> 9:
+
+Sample I ∈ I N (x, b) with probability ˆpi and return yI
+
+A.5. Sample implementation and consistency of cPes 
+
+Proposition A.8 (Consistency of sample cPes ). Fix x ∈ X and b ∈ (0, 1 ] with q(x, b) > 0. Let ˆπN ( · | x)
+
+be the random output distribution induced by Algorithm 1 on mN > 0. Then mN → ∞ almost surely, 
+
+ˆλN (x) → λ(x) almost surely, and for every bounded f : Y → R,
+
+Ey∼ ˆπN ( · |x)[ f (y)] → Ey∼ ˆπ( · |x)[ f (y)] almost surely . (57) 
+
+Proof. Let mN =∑︀ Ni=1 I{yi ∈̂︀ S+(x, b)}. Since mN /N → q(x, b) > 0 almost surely, mN → ∞ almost surely and mN > 0 eventually. Conditional on belonging to ̂︀ S+(x, b), the feasible samples are i.i.d. from π♯
+
+> ref
+
+( · | x). Define 
+
+hN (λ) := 1
+
+mN∑︁ i∈I N (x,b)
+
+ReLU (︂̃︀ r(x, yi) − λβ)︂ , (58) 
+
+h(λ) := Eπ♯
+
+> ref
+
+ReLU (︂̃︀ r(x, y) − λβ)︂ . (59) The functions indexed by λ ∈ [̂︀ Rmin − β,̂︀ Rmax ] are uniformly bounded and 1/ β-Lipschitz in λ. A finite-grid argument combined with the strong law of large numbers yields 
+
+sup   
+
+> λ∈[̂︀ Rmin −β,̂︀ Rmax ]
+
+|hN (λ) − h(λ)| → 0 almost surely . (60) By Proposition 5.2, the equation h(λ) = 1 has a unique solution λ(x). Uniform convergence and monotonicity imply that any empirical solution ˆλN (x) to hN (λ) = 1 converges almost surely to λ(x).For any bounded f , write 
+
+E ˆπN [ f ] = 1
+
+mN∑︁ i∈I N (x,b)
+
+f (yi) ReLU (︃̃︀ r(x, yi) − ˆλN (x)
+
+β)︃ . (61)  
+
+> 18 Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+The summands are uniformly bounded, and the weights converge uniformly in the multiplier because of the Lipschitz property. Applying the strong law again and using ˆλN (x) → λ(x) gives 
+
+E ˆπN [ f ] → Eπ♯
+
+> ref
+
+[︂ f (y) ReLU (︂̃︀ r(x, y) − λ(x)
+
+β)︂]︂ = E ˆπ [ f ]. (62) 
+
+A.6. Utility tradeoff of cPes 
+
+Bounded coverage alone can be achieved by avoiding reward optimization altogether. We therefore quantify the utility cost of coverage control. For a policy π, let 
+
+J(π; x) := Ey∼π( · |x)[r⋆(x, y)] . (63) Define the clipped-score RMSE under the proxy-feasible reference by 
+
+¯ε♯
+
+> r,clip
+
+(x) :=√︁ Ey∼π♯ 
+
+> ref (
+
+· |x) [( ̃︀ r(x, y) − r⋆(x, y)) 2]. (64) This quantity includes both reward-proxy error and any distortion introduced by clipping. 
+
+Proposition A.9 (Utility tradeoff within the proxy-feasible set) . Suppose ¯ε♯
+
+> r,clip
+
+(x) < ∞. For any comparator policy ρ( · | x) ≪ π♯
+
+> ref
+
+( · | x), the population cPes policy satisfies 
+
+J(ρ; x) − J( ˆπ; x) ≤ β
+
+2(︀ C♯
+
+> ρ
+
+(x) − 1)︀ + ¯ε♯
+
+> r,clip
+
+(x)
+
+⎛⎝√︁ C♯
+
+> ρ
+
+(x) + √︃ 1 +̂︀ Rspan 
+
+β
+
+⎞⎠ . (65) The bound makes explicit the role of β. Smaller β permits more aggressive reward optimization but allows greater concentration relative to π♯
+
+> ref
+
+, while larger β keeps the policy closer to the proxy-feasible reference distribution. 
+
+A.7. Oracle regret decomposition 
+
+For the oracle comparison below, define the ambient coverage coefficient 
+
+Cπ (x) :=∑︁ 
+
+> y∈Y
+
+π(y | x)2
+
+πref (y | x) . (66) For a comparator π⋆, let α⋆(x, b) := π⋆(̂︀ S+(x, b) | x) and, when α⋆(x, b) > 0, define 
+
+π⋆,♯(y | x) := π⋆(y | x)I{y ∈̂︀ S+(x, b)}
+
+α⋆(x, b) . (67) 
+
+Theorem A.10 (Oracle regret decomposition) . Fix b ∈ (0, 1 ) and suppose 0 ≤ r⋆(x, y) ≤ Rmax . Let 
+
+π⋆ ≪ πref satisfy supp (π⋆) ⊆ S ⋆
+
+> +
+
+(x); if α⋆(x, b) > 0, assume also π⋆,♯ ≪ π♯
+
+> ref
+
+. If α⋆(x, b) > 0, then 
+
+J(π⋆; x) − J( ˆπ; x) ≤[︃ β
+
+2(︀ C♯ 
+
+> π⋆,♯
+
+(x) − 1)︀ + ¯ε♯
+
+> r,clip
+
+(x)
+
+⎛⎝√︁ C♯ 
+
+> π⋆,♯
+
+(x) + √︃ 1 +̂︀ Rspan 
+
+β
+
+⎞⎠]︃ 
+
++ Rmax √︀ Cπ⋆ (x) ¯εg(x)
+
+1 − b . (68)  
+
+> 19 Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+If α⋆(x, b) = 0, then 
+
+J(π⋆; x) − J( ˆπ; x) ≤ Rmax √︀ Cπ⋆ (x) ¯εg(x)
+
+1 − b , (69) 
+
+that is, the bracketed proxy-feasible comparison term is omitted. Proof. Decompose the regret of the truly safe comparator π⋆:
+
+J(π⋆; x) − J( ˆπ; x) = Eπ⋆ [r⋆(x, y)I{y ∈̂︀ S+(x, b)}] − J( ˆπ; x) (70) 
+
++ Eπ⋆ [r⋆(x, y)I{y /∈̂︀ S+(x, b)}]. (71) If α⋆(x, b) > 0, then the first term is at most J(π⋆,♯; x) − J( ˆπ; x) because α⋆(x, b) ≤ 1 and rewards are nonnegative. Applying Proposition A.9 with ρ = π⋆,♯ gives the bracketed term in (68). If α⋆(x, b) = 0,the first term is −J( ˆπ; x) ≤ 0, so the bracketed term is omitted. It remains to control the second term. Since supp (π⋆) ⊆ S ⋆
+
+> +
+
+(x), the event {y /∈̂︀ S+(x, b)} under π⋆ is a false negative of the safety proxy. On this event, g⋆(x, y) = 1 and ̂︀ g(x, y) < b, so |εg(x, y)| > 1 − b.Hence 
+
+Pπref [y ∈ S ⋆
+
+> +
+
+(x), y /∈̂︀ S+(x, b)] ≤ ¯εg(x)2
+
+(1 − b)2 . (72) By Cauchy–Schwarz and absolute continuity, 
+
+Pπ⋆ [y /∈̂︀ S+(x, b)] = Eπref [︂ π⋆(y | x)
+
+πref (y | x) I{y ∈ S ⋆
+
+> +
+
+(x), y /∈̂︀ S+(x, b)}]︂ (73) 
+
+≤√︁ Cπ⋆ (x)√︁ Pπref [y ∈ S ⋆
+
+> +
+
+(x), y /∈̂︀ S+(x, b)] (74) 
+
+≤√︀ Cπ⋆ (x) ¯εg(x)
+
+1 − b . (75) Using r⋆(x, y) ≤ Rmax proves 
+
+Eπ⋆ [r⋆(x, y)I{y /∈̂︀ S+(x, b)}] ≤ Rmax √︀ Cπ⋆ (x) ¯εg(x)
+
+1 − b . (76) Combining the bounds proves the theorem. 
+
+A.8. Proof of Theorem 4.1 
+
+Proof. Suppress (x, b) in the notation. For a single sample y, define ̂︀ 
+
+EA(t) := {y ∈ A,̂︀ r(x, y) > t}, (77) ̂︀ 
+
+EB(t) := {y ∈ B,̂︀ r(x, y) > t}. (78) The sets A and B are disjoint, so these two one-sample events are disjoint. If among N samples no event ̂︀ EA(t) occurs and at least one event ̂︀ EB(t) occurs, then every true-positive proxy-feasible sample has learned score at most t, while some unsafe-but-feasible sample has learned score strictly larger  
+
+> 20 Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+than t. Therefore the CBo N maximizer over the proxy-feasible samples lies in B. The probability of this sufficient event is (︀ 
+
+1 −̂︀ ΨA(t))︀ N −(︀ 1 −̂︀ ΨA(t) −̂︀ ΨB(t))︀ N , (79) which proves the lower bound. For the upper bound, consider the event that no unsafe-but-feasible sample satisfies ̂︀ r(x, y) > s and at least one true-positive proxy-feasible sample satisfies ̂︀ r(x, y) > s. On this event, some sample in A
+
+strictly beats every sample in B, so CBo N cannot hack. The probability of this non-hacking certificate is (︀ 
+
+1 −̂︀ ΨB(s))︀ N −(︀ 1 −̂︀ ΨB(s) −̂︀ ΨA(s))︀ N . (80) Hence the hacking probability is at most its complement, 
+
+1 −(︀ 1 −̂︀ ΨB(s))︀ N +(︀ 1 −̂︀ ΨB(s) −̂︀ ΨA(s))︀ N , (81) which is (9). 
+
+A.9. Proof of Theorem 4.2 
+
+Proof. Let aN =̂︀ ΨA(tN ; x, b) and dN =̂︀ ΨB(tN ; x, b). The assumptions imply Na N → 0 and Nd N → ∞.Therefore (1 − aN )N → 1 and (1 − aN − dN )N ≤ exp [−N(aN + dN )] → 0. The lower bound in Theorem 4.1 converges to one, proving the claim. 
+
+A.10. Proof of Corollary 4.3 
+
+Proof. Fix x and suppress the dependence on x in the notation. Let the output space contain two outputs, 
+
+Y = {yA, yB},
+
+with reference probabilities 
+
+πref (yA | x) = 1 − ε, πref (yB | x) = ε.
+
+Define the true and learned safety functions by 
+
+g⋆(x, yA) = 1, ̂︀ g(x, yA) = 1, 
+
+and 
+
+g⋆(x, yB) = 0, ̂︀ g(x, yB) = b.
+
+Then both outputs are proxy-feasible, since ̂︀ g(x, yA) ≥ b and ̂︀ g(x, yB) ≥ b. Moreover, 
+
+A(x, b) = {yA}, B(x, b) = {yB},
+
+and therefore 
+
+Py∼πref ( · |x)[y ∈ B(x, b)] = ε.
+
+The safety-proxy RMSE is √︂ 
+
+Eπref [︁ (̂︀ g(x, y) − g⋆(x, y)) 2]︁ = √εb2 = b√ε. 
+
+> 21 Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+Now define the true and learned reward functions by 
+
+r⋆(x, yA) = 0, ̂︀ r(x, yA) = 0, 
+
+and 
+
+r⋆(x, yB) = 0, ̂︀ r(x, yB) = ξ.
+
+Thus the reward-proxy RMSE is √︂ 
+
+Eπref [︁ (̂︀ r(x, y) − r⋆(x, y)) 2]︁ =√︁ εξ 2 = ξ√ε.
+
+Since ̂︀ r(x, yB) >̂︀ r(x, yA), constrained Best-of-N returns yB if and only if at least one of the N sampled candidates equals yB. All sampled candidates are proxy-feasible, so there is no abstention event. Hence 
+
+P[︁̂︀ yBoN  
+
+> N
+
+(x) ∈ B(x, b)]︁ = 1 − (1 − ε)N .
+
+Using (1 − ε)N ≤ exp (−Nε) gives 
+
+P[︁̂︀ yBoN  
+
+> N
+
+(x) ∈ B(x, b)]︁ ≥ 1 − exp (−Nε).
+
+Therefore, if 
+
+N ≥ ε−1 log (1/ δ),
+
+then the safety-hacking probability is at least 1 − δ. This proves the claim. 
+
+A.11. Proof of Theorem 5.1 
+
+Proof. Let 
+
+w(y) := π(y | x)
+
+π♯
+
+> ref
+
+(y | x) , κ := π♯
+
+> ref
+
+(B(x, b) | x).
+
+Since Eπ♯
+
+> ref
+
+[w] = 1 and Eπ♯
+
+> ref
+
+[w2] = C♯ 
+
+> π
+
+(x),
+
+Eπ♯
+
+> ref
+
+[( w − 1)2] = C♯ 
+
+> π
+
+(x) − 1. (82) Moreover, 
+
+Py∼π( · |x)[y ∈ B(x, b)] − κ = Eπ♯
+
+> ref
+
+[( w(y) − 1)I{y ∈ B(x, b)}] (83) 
+
+= Eπ♯
+
+> ref
+
+[︀ (w(y) − 1)(︀ I{y ∈ B(x, b)} − κ)︀]︀ , (84) where the second equality uses Eπ♯
+
+> ref
+
+[w − 1] = 0. By Cauchy–Schwarz, ⃒⃒⃒ 
+
+Py∼π( · |x)[y ∈ B(x, b)] − κ⃒⃒⃒ ≤√︁ C♯ 
+
+> π
+
+(x) − 1√︁ κ(1 − κ). (85) This proves the bound.  
+
+> 22 Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+By the definition of π♯
+
+> ref
+
+, we have 
+
+Py∼π♯ 
+
+> ref (
+
+· |x)[y ∈ B(x, b)] = Ey∼π♯ 
+
+> ref (
+
+· |x) [I{y ∈ B(x, b)}] (86) 
+
+= Ey∼πref ( · |x)[︃ I{y ∈ B(x, b)}I{y ∈̂︀ S+(x, b)}
+
+q(x, b)]︃ (87) 
+
+= Ey∼πref ( · |x) [I{y ∈ B(x, b)}]
+
+q(x, b) . (88) If y ∈ B(x, b), then g⋆(x, y) = 0 and ̂︀ g(x, y) ≥ b, so |εg(x, y)| ≥ b. Hence 
+
+I{y ∈ B(x, b)} ≤ εg(x, y)2
+
+b2 . (89) Taking expectation under πref ( · | x) gives 
+
+πref (B(x, b) | x) ≤ ¯εg(x)2
+
+b2 . (90) Combining this inequality with κ(x, b) = πref (B(x, b) | x)/q(x, b) gives 
+
+κ(x, b) ≤ ¯εg(x)2
+
+b2q(x, b) , (91) which proves (16). 
+
+A.12. Proof of Proposition 5.2 
+
+Proof. Let μ(y) = π♯
+
+> ref
+
+(y | x) and write w(y) = π(y | x)/μ(y). Then π ≪ μ and ∑︀ y π(y | x) = 1 are equivalent to w(y) ≥ 0 and Eμ[w] = 1. The objective in (18) becomes 
+
+max   
+
+> w≥0, Eμ[w]= 1
+
+Ey∼μ[︂ w(y)̃︀ r(x, y) − β
+
+2 w(y)2]︂ . (92) This is strictly concave in w, so the optimizer is unique. Introduce a Lagrange multiplier λ for Eμ[w] = 1. Pointwise maximization of the Lagrangian over 
+
+w(y) ≥ 0 gives 
+
+wλ(y) = (︂̃︀ r(x, y) − λβ)︂ +
+
+= ReLU (︂̃︀ r(x, y) − λβ)︂ . (93) The multiplier must satisfy Eμ[wλ] = 1.It remains to show existence and uniqueness of λ. Define 
+
+h(λ) := Eμ[︂ ReLU (︂̃︀ r(x, y) − λβ)︂]︂ . (94) The function h is continuous and nonincreasing. By construction, h(̂︀ Rmax ) = 0, while 
+
+h(̂︀ Rmin − β) = Eμ[︃̃︀ r(x, y) −̂︀ Rmin + ββ]︃ ≥ 1. (95)  
+
+> 23 Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+Thus a solution exists in [̂︀ Rmin − β,̂︀ Rmax ). It is unique because whenever h(λ) > 0, the event {̃︀ r(x, y) >
+
+λ} has positive μ-probability, so h is strictly decreasing on the relevant level set. Finally, let w(y) = wλ(x)(y). Since Eμ[w] = 1 and λ(x) ≥̂︀ Rmin − β,
+
+0 ≤ w(y) ≤̂︀ Rmax − λ(x)
+
+β ≤ 1 +̂︀ Rspan 
+
+β . (96) Therefore 
+
+C♯ 
+
+> ˆπ
+
+(x) = Eμ[w(y)2] ≤(︀ sup 
+
+> y
+
+w(y))︀ Eμ[w(y)] ≤ 1 +̂︀ Rspan 
+
+β . (97) 
+
+A.13. Proof of Proposition A.9 
+
+Proof. Let μ = π♯
+
+> ref
+
+( · | x). By optimality of ˆπ in (18), for any ρ( · | x) ≪ μ,
+
+Eρ[̃︀ r(x, y)] − E ˆπ [̃︀ r(x, y)] ≤ β
+
+2(︀ C♯
+
+> ρ
+
+(x) − 1)︀ , (98) where we dropped the nonpositive term − β 
+
+> 2
+
+(C♯ 
+
+> ˆπ
+
+(x) − 1). Therefore 
+
+J(ρ; x) − J( ˆπ; x) ≤ β
+
+2(︀ C♯
+
+> ρ
+
+(x) − 1)︀ +⃒⃒ Eρ[̃︀ r(x, y) − r⋆(x, y)] ⃒⃒ + |E ˆπ [̃︀ r(x, y) − r⋆(x, y)] | . (99) Cauchy–Schwarz under μ gives ⃒⃒ 
+
+Eρ[̃︀ r(x, y) − r⋆(x, y)] ⃒⃒ ≤ ¯ε♯
+
+> r,clip
+
+(x)√︁ C♯
+
+> ρ
+
+(x), (100) 
+
+|E ˆπ [̃︀ r(x, y) − r⋆(x, y)] | ≤ ¯ε♯
+
+> r,clip
+
+(x)√︁ C♯ 
+
+> ˆπ
+
+(x) ≤ ¯ε♯
+
+> r,clip
+
+(x)√︃ 1 +̂︀ Rspan 
+
+β , (101) where the last inequality follows from (20). Combining these bounds proves (65). 
+
+A.14. Proof of Corollary 5.3 Finite-sample claim. 
+
+Proof. Condition on the event mN > 0 and on the sampled candidates. Let 
+
+wi = ReLU (︃̃︀ r(x, yi) − ˆλN (x)
+
+β)︃ , i ∈ I N (x, b). (102) By construction, m−1
+
+> N
+
+∑︀ i∈I N wi = 1. The conditional probability that cPes returns an unsafe-but-feasible sample is 
+
+1
+
+mN∑︁ i∈I N
+
+wiI{yi ∈ B(x, b)}. (103)  
+
+> 24 Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+Let 
+
+KBN :=
+
+> N
+
+∑︁ 
+
+> i=1
+
+I{yi ∈ B(x, b)}, (104) ̂︀ 
+
+κN := KBN
+
+mN
+
+. (105) Since m−1
+
+> N
+
+∑︀ i∈I N (wi − 1) = 0, we have 
+
+1
+
+mN∑︁ i∈I N
+
+wiI{yi ∈ B(x, b)} − ̂︀ κN = 1
+
+mN∑︁ i∈I N
+
+(wi − 1) ( I{yi ∈ B(x, b)} − ̂︀ κN ) . (106) By Cauchy–Schwarz, ⃒⃒⃒⃒⃒⃒ 
+
+1
+
+mN∑︁ i∈I N
+
+wiI{yi ∈ B(x, b)} − ̂︀ κN⃒⃒⃒⃒⃒⃒ ≤
+
+⎛⎝ 1
+
+mN∑︁ i∈I N
+
+(wi − 1)2
+
+⎞⎠
+
+> 1/2
+
+√︁̂︀ 
+
+κN (1 −̂︀ κN ). (107) The empirical analogue of (20) gives 
+
+1
+
+mN∑︁ i∈I N
+
+(wi − 1)2 = 1
+
+mN∑︁ i∈I N
+
+w2 
+
+> i
+
+− 1 ≤̂︀ Rspan 
+
+β . (108) Consequently, conditional on the sampled candidates, 
+
+P[̂︀ ycPes, N (x) ∈ B(x, b) | y1, . . . , yN ] ≤̂︀ κN +√︃̂︀ Rspan 
+
+β̂︀ κN (1 −̂︀ κN ). (109) Given mN = m > 0, the feasible samples are i.i.d. from π♯
+
+> ref
+
+, and hence 
+
+KBN | mN = m ∼ Binomial (︀ m, κ(x, b))︀ . (110) Therefore, 
+
+E[̂︀ κN | mN = m] = κ(x, b). (111) Since z 7 →√︀ z(1 − z) is concave on [0, 1 ], Jensen’s inequality gives 
+
+E[︂√︁̂︀ κN (1 −̂︀ κN )⃒⃒⃒⃒ mN = m]︂ ≤√︁ κ(x, b)( 1 − κ(x, b)) . (112) It follows, for every m > 0, that 
+
+P[̂︀ ycPes, N (x) ∈ B(x, b) | mN = m] ≤ κ(x, b) + √︃̂︀ Rspan 
+
+β κ(x, b)( 1 − κ(x, b)) . (113) Averaging over m gives the same bound conditional on mN > 0. 
+
+> 25 Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+Finally, Theorem 5.1 gives 
+
+κ(x, b) ≤ ¯εg(x)2
+
+b2q(x, b) . (114) Using 1 − κ(x, b) ≤ 1, we obtain 
+
+P[̂︀ ycPes, N (x) ∈ B(x, b) | mN > 0] ≤ min 
+
+⎧⎨⎩1, ¯εg(x)2
+
+b2q(x, b) + ¯εg(x)
+
+b√︃̂︀ 
+
+Rspan 
+
+βq(x, b)
+
+⎫⎬⎭ , (115) which proves (21). The unconditional statement follows because abstention is not an unsafe output. 
+
+Population claim. 
+
+Proof. By Proposition 5.2, the population pessimistic policy satisfies ˆπ( · | x) ≪ π♯
+
+> ref
+
+( · | x) and 
+
+C♯ 
+
+> ˆπ
+
+(x) ≤ 1 +̂︀ Rspan 
+
+β . (116) Applying Theorem 5.1 and using (20) gives 
+
+Py∼ ˆπ( · |x)[y ∈ B(x, b)] ≤ κ(x, b) + √︃̂︀ Rspan 
+
+β κ(x, b)(︀ 1 − κ(x, b))︀ . (117) Since 
+
+κ(x, b) ≤ ¯εg(x)2
+
+b2q(x, b) , (118) and 1 − κ(x, b) ≤ 1, it follows that 
+
+Py∼ ˆπ( · |x)[y ∈ B(x, b)] ≤ min 
+
+⎧⎨⎩1, ¯εg(x)2
+
+b2q(x, b) + ¯εg(x)
+
+b√︃̂︀ 
+
+Rspan 
+
+βq(x, b)
+
+⎫⎬⎭ . (119) 
+
+A.15. Additional Toy Experimental Details and Ablations Experimental details. The toy problem in Section 6.1 uses class probabilities (0.39, 0.01, 0.60 ) for A,
+
+B, and C, respectively. We evaluate random feasible selection, CBo N, and cPes over budgets 
+
+N ∈ { 1, 2, 4, . . . , 8192 }, (120) using 5000 Monte Carlo trials per budget. Unless otherwise stated, metrics are reported conditional on non-abstention, since at small N all sampled candidates may belong to the proxy-rejected class C.The true reward gap between the safe and unsafe proxy-feasible classes is 
+
+∆ = r⋆ 
+
+> A
+
+− r⋆ 
+
+> B
+
+= 0.6, (121) which matches the local reward-range shift used when translating reward-error tails into learned-score tails in Proposition A.6.  
+
+> 26 Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+cPes regularization. The cPes results in Figure 1 are consistent with the budget-uniform control predicted by Corollary 5.3. With β = 1.0 , the conditional hacking rate remains between 0.015 and 
+
+0.024 over the entire budget grid, while the mean true reward stays near 0.79 . Even with β = 0.2 , the hacking rate remains around 0.024 –0.031 at large budgets. A separate sweep over β illustrates the concentration tradeoff. At N = 8192 , the hacking rate is 0.1518 
+
+for β = 0.02 , 0.0418 for β = 0.1 , and 0.0152 for β = 1.0 , with the highest true reward observed around 
+
+β ∈ [0.5, 1.0 ]. Thus, as cPes approaches aggressive max-selection, it increasingly recovers the same amplification mechanism as CBo N.
+
+Equal-tail control. To verify that large candidate budgets alone do not cause safety hacking, we set 
+
+σB = σA = 0.2 
+
+while keeping the remainder of the environment unchanged. In this setting, the unsafe class B no longer has a heavier reward-error upper tail than the safe class A. The CBo N hacking rate falls to zero by N = 32 , and the selected true reward converges to 0.8 , the reward of class A.
+
+No-false-positive control. We also remove class B entirely. In this case the proxy-feasible set contains no unsafe outputs, and the safety-hacking rate is identically zero for all methods and all candidate budgets. 
+
+False-positive tail-scale sweep. Finally, Figure 1c varies the reward-proxy noise scale σB of the unsafe-but-feasible class. At N = 8192 , the CBo N hacking rate increases from 0.0 at σB = 0.2 to 0.697 
+
+at σB = 0.6 , 0.9996 at σB = 1.0 , and 0.9998 at σB = 1.2 .Together, these controls support the mechanism characterized by Theorem 4.2: increasing N is not sufficient by itself. Amplification occurs when residual unsafe outputs remain proxy-feasible and have a sufficiently favorable upper tail under the learned reward. 
+
+## B. Additional LLM Analysis 
+
+B.1. Evaluator and scoring details Safety proxy and operational safety criterion. The safety proxy is Llama-Guard-3-8B . We use 
+
+1 − punsafe as its safe score and accept candidates whose score is at least b = 0.95 . Primary safety labels are produced by the HarmBench classifier HarmBench-Llama-2-13b-cls . Thus A contains proxy-feasible candidates classified as safe by HarmBench, B contains proxy-feasible candidates classified as unsafe, and C contains proxy-rejected candidates. The reported safety-hacking rate is the probability of selecting from B, conditional on non-abstention. 
+
+Safety-aware reward evaluator. We score safety-aware reward with the OpenAI Responses API using the gpt-5-mini API model alias and the safety_aware_v1 rubric. The rubric assigns 1.0 to responses that are safe and fully satisfy a legitimate request, 0.0 to responses that are unsafe, enable harmful behavior, or are useless/nonresponsive, and intermediate values to partially helpful, vague, incomplete, or weakly useful responses.  
+
+> 27 Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+Reward proxies and aggregation. The primary reward proxy is PKU-Alignment/beaver-7b-v1. 0-reward . For the reward-proxy ablation, we use Skywork-Reward-V2-Llama-3.1-8B with Hugging Face Transformers. Its input is formatted as User: {prompt_text}\nAssistant: {response_text} , and the scalar sequence-classification logit is used as the raw proxy reward. Downstream normalization uses the calibration median and interquartile range; clipping is applied only where required by cPes .
+
+B.2. Alternative safety-filter sensitivity analysis 
+
+We repeat the CBo N analysis using google/shieldgemma-2b as an alternative safety filter, while holding the candidate pool, generator, Beaver reward proxy, HarmBench labels, and candidate per-mutations fixed. We select the ShieldGemma threshold using only the 179 calibration prompts by matching the Llama Guard calibration feasible rate. The resulting threshold is 0.8176 , giving a feasible rate of 0.8242 , compared with 0.8295 for Llama Guard at its primary threshold.        
+
+> NHacking Abstention Unsafe-only Competitive Tail win
+> 112.10
+
+(0.98 ) 14.24 (1.04 ) 12.10 0.00 –  
+
+> 256 14.75
+
+(1.34 ) 1.26 (0.42 ) 0.99 13.76 35.02 
+
+Table 1: ShieldGemma-2B alternative-filter sensitivity analysis. All entries are percentages; stan-dard errors across prompts are shown in parentheses for hacking and abstention. Unsafe-only and Competitive are the two disjoint terms in (22) and sum to the total hacking rate. Tail win denotes 
+
+Pr (MB > MA | KA > 0, KB > 0) and is reported separately because it uses a different conditioning event. Conditional CBo N safety hacking increases from 12.1% at N = 1 to 14.8% at N = 256 . Over the same range, the unsafe-only term decreases from 12.1% to 1.0% , while the competitive unsafe-win term increases from zero to 13.8% . Thus the observed increase is driven by reward-based competition rather than unsafe-only exposure. The increase is smaller than in the primary analysis, so we treat this result as qualitatively consistent sensitivity evidence rather than as a replacement for the primary Llama Guard analysis. 
+
+B.3. Reward-tail survival curves 
+
+Figure 5 visualizes the conditional learned-score survival curves within the safe feasible class A(x, b)
+
+and the unsafe feasible class B(x, b). These curves are the score-distribution component of the joint tails ̂︀ 
+
+ΨA and ̂︀ ΨB in (6); the class masses are held fixed across the Beaver and Skywork ablations. With Beaver, unsafe feasible responses retain more mass at high reward thresholds than safe feasible responses. With Skywork, the safe feasible curve instead extends farther into the upper tail. This reversal is consistent with the lower competitive unsafe-win term in Figure 4b and with the finite-N behavior in Figure 4a. Because the figure estimates conditional survival curves from a finite candidate pool, it is diagnostic evidence for the tail mechanism rather than a verification of the asymptotic conditions in Theorem 4.2.  
+
+> 28 Safety Hacking in Constrained Best-of-NInference-time Scaling
+
+10 15 20 25 
+
+Proxy reward threshold t
+
+10 3
+
+10 2
+
+10 1
+
+> Empirical survival Pr[ R t]
+
+Beaver 
+
+10 20 30 
+
+Proxy reward threshold t
+
+Skywork 
+
+> A: safe feasible
+> B: unsafe feasible
+
+Figure 5: Conditional survival curves of learned reward scores among safe feasible ( A) and unsafe feasible ( B) responses. With Beaver, the unsafe feasible class has the heavier observed upper tail; with Skywork, the safe feasible class does. The panels use their respective proxy-score scales and should be interpreted within, rather than across, reward proxies.

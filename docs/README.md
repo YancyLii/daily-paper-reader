@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-26</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-27</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 38 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 24 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>26</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>12</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>12</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-26 20:48:24 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-27 22:23:18 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共生成 38 篇推荐（精读 26 篇，速读 12 篇）</p>
-<p>精读：《Frequency-Aware Continual Learning for Smart Contract Vulnerability Detection with Large Language Models》（10.0/10）, 《COMIC: Reference-Aware Safety Gating for Multimodal Large Language Models》（9.0/10）</p>
-<p>速读：《Towards Safer RAG: Only Agents Capable of System 2 Thinking may Access Untrusted Documents》（8.0/10）, 《Decomposition Attacks Across Unlinkable Identities: Limits of Stateful Defenses for LLM Services》（8.0/10）, 《Reflex-Guard: A Low-Latency Guardrail for LLM Prompt Safety Using Dense Semantic Embeddings》（8.0/10）</p>
+<p>今日共生成 24 篇推荐（精读 12 篇，速读 12 篇）</p>
+<p>精读：《ClawSentry: A Progressive Multi-Tier Security Monitor for Safeguarding Autonomous LLM Agents》（10.0/10）, 《ReFrame: Evidence-Guided Test-Time Safety Alignment in Multimodal Large Language Models》（9.0/10）</p>
+<p>速读：《Large Language Models at the Intersection of Software Engineering and Software Security:An Evidence-Centered Structured Survey and Research Agenda》（8.0/10）, 《On Predicting Vulnerability Severity Using In-Context Learning: An Industrial Case Study》（8.0/10）, 《Risk-Aware Reranking for Agentic Tool Retrieval》（8.0/10）</p>
 <p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
   </div>
 </section>
@@ -74,12 +74,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">26 篇</strong>
+    <strong class="dpr-home-dashboard-count">12 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Frequency-Aware Continual Learning for Smart Contract Vulnerability Detection with Large Language Models">Frequency-Aware Continual Learning for Smart Contract Vulnerability Detection with Large Language Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="COMIC: Reference-Aware Safety Gating for Multimodal Large Language Models">COMIC: Reference-Aware Safety Gating for Multimodal Large Language Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="TRUSS: Towards Task-Reliable and User-Safe Automated Agent Skill Generation">TRUSS: Towards Task-Reliable and User-Safe Automated Agent Skill Generation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ClawSentry: A Progressive Multi-Tier Security Monitor for Safeguarding Autonomous LLM Agents">ClawSentry: A Progressive Multi-Tier Security Monitor for Safeguarding Autonomous LLM Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="ReFrame: Evidence-Guided Test-Time Safety Alignment in Multimodal Large Language Models">ReFrame: Evidence-Guided Test-Time Safety Alignment in Multimodal Large Language Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="No One Model Catches Every Harm: Benchmarking Content Moderation Across Safety Scenarios">No One Model Catches Every Harm: Benchmarking Content Moderation Across Safety Scenarios</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>22</strong></span><span class="dpr-home-dashboard-tag">vuldet <strong>4</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>11</strong></span><span class="dpr-home-dashboard-tag">vuldet <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -90,9 +90,9 @@
     <strong class="dpr-home-dashboard-count">12 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Towards Safer RAG: Only Agents Capable of System 2 Thinking may Access Untrusted Documents">Towards Safer RAG: Only Agents Capable of System 2 Thinking may Access Untrusted Documents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Decomposition Attacks Across Unlinkable Identities: Limits of Stateful Defenses for LLM Services">Decomposition Attacks Across Unlinkable Identities: Limits of Stateful Defenses for LLM Services</span></li><li><span class="dpr-home-dashboard-paper-title" title="Reflex-Guard: A Low-Latency Guardrail for LLM Prompt Safety Using Dense Semantic Embeddings">Reflex-Guard: A Low-Latency Guardrail for LLM Prompt Safety Using Dense Semantic Embeddings</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Large Language Models at the Intersection of Software Engineering and Software Security:An Evidence-Centered Structured Survey and Research Agenda">Large Language Models at the Intersection of Software Engineering and Software Security:An Evidence-Centered Structured Survey and Research Agenda</span></li><li><span class="dpr-home-dashboard-paper-title" title="On Predicting Vulnerability Severity Using In-Context Learning: An Industrial Case Study">On Predicting Vulnerability Severity Using In-Context Learning: An Industrial Case Study</span></li><li><span class="dpr-home-dashboard-paper-title" title="Risk-Aware Reranking for Agentic Tool Retrieval">Risk-Aware Reranking for Agentic Tool Retrieval</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>10</strong></span><span class="dpr-home-dashboard-tag">vuldet <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>9</strong></span><span class="dpr-home-dashboard-tag">vuldet <strong>3</strong></span></div>
 </section>
 </div>
 

@@ -1,0 +1,605 @@
+Title: CertVLA: Certified Defense against Physical Visual Attacks for Vision-Language-Action Models
+
+URL Source: https://arxiv.org/pdf/2608.20791v1
+
+Published Time: Mon, 24 Aug 2026 00:29:40 GMT
+
+Number of Pages: 9
+
+Markdown Content:
+# CertVLA: Certified Defense against Physical Visual Attacks for Vision-Language-Action Models 
+
+## Hui Lu, Zhijie Peng, Yuqi Lin, Zaijia Yang, Jiaming He, Shuhan Ye, Yi Yu ∗, Hanwei Zhu, Bingquan Shen, Alex Kot, Xudong Jiang 
+
+Abstract 
+
+Vision-Language-Action (VLA) policies are vulnerable to lo-calized physical perturbations, yet existing certified patch de-fenses target discrete labels and cannot directly certify contin-uous, temporally correlated actions. We introduce CertVLA, a certified defense for closed-loop VLA control under bounded patch and texture attacks. CertVLA proposes a calibrated re-gion of behaviorally consistent actions, while deterministic covering masks ensure that at least one checked prediction is attack-free. Specifically, CertVLA normalizes action dis-agreement by the benign variation of each mask pair and accepts a single-mask anchor only when it remains consis-tent under every second mask. It then calibrates the resulting max-min-max episode score to provide finite-sample clean coverage. Conjoining query-level decisions extends the ac-tion certificate to the complete closed-loop rollout. Further-more, we prove that against any adaptive attacker satisfying the bounded-support threat model, every rollout certified by CertVLA executes only action chunks consistent with attack-erased clean predictions. Under dual-mask rollout correctness, this consistency certificate further guarantees task success. The certificate is independent of patch content, generation method, and physical transformation. Experiments in simu-lation and the real world demonstrate the empirical and cer-tified effectiveness of CertVLA against patch attacks, with additional simulation validation on texture attacks. 
+
+## Introduction 
+
+Vision-Language-Action (VLA) models connect visual per-ception and language instructions directly to robot control, enabling general-purpose policies for diverse manipulation tasks (Zitkovich et al. 2023; Octo Model Team, Ghosh et al. 2024; Black et al. 2024; Physical Intelligence et al. 2025). This tight perception-action coupling also creates a physical attack surface: a localized patch in the scene or an adver-sarial texture on an object can persist across viewpoints and corrupt an entire closed-loop trajectory. Recent attacks have demonstrated such failures across tasks, VLA architectures, and sim-to-real settings (Wang et al. 2025; Lu et al. 2026b; Chen et al. 2026). Existing empirical defenses improve VLA robustness through robust training, decoupled robustness learning, safety-constrained optimization, and noise-filtering modules (Guo et al. 2025; Xie et al. 2026; Fu et al. 2026), 
+
+> ∗
+
+Corresponding author. 
+
+while patch-specific defenses in vision typically localize, mask, or restore suspicious regions (Tarchoun et al. 2023; Xu et al. 2023; Jing et al. 2024; Yankelev et al. 2026). For safety-critical deployment, however, empirical robustness alone is insufficient, as resistance to tested attacks does not estab-lish robustness to all attacks within the threat model (Cohen, Rosenfeld, and Kolter 2019; Levine and Feizi 2020b; Xiang, Mahloujifar, and Mittal 2022). A certified defense should ad-ditionally determine when the executed actions are provably protected against every admissible attack. Existing certified patch defenses provide a natural starting point for this goal. Prior work has developed determinis-tic ablation, restricted receptive fields, and masking-based approaches to certify discrete predictions against bounded patch attacks (Levine and Feizi 2020a; Xiang et al. 2021). Extending this paradigm to VLAs, however, requires ad-dressing fundamental differences between discrete percep-tion and embodied control. First , VLAs typically produce continuous action chunks, for which exact agreement among masked outputs is generally too restrictive and a measurable notion of action consistency is needed. Second , although covering-based masking (Lyu et al. 2026; Xiang, Mahlou-jifar, and Mittal 2022) can handle an unknown patch loca-tion, its discrete recovery criterion does not directly apply to continuous actions. The defender must instead determine whether a recovered action remains within a calibrated re-gion of an attack-erased reference without knowing which mask removes the attack. Third , VLA actions are executed in closed loop. A certificate at one policy query only constrains the current action chunk, while its execution changes the state and observations encountered at subsequent queries. Certi-fication must therefore extend from individual predictions to the sequence of decisions made along the actual rollout. Hence, a research question arises naturally: 
+
+How can we certify continuous VLA actions against unknown bounded physical perturbations and extend the guarantee from individual policy queries to closed-loop task execution? 
+
+In response, we introduce CertVLA , a model-agnostic cer-tified defense for continuous VLA control under bounded patch and texture attacks. CertVLA uses an R-covering mask family (Xiang, Mahloujifar, and Mittal 2022) so that, for any admissible support, at least one evaluated mask completely arXiv:2608.20791v1 [cs.CV] 21 Aug 2026 erases the corrupted region. Because different mask posi-tions induce different benign action changes, we normal-ize each anchored dual-mask disagreement by a position-specific clean scale and calibrate a shared tolerance with held-out clean episodes. The resulting max-min-max score exactly represents the required ∀-query– ∃-anchor– ∀-second-mask decision. At deployment, an early-stopped recovery rule rejects a row as soon as it cannot pass and returns a certified anchor only if all second-mask checks pass. This construction yields a deliberately layered guarantee. Whenever CertVLA certifies a query, the returned action chunk lies in a calibrated clean-consistency region of a pre-diction for which the attack has been erased. The statement holds for arbitrary patch content and adaptive attack genera-tion, provided that the attack support can be fully enclosed by a fixed-size square region. Conjoining query-level flags ex-tends the result to the complete executed rollout, even when the admissible patch location changes over time. Under an explicit dual-mask rollout-correctness condition, the same certificate further implies terminal task success. The contributions of our paper are summarized as follows: 
+
+• We formulate certified defense for continuous closed-loop VLA control and introduce a calibrated action-consistency region beyond exact label agreement. 
+
+• We develop an anchored dual-mask defense that couples position-aware normalization with a covering-based re-covery rule for certifiable action selection. 
+
+• We prove query- and episode-level consistency guaran-tees against any bounded-support adaptive attacker, and isolate the precise additional condition under which this observable certificate guarantees task completion. 
+
+• Extensive experiments across multiple VLAs, attack types, and deployment settings demonstrate the broad ap-plicability of CertVLA. 
+
+## Related Work 
+
+VLA models. VLA policies map vision and language di-rectly to robot actions. Early scaling were established by RT-1, PaLM-E, and RT-2 (Brohan et al. 2022; Driess et al. 2023; Zitkovich et al. 2023). RoboFlamingo adapts open VLMs through imitation learning, whereas Open X-Embodiment and Octo exploit heterogeneous cross-robot data (Li et al. 2023b; Open X-Embodiment Collaboration et al. 2023; Octo Model Team, Ghosh et al. 2024). OpenVLA provides an open 7B policy and OpenVLA-OFT improves action generation through parallel decoding and action chunking (Kim et al. 2025; Kim, Finn, and Liang 2025). π0 and π0.5 policies use flow matching and heterogeneous co-training for dexterous, open-world control (Black et al. 2024; Physical Intelligence et al. 2025). Recent VLAs continue to improve generaliza-tion, cross-embodiment control, and closed-loop manipula-tion through larger-scale training, experience-driven learn-ing, and active perception (Intelligence et al. 2025; Liu et al. 2026), while their certifiable robustness to physical adversar-ial perturbations remains largely unexplored. 
+
+Adversarial attacks & defense in robotics. Printable patches remain effective across physical transformations (Brown et al. 2017). RoboticAttack demonstrates untar-geted, trajectory-targeted, and physical attacks on VLA con-trol, while UPA-RFAS transfers patches across architectures, tasks, viewpoints, and sim-to-real settings (Wang et al. 2025; Lu et al. 2026b). Tex3D further turns 3D object textures into persistent attack surfaces (Chen et al. 2026). Recent defenses improve empirical stability to visual or multimodal pertur-bations (Guo et al. 2025; Xie et al. 2026; Fu et al. 2026), but their observed robustness does not provide a per-rollout guarantee against adaptive attacks. CertVLA instead certifies any visible corruption whose projected support satisfies the bounded-region threat model. 
+
+Certified defenses against patch attacks. Patch certifi-cates use interval bounds or deterministic ablation (Chi-ang et al. 2020; Levine and Feizi 2020a), restricted recep-tive fields and masking (Xiang et al. 2021; Xiang and Mit-tal 2021), or occlusion consistency (McCoyd et al. 2020; Xiang, Mahloujifar, and Mittal 2022). ScaleCert improves high-resolution certification, PatchCURE exposes tunable robustness–utility–efficiency trade-offs, and CertMask re-duces redundant mask evaluations (Han et al. 2021; Xiang et al. 2024; Lyu et al. 2026). PatchDEMUX extends single-label certificates to multi-label prediction (Jacob, Xiang, and Mittal 2025). Nevertheless, these guarantees rely on discrete label or detection decisions. Exact agreement is unsuitable for continuous, temporally correlated action chunks, and an isolated prediction certificate does not cover states reached later in a rollout. CertVLA addresses both gaps through cali-brated anchored consistency and episode-level composition. 
+
+## Preliminaries 
+
+VLA Policy and Threat Model 
+
+Let xt = ( xext  
+
+> t
+
+, x wrist  
+
+> t
+
+, s t) contain the external-camera im-age, wrist-camera image, and proprioceptive state at policy query index t, respectively, and let ℓ be a language instruc-tion. A VLA policy π produces an action chunk       
+
+> At=π(xt, ℓ )∈ A ⊆ RH×D,(1)
+
+of horizon H and action dimension D. The controller exe-cutes only the first h ≤ H actions before next query. The adversary may arbitrarily replace pixels in a single connected region Ωt whose image-plane footprint belongs to a known family R(P ), where P is the certified maximum side length and R(P ) contains every axis-aligned region no larger than P × P pixels. For either camera view,            
+
+> xΩ
+> t= (1 −1Ωt)⊙xt+1Ωt⊙δt.(2)
+
+Here 1Ωt is the binary indicator of the attacked support, δt
+
+is arbitrary adversarial pixel content, and ⊙ denotes elemen-twise multiplication. Superscript Ω denotes the resulting at-tacked observation. We make no assumptions about the patch content, generation method, location, or physical transforma-tion. Our certification only requires that its projected support in each defended view lies within a region in R(P ).
+
+Covering Masks and Action Predictions 
+
+The patch location is unknown at inference time, so no single predetermined mask can guarantee removal. Follow-ing PatchCleanser (Xiang, Mahloujifar, and Mittal 2022), First mask: i Second mask: j Position-scale matrix 𝑄 𝑄 !,# = Quantile $ 𝑑 𝐴 !,# , 𝐴 !        
+
+> Episode-level clean-consistency calibration Threshold Single-mask action prediction
+> A%
+> VLA policy
+> 𝜋(x, ℓ)
+> Anchored dual-mask action prediction
+> A%,&
+> 𝜏
+> Clean coverage:
+> A!"#,%,& ∈𝔅 %,& (A !"#,% ; 𝜏)
+> First mask: i Second mask: j
+> ∃𝑖, ∀𝑗: 𝐴 !ˆ,# ⋆∈ ℬ !ˆ,# ⋆𝐴 <; 𝜏
+> Traverse all mask pairs
+> i
+> Not found such 𝑖
+> ij
+> Certified & task success
+> Certified success, task fail
+> Certified fail, task success
+> Certified & task fail
+> A!"# : future new action prediction
+> 𝐴 $&𝑖 ˆ: Algorithm 2 return
+> ijqueries normalized consistency score 𝑧
+
+Figure 1: CertVLA framework. Top: clean single- and dual-mask predictions estimate the position-scale matrix Q and calibrate threshold τ . Bottom: at each query, CertVLA returns a single-mask anchor only if it is consistent with every second-mask prediction, then composes query flags into an episode certificate distinct from empirical task success. we enumerate K deterministic masks, where index i ∈{1, . . . , K } and operator Mi overwrites a fixed region with a benign value. The covering property guarantees that, for any admissible bounded patch, the candidate set contains at least one mask that completely removes its support, independent of the patch appearance. 
+
+Definition 1 ( R-covering family) A deterministic family 
+
+M = {M1, . . . , M K } is R-covering if, for every Ω ∈ R (P ),some mask Mj⋆ overwrites all pixels in Ω.
+
+For a query (x, ℓ ), we define the unmasked, single-mask, and anchored dual-mask predictions 
+
+A0 = π(x, ℓ ), A i = π(Mi(x), ℓ ), A i,j = π(Mj (Mi(x)) , ℓ ). (3) 
+
+For an attacked input xΩ, superscript Ω denotes the analogous predictions AΩ 
+
+> i
+
+= π(Mi(xΩ), ℓ ) and AΩ 
+
+> i,j
+
+=
+
+π(Mj (Mi(xΩ)) , ℓ ). This notation separates the attacked quantities observed at deployment from their clean coun-terparts. The single-mask prediction Ai, rather than every pair of dual-mask predictions, will serve as the anchor of a candidate recovery row. 
+
+## Methodology 
+
+Overview. Fig. 1 summarizes CertVLA’s calibration and de-ployment stages. On clean episodes, CertVLA normalizes mask-dependent action variation and calibrates an episode-level threshold. At deployment, it returns a single-mask an-chor only when the anchor is consistent with every second-mask prediction, and certifies the rollout only if every policy query passes. The covering property then ties each certified action to a clean prediction from which the attack is erased. 
+
+Continuous-Action Consistency Score 
+
+Unlike discrete labels (Xiang, Mahloujifar, and Mittal 2022; Lyu et al. 2026), behaviorally equivalent action chunks need not match exactly. We therefore measure normalized action deviation and account for the distinct benign scale of each ordered mask pair. 
+
+Directional action distance. Let [a− 
+
+> u
+
+, a + 
+
+> u
+
+] be the valid range of action coordinate u ∈ { 1, . . . , D } and define 
+
+d(A, B ) = 1
+
+hD 
+
+> h
+
+X
+
+> r=1
+> D
+
+X
+
+> u=1
+
+|Ar,u − Br,u |
+
+ηu(Br,u ) ,ηu(b) = max {| a+ 
+
+> u
+
+− b|, |b − a− 
+
+> u
+
+|, ϵ }.
+
+(4) 
+
+Here A, B ∈ RH×D are respectively the dual-mask chunk and single-mask anchor, r indexes the h executed actions, and 
+
+u indexes action coordinates. The denominator normalizes each coordinate by its valid range, with ϵ > 0 ensuring numerical stability. Because it is evaluated at the anchor B,
+
+d(A, B ) is directional. 
+
+Position-scale matrix. Mask pairs occlude different scene content and therefore have different clean deviation scales. Let e index an episode, q ∈ { 1, . . . , N qry  
+
+> e
+
+} a policy query, 
+
+N qry  
+
+> e
+
+the number of queries, and i, j ∈ { 1, . . . , K } an or-dered mask pair. Let Ae,q,i and Ae,q,i,j be the correspond-ing single- and dual-mask predictions. From clean scale-calibration episodes Cscale , we collect 
+
+Dscale  
+
+> i,j
+
+= {d(Ae,q,i,j , A e,q,i ) : e ∈ C scale , q = 1 , . . . , N qry  
+
+> e
+
+},
+
+(5) 
+
+and set its reference scale to the fixed β-quantile, 
+
+Qi,j = \Quantile β
+
+ Dscale 
+
+> i,j
+
+. (6) 
+
+where β ∈ (0 , 1) is chosen before row calibration. The matrix 
+
+Q = [ Qi,j ] ∈ RK×K 
+
+> ≥0
+
+removes pair-specific scale. 
+
+Position-Aware Clean-Consistency Calibration 
+
+The local scales Q make mask pairs comparable but do not set a joint acceptance threshold. We therefore calibrate an Algorithm 1: Position-Aware Episode Calibration 
+
+Require: Scale episodes Cscale ; row episodes Crow ; masks 
+
+M; quantile β; clean-episode miscoverage level α; ϵ
+
+Ensure: Position-scale matrix Q = [ Qi,j ] and threshold τ
+
+1: # Stage I: position-scale estimation 
+
+2: for i = 1 to K do 
+
+3: for j = 1 to K do 
+
+4: Dscale  
+
+> i,j
+
+← { d(Ae,q,i,j , A e,q,i ) : e ∈ C scale , q =1, . . . , N qry  
+
+> e
+
+}; Qi,j ← \Quantile β (Dscale  
+
+> i,j
+
+)
+
+5: end for 
+
+6: end for 
+
+7: # Stage II: episode-level joint calibration 
+
+8: for all e ∈ C row do 
+
+9: ze,q,i,j ← d(Ae,q,i,j , A e,q,i )/(Qi,j + ϵ) for all q, i, j 
+
+10: Se ← max q min i max j ze,q,i,j 
+
+11: end for 
+
+12: τ ← bQconf 1−α({Se})
+
+13: return (Q, τ )
+
+episode-level normalized radius τ , using disjoint scale and row splits to preserve the exchangeability required for con-formal calibration. We define normalized consistency score 
+
+ze,q,i,j = d(Ae,q,i,j , A e,q,i )
+
+Qi,j + ϵ , (7) 
+
+where ϵ handles zero empirical variation. Thus ze,q,i,j mea-sures deviation relative to the clean behavior of the same ordered pair, enabling a shared threshold across positions. 
+
+Definition 2 (Pair-specific clean-consistency region) For an ordered mask pair (i, j ), anchor action B ∈ A , and tolerance τ ≥ 0, define 
+
+Bi,j (B; τ ) := {A ∈ A : d(A, B ) ≤ τ (Qi,j + ϵ)}. (8) 
+
+We call A (i, j, τ )-consistent with B when A ∈ B i,j (B; τ ).Here, τ (Qi,j + ϵ) is the raw tolerance for pair (i, j ).
+
+Lemma 1 (Score-region equivalence) For every episode e,policy query q, ordered mask pair (i, j ), and tolerance τ ≥ 0,
+
+ze,q,i,j ≤ τ ⇐⇒ Ae,q,i,j ∈ B i,j (Ae,q,i ; τ ). (9) 
+
+The equivalence follows from Qi,j + ϵ > 0. Stage II cali-brates the event dictated by R-covering: at each query, some row must be consistent for every second mask, including the unknown mask that erases the patch: 
+
+Pass e(τ ) := ∀q ∃i ∀j : Ae,q,i,j ∈ B i,j (Ae,q,i ; τ ). (10) 
+
+Its scalar score is 
+
+Se = max  
+
+> q
+
+min  
+
+> i
+
+max  
+
+> j
+
+ze,q,i,j . (11) 
+
+Here max j , min i, and max q implement ∀j, ∃i, and ∀q,respectively. Consequently, Se is the minimum threshold re-quired for every policy query in episode e to admit at least one row whose normalized disagreement remains within the threshold for all second-mask positions. 
+
+Lemma 2 (Score-quantifier equivalence) For all episode 
+
+e and threshold τ ≥ 0, we have (proof in Supplementary.): 
+
+Se ≤ τ ⇐⇒ Pass e(τ ) ⇐⇒ ∀ q ∃i ∀j : ze,q,i,j ≤ τ. (12) 
+
+Episode-level conformal calibration. Although Q normal-izes the location-dependent disagreement of individual mask pairs, the aggregated score Se can still vary across clean episodes due to variations in initial states, object configu-rations, executed trajectories, and policy-query sequences. We therefore calibrate the global acceptance threshold at the episode level rather than fixing it heuristically. Let α ∈ (0 , 1) denote the target clean-episode miscoverage rate. Given n = |C row | calibration episodes with ordered scores S(1) ≤ · · · ≤ S(n), we set 
+
+τ = S(k), k = ⌈(n + 1)(1 − α)⌉ , (13) 
+
+provided that k ≤ n. Under the standard exchangeability assumption between the calibration episodes and a future clean episode, this conformal quantile provides finite-sample marginal coverage 
+
+Pr( Snew ≤ τ ) ≥ 1 − α. (14) 
+
+Equivalently, a new clean episode is rejected because its consistency score exceeds τ with probability at most α. Thus, 
+
+α controls the allowed clean-episode rejection rate, while τ is the corresponding data-dependent tolerance for episode-level action consistency. A smaller α yields a larger τ , reducing clean rejection at the cost of a looser consistency certificate. 
+
+Algorithm design. Alg. 1 partitions clean, unattacked episodes into Cscale and Crow . Stage I estimates each ordered-pair scale Qi,j by Eq. (6) and freezes Q before Stage II. At de-ployment, fixed Qi,j supplies the pair-specific unit and fixed 
+
+τ thresholds the joint score. Together, Lemmas 1 and 2 give the exact action-region and episode-level interpretations. 
+
+Lemma 3 (Finite-sample clean coverage) If the row-calibration episodes and a future new episode are exchangeable, Alg. 1 satisfies Pr[ Snew ≤ τ ] ≥ 1 − α.Equivalently, with probability at least 1 − α, the future episode satisfies ∀q ∃i ∀j : Anew ,q,i,j ∈ B i,j (Anew ,q,i ; τ ).
+
+This clean-coverage result is separate from the determinis-tic patch-erasure certificate. See Supplementary for the proof. 
+
+Anchored Dual-Mask Recovery 
+
+The patch location is unknown, so each first-mask prediction serves as an anchor and is checked against every second mask. By R-covering, at least one check erases the patch. 
+
+Lemma 4 (Attack erasure) Let xΩ differ from x only on 
+
+Ω ∈ R (P ), and let each mask overwrite its support with fixed values. If M is R-covering, some Mj⋆ covers Ω and, for every Mi ∈ M ,
+
+Mj⋆ (Mi(xΩ)) = Mj⋆ (Mi(x)) . (15) 
+
+Alg. 2 updates a running row score as second masks are evaluated. Because this score is nondecreasing, a row can be safely discarded as soon as it exceeds τ . A row that survives all K checks has the complete score 
+
+Ri = max    
+
+> 1≤j≤Kd(Ai,j ,A i)
+> Qi,j +ϵ
+
+. (16) Algorithm 2: DualMaskRecover 
+
+Require: (x, ℓ ); VLA π; masks M; Q; τ ; ϵ
+
+Ensure: Action bA, selected row ˆi, flag c
+
+1: Rbest ← +∞; Abest ← π(x, ℓ ); ˆi ← 0
+
+2: for i = 1 to K do 
+
+3: Ai ← π(Mi(x), ℓ ); Ri ← 0
+
+4: for j = 1 to K do 
+
+5: Ai,j ← π(Mj (Mi(x)) , ℓ )
+
+6: Ri ← max 
+
+n
+
+Ri, d(Ai,j ,A i) 
+
+> Qi,j +ϵ
+
+o
+
+7: if Ri > τ then 
+
+8: break 
+
+9: end if 
+
+10: end for 
+
+11: if Ri < R best then 
+
+12: (Rbest , A best ,ˆi) ← (Ri, A i, i )
+
+13: end if 
+
+14: if Ri ≤ τ then 
+
+15: return (Ai, i, true )
+
+16: end if 
+
+17: end for 
+
+18: return (Abest ,ˆi, false )
+
+The algorithm immediately returns the first complete row satisfying Ri ≤ τ . Hence c = true only after verifying every second mask, whereas early stopping merely avoids unnecessary evaluations of a rejected row. If no row passes, it returns the anchor with the smallest observed partial score as an explicitly uncertified fallback. 
+
+Theorem 1 (Attack-erased consistency) Let xΩ be any at-tacked input with Ω ∈ R (P ). If Alg. 2 returns ( bA, ˆi, c ) with 
+
+c = true , then bA = AΩˆi and there exists a clean dual-masked prediction Aˆi,j ⋆ such that 
+
+Aˆi,j ⋆ ∈ B ˆi,j ⋆ ( bA; τ ), (17) 
+
+or, equivalently, 
+
+d(Aˆi,j ⋆ , bA) ≤ τ (Qˆi,j ⋆ + ϵ) ≤ τ (Qmax ˆi + ϵ), (18) 
+
+where Mj⋆ covers Ω and Qmax ˆi = max j Qˆi,j . The bound is independent of the patch content, shape, attack-generation method, and physical transformation, provided that the attack support Ω ∈ R (P ) satisfies the certified size bound and can therefore be fully covered by at least one mask in M.
+
+See Supplementary for proof. Notably, Theorem 1 certifies action consistency, not unconditional task success. For prac-tical utility, the patch-erased prediction should also preserve task-relevant behavior. Supplementary empirically validates this property across VLA models under random single- and dual-masking. 
+
+Closed-Loop Episode Certificate 
+
+Action consistency certification alone does not imply termi-nal task success. Following PatchCleanser’s two-mask cor-rectness (Xiang, Mahloujifar, and Mittal 2022), we state the required closed-loop condition for continuous actions. Algorithm 3: Defended Rollout Evaluation 
+
+Require: Environment E; instruction ℓ; VLA π; masks M;
+
+Q; τ ; ϵ; horizon T
+
+Ensure: Task outcome Sdef and episode flag C
+
+1: Reset E; C ← true ; Sdef ← false 
+
+2: for t = 0 to T − 1 do 
+
+3: if a new policy query is required then 
+
+4: ( eAt,ˆit, c t) ← DualMaskRecover (xt, ℓ, π, M,
+
+5: Q, τ, ϵ ); C ← C ∧ ct
+
+6: end if 
+
+7: Execute the next action from eAt in E
+
+8: if task success then 
+
+9: Sdef ← true ; break 
+
+10: end if 
+
+11: end for 
+
+12: return (Sdef , C )
+
+Definition 3 (Dual-mask rollout correctness) Let Tqry de-note the policy-query times of a defended rollout, and let eAt
+
+be the recovered action chunk executed at query time t. A task, policy, and environment satisfy dual-mask rollout cor-rectness if every defended rollout for which 
+
+∀t ∈ T qry , ∃(it, j t) : Aclean  
+
+> t,i t,j t
+
+∈ B it,j t ( eAt; τ ) (19) 
+
+reaches the task-success set. Here Aclean  
+
+> t,i t,j t
+
+denotes the patch-erased dual-mask prediction evaluated at the same reached state as eAt.
+
+At each t ∈ T qry , Alg. 3 invokes Alg. 2, executes from the recovered chunk eAt, and accumulates C = V 
+
+> t∈T qry
+
+ct.Because Eq. (4) jointly scores its action chunk, aggregation is per query. The outputs separate defended success Sdef ,episode certification C, and certified success Sdef ∧ C, and any uncertified fallback makes C false. 
+
+Theorem 2 (Closed-loop consistency certificate) 
+
+Suppose every query’s patch support belongs to R(P ) and 
+
+M is R-covering. If Alg. 3 returns C = true , then at every 
+
+t ∈ T qry there exist indices (it, j ⋆t ) and an attack-erased clean prediction satisfying 
+
+Aclean  
+
+> t,i t,j ⋆t
+
+∈ B it,j ⋆t ( eAt; τ ). (20) 
+
+This remains valid if the admissible patch location changes between queries. 
+
+Theorem 2 certifies the observable action sequence, and the following lemma states when this consistency also guar-antees task success. 
+
+Lemma 5 (Conditional closed-loop task certificate) 
+
+Under Theorem 2, if the task also satisfies Definition 3, then 
+
+C = true implies Sdef = true for every admissible patch sequence. 
+
+Together, the theorem and lemma provide a layered cer-tificate tailored to closed-loop continuous control: CertVLA first verifies an attacker-independent action-consistency Attack Type ↓ Model ↓ LIBERO-Spatial LIBERO-Object LIBERO-Goal LIBERO-Long Average Defense Certified Defense Certified Defense Certified Defense Certified Defense Certified Patch attack (Wang et al. 2025; Lu et al. 2026b) OpenVLA † 96 96 96 64 96 94 88 76 94.00 82.50 OpenVLA-OFT 98 98 94 94 98 98 86 86 94.00 94.00                                                             
+
+> π082 36 92 84 86 61 74 66 83.50 61.75
+> π0.596 72 97 89 84 68 86 77 90.75 76.50 Texture attack (Chen et al. 2026) OpenVLA †84 82 77 30 83 83 37 30 70.25 56.25 OpenVLA-OFT 88 88 94 92 90 90 40 37 78.00 76.75
+> π088 38 92 80 82 62 74 70 84.00 62.50
+> π0.5100 92 94 88 94 88 90 86 94.50 88.50
+
+Table 1: Defense and certified task success rates (%) against physical patch and adversarial object texture attacks on LIBERO. Average denotes the mean performance across the four LIBERO suites. † denotes our dual-mask fine-tuned model, and fine-tuning details are provided in Appendix ?? .property and invokes the explicit rollout-correctness con-dition only for the stronger task-success claim. This separa-tion keeps the guarantee logically transparent while allowing 
+
+Sdef , C, and Sdef ∧ C to be evaluated without conflating empirical success with certification. 
+
+## Experiments 
+
+Dataset & threat models. We use LIBERO (Liu et al. 2023), a simulated manipulation benchmark, and evaluate its Spatial, Object, Goal, and Long suites with 10 tasks for each, including spatial relations, object interaction, goal-conditioned control, and multi-stage execution. We report results for four VLA policies: OpenVLA (Kim et al. 2025), OpenVLA-OFT (Kim, Finn, and Liang 2025), π0 (Black et al. 2024), and π0.5 (Physical Intelligence et al. 2025), across all suites. Attacks are physical patches (Wang et al. 2025; Lu et al. 2026b) and adversarial object textures (Chen et al. 2026). In both cases, the visible image-plane corruption must satisfy the bounded-support threat model. 
+
+Evaluation metrics & details. For each model, task suite, and attack setting, we evaluate N closed-loop episodes per suite. Defense reports the defended task success rate, 
+
+N −1 PNe=1 I[Sdef  
+
+> e
+
+= 1] , where Sdef  
+
+> e
+
+denotes task success un-der defense. Certified reports N −1 PNe=1 I[Sdef  
+
+> e
+
+= 1 ∧ Ce =true] , where Ce means all policy queries in episode e pass the consistency test. Thus, Certified counts only defended successes with an end-to-end certificate. We set β = 0 .95 ,
+
+α = 0 .5, and ϵ = 10 −8 for all main results. See Supplemen-tary for more experimental details. 
+
+Physical Experiment Setting. For real-world experi-ments, we employ a dual-arm Piper robotic platform. Each arm is controlled using a 7-dimensional end-effector action. We use one arm to implement the pick-and-place task. Visual observations are provided by two RGB cameras: one Intel Re-alSense D435 camera offering a third-person view and one Intel RealSense D405 camera mounted on the wrist. Our pol-icy uses these synchronized RGB observations together with the arm proprioceptive state. We use standardized objects and workspace layouts for systematic quantitative evaluation, with the task repeated for 10 independent trials.         
+
+> Model Clean Attack Defense Certified
+> π0.590 40 60 30
+
+Table 2: Results for physical patch attacks on the real robot. 
+
+Main Results 
+
+Defense against patch & texture attack in simulation. 
+
+In Tab. 1, OpenVLA-OFT obtains 94% average Defense and Certified success, while OpenVLA † reaches 94% Defense and 82 .5% Certified success. The larger gaps for the gen-erative policies show that some successful rollouts contain a query outside the calibrated region, confirming the value of reporting empirical recovery and certification separately. Defense against texture attack shows transfer beyond planar patches. π0.5 performs best, averaging 94 .5% Defense and 
+
+88 .5% Certified success; π0 reaches 84% and 62 .5% , respec-tively. OpenVLA variants are less stable on the Long suite. The result matches our support-based threat model: certifica-tion depends on covering the visible corruption, not on how its texture was generated. 
+
+Defense against physical real patch attack. Quantitative results. Tab. 2 shows that the patch reduces π0.5 success from 
+
+90% to 40% . CertVLA reaches 60% , a 20-point gain that recovers 40% of the attack-induced loss. Its 30% Certified success means that half of the successfully defended trials pass at every query. The remaining Defense-Certified gap identifies successful rollouts with at least one query outside the calibrated region. It reflects a stricter certificate under physical environment. Qualitative analysis. Fig. 2 separates execution from diagnostic checks. Its third row shows only a reference dual-mask candidate. The one with minimum z-score at each query is illustrated, which does not select the action. Alg. 2 instead finds an anchor i whose entire row satisfies zi,j ≤ τ (∃i ∀j). The white box marks this anchor, and Ai is predicted from an input masking only its pixels. The other black region visualizes one second-mask check and is absent during execution. Thus, dual masks establish the certificate while the executed single-mask input retains more task-relevant content. Clean Attacked CertVLA Figure 2: Real-robot rollouts across successive policy queries. The bottom row is diagnostic: it visualizes the dual-mask candidate with the smallest normalized score z at each query. The white outline identifies the anchor mask of the accepted row. 5x5 6x6 7x7 8x8                       
+
+> Mask set size ( k2)
+> 40 60 80 100
+> Task success rate (%)  Patch size (38x38)
+> 25 38 45 50 54
+> Patch size
+> Mask size (75x75)
+> 50 57 63 70 75
+> Mask size
+> Mask set size (8x8)
+> 0.50 0.75 0.90 0.95 0.99
+> β
+> α= 0.5
+> 0.50 0.25 0.10 0.05 0.01
+> α
+> β= 0.95
+> 50 55 60 65 70 75
+> Mask size
+> 10 20 30 40 50 60 70
+> Mask set size
+> 25 30 35 40 45 50 55
+> Patch size
+> 0.5 1.0 1.5 2.0 2.5 3.0
+> τ
+> 0.8 1.0 1.2 1.4 1.6 1.8
+> τ
+> Defense Certified Auxiliary OpenVLA-OFT π0.5
+
+Figure 3: Sensitivity to mask-set size, certified patch size, mask size, pair-scale quantile β, and conformal level α (left to right). Blue and orange report Defense and Certified task success; green reports the corresponding auxiliary quantity on the right axis. 
+
+Discussion 
+
+Covering, utility, and calibration trade-offs. Fig. 3 an-alyzes the principal design parameters from left to right. Let P , M , and s denote the patch side length, mask side length, and mask stride. The mask family is R-covering only if P ≤ M − s + 1 so only configurations satisfying this constraint are considered. Across these valid configura-tions, π0 maintains a consistently high Defense rate, whereas OpenVLA-OFT is more sensitive to the masking configura-tion. With P = 38 fixed, increasing the mask set provides denser coverage and permits smaller masks, reducing vi-sual occlusion at the cost of more mask evaluations. This substantially improves OpenVLA-OFT Defense, while π re-mains consistently high. Certified success also increases for both models, indicating that finer coverage benefits both task utility and certifiable consistency. With M = 75 fixed, larger certified patches require denser mask placement and a larger mask set to maintain R-coverage. But both Defense and Cer-tified rates decrease as P grows, showing that certifying a larger attack region places greater demands on the masked policy. With the mask set fixed at 8×8, increasing M enlarges the occluded region while keeping the number of candidate masks unchanged. Both Defense and Certified rates decrease as M grows, indicating that larger masks remove more task-relevant visual information and make the recovered actions less reliable. The degradation is stronger for OpenVLA-OFT, whereas π remains more stable, showing greater tolerance to increased occlusion under the same covering density. Calibration is also policy dependent. Increasing β rescales 
+
+Qi,j and changes normalized τ non-monotonically, and we set it to 0.95 to mitigate the influence of extreme values while preventing an overly large τ and an excessively loose certificate. Reducing α raises acceptance for both policies but loosens the consistency region (Lemma 3). Neither parameter replaces R-covering for deterministic patch erasure. 
+
+Interpreting the certification gap. Defense success mea-sures if the recovered policy completes a task, whereas Cer-tified success additionally requires every executed query to satisfy the calibrated consistency test. A rollout may there-fore succeed yet remain uncertified because of one ambigu-ous observation. Small gaps indicate stable masked actions throughout an episode, while larger gaps expose queries that may gain from improved masked-model utility or calibration. 
+
+## Conclusion 
+
+CertVLA provides a certified defense for continuous closed-loop VLA control by combining position-normalized action consistency and episode-level calibration. Our analysis estab-lishes query- and rollout-level guarantees that relate certified actions to attack-erased predictions under bounded-support attacks, with task success further guaranteed when dual-mask rollout correctness holds. Experiments demonstrate both em-pirical defense effectiveness and certifiable robustness across VLA models and physical attacks. References 
+
+Black, K.; Brown, N.; Driess, D.; et al. 2024. π0: A Vision-Language-Action Flow Model for General Robot Control. 
+
+arXiv preprint arXiv:2410.24164 .Brohan, A.; Brown, N.; Carbajal, J.; et al. 2022. RT-1: Robotics Transformer for Real-World Control at Scale. arXiv preprint arXiv:2212.06817 .Brown, T. B.; Mané, D.; Roy, A.; Abadi, M.; and Gilmer, J. 2017. Adversarial Patch. arXiv preprint arXiv:1712.09665 .Chen, J.; Huang, S.; Du, J.; Chen, S.; Tian, Y.; Wei, M.; Yu, C.; and Yin, Z. 2026. Tex3D: Objects as Attack Surfaces via Adversarial 3D Textures for Vision-Language-Action Mod-els. arXiv preprint arXiv:2604.01618 .Chiang, P.-y.; Ni, R.; Abdelkader, A.; Zhu, C.; Studor, C.; and Goldstein, T. 2020. Certified Defenses for Adversarial Patches. In International Conference on Learning Represen-tations .Cohen, J.; Rosenfeld, E.; and Kolter, Z. 2019. Certified Ad-versarial Robustness via Randomized Smoothing. In Pro-ceedings of the 36th International Conference on Machine Learning , volume 97 of Proceedings of Machine Learning Research , 1310–1320. PMLR. Driess, D.; Xia, F.; Sajjadi, M. S. M.; et al. 2023. PaLM-E: An Embodied Multimodal Language Model. In International Conference on Machine Learning , volume 202 of Proceed-ings of Machine Learning Research .Fu, Y.; Zhang, C.; Gong, S.; Deng, Y.; Sun, K.; Min, Q.; Hou, Q.; Tang, Y.; Wang, J.; and Zhou, D. 2026. StableVLA: To-wards Robust Vision-Language-Action Models without Ex-tra Data. In International Conference on Machine Learning .Guo, J.; Wu, Z.; Tu, C.; Ma, Y.; Kong, X.; Liu, Z.; Ji, J.; Zhang, S.; Chen, Y.; Chen, K.; Liu, X.; Dou, Q.; Yang, Y.; Zhao, H.; Lv, W.; and Li, S. 2025. On Robustness of Vision-Language-Action Model against Multi-Modal Perturbations. 
+
+arXiv preprint arXiv:2510.00037 .Guo, Y.; and Kankanhalli, M. 2025. Scan: Bootstrapping contrastive pre-training for data efficiency. In Proceedings of the IEEE/CVF International Conference on Computer Vi-sion , 3662–3672. Guo, Y.; Nie, L.; Wong, Y.; Liu, Y.; Cheng, Z.; and Kankan-halli, M. 2022. A unified end-to-end retriever-reader frame-work for knowledge-based VQA. In Proceedings of the 30th ACM International Conference on Multimedia , 2061–2069. Han, H.; Xu, K.; Hu, X.; Chen, X.; Liang, L.; Du, Z.; Guo, Q.; Wang, Y.; and Chen, Y. 2021. ScaleCert: Scalable Certified Defense against Adversarial Patches with Sparse Superficial Layers. In Advances in Neural Information Processing Sys-tems , volume 34. Intelligence, P.; Amin, A.; Aniceto, R.; Balakrishna, A.; Black, K.; Conley, K.; Connors, G.; Darpinian, J.; Dhabalia, K.; DiCarlo, J.; et al. 2025. π∗
+
+> 0.6
+
+: a VLA That Learns From Experience. arXiv preprint arXiv:2511.14759 .Jacob, D.; Xiang, C.; and Mittal, P. 2025. PatchDEMUX: A Certifiably Robust Framework for Multi-label Classifiers Against Adversarial Patches. In IEEE/CVF Conference on Computer Vision and Pattern Recognition , 9944–9953. Jing, L.; Wang, R.; Ren, W.; Dong, X.; and Zou, C. 2024. PAD: Patch-Agnostic Defense against Adversarial Patch At-tacks. In Proceedings of the IEEE/CVF Conference on Com-puter Vision and Pattern Recognition , 24472–24481. Kim, M. J.; Finn, C.; and Liang, P. 2025. Fine-tuning vision-language-action models: Optimizing speed and suc-cess. arXiv preprint arXiv:2502.19645 .Kim, M. J.; Pertsch, K.; Karamcheti, S.; et al. 2025. Open-VLA: An Open-Source Vision-Language-Action Model. In 
+
+Conference on Robot Learning , volume 270, 2679–2713. PMLR. Levine, A.; and Feizi, S. 2020a. (De)Randomized Smoothing for Certifiable Defense against Patch Attacks. In Advances in Neural Information Processing Systems , volume 33. Levine, A.; and Feizi, S. 2020b. Robustness Certificates for Sparse Adversarial Attacks by Randomized Ablation. In Pro-ceedings of the AAAI Conference on Artificial Intelligence ,volume 34, 4585–4593. Li, L.; Cai, P.; Rossi, R. A.; Dernoncourt, F.; Kveton, B.; Wu, J.; Yu, T.; Song, L.; Yang, T.; Qin, Y.; Ahmed, N. K.; Basu, S.; Mukherjee, S.; Zhang, R.; Hu, Z.; Ni, B.; Zhou, Y.; Wang, Z.; Huang, Y.; Wang, Y.; Zhang, X.; Yu, P. S.; Hu, X.; and Zhao, Y. 2025a. A Personalized Conversa-tional Benchmark: Towards Simulating Personalized Con-versations. arXiv:2505.14106. Li, L.; Ji, W.; Wu, Y.; Li, M.; Qin, Y.; Wei, L.; and Zim-mermann, R. 2024. Panoptic Scene Graph Generation with Semantics-Prototype Learning. Proceedings of the AAAI Conference on Artificial Intelligence , 38(4): 3145–3153. Li, L.; Wang, C.; Qin, Y.; Ji, W.; and Liang, R. 2023a. Biased-Predicate Annotation Identification via Unbiased Vi-sual Predicate Representation. In Proceedings of the 31st ACM International Conference on Multimedia , MM ’23, 4410–4420. New York, NY, USA: Association for Comput-ing Machinery. ISBN 9798400701085. Li, S.; Cai, P.; Zhou, Y.; Ni, Z.; Liang, R.; Qin, Y.; Nian, Y.; Tu, Z.; Hu, X.; and Zhao, Y. 2025b. Secure On-Device Video OOD Detection Without Backpropagation. In International Conference on Computer Vision (ICCV) .Li, S.; Gong, H.; Dong, H.; Yang, T.; Tu, Z.; and Zhao, Y. 2025c. DPU: Dynamic Prototype Updating for Mul-timodal Out-of-Distribution Detection. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , 10193–10202. Li, X.; Liu, M.; Zhang, H.; et al. 2023b. Vision-Language Foundation Models as Effective Robot Imitators. arXiv preprint arXiv:2311.01378 .Liang, R.; Yang, Y.; Lu, H.; and Li, L. 2023. Efficient tempo-ral sentence grounding in videos with multi-teacher knowl-edge distillation. arXiv preprint arXiv:2308.03725 .Liu, B.; Zhu, Y.; Gao, C.; Feng, Y.; Liu, Q.; Zhu, Y.; and Stone, P. 2023. LIBERO: Benchmarking Knowledge Trans-fer for Lifelong Robot Learning. In Advances in Neural Information Processing Systems , volume 36. Liu, Z.; Gu, Y.; Wang, Y.; Xue, X.; and Fu, Y. 2026. Ac-tiveVLA: Injecting Active Perception into Vision-Language-Action Models for Precise 3D Robotic Manipulation. In Pro-ceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 8141–8151. Lu, H.; Yu, Y.; Xia, S.; Yang, Y.; Rajan, D.; Ng, B. P.; Kot, A.; and Jiang, X. 2025. From Pretrain to Pain: Adversar-ial Vulnerability of Video Foundation Models Without Task Knowledge. arXiv preprint arXiv:2511.07049 .Lu, H.; Yu, Y.; Yang, Y.; Yi, C.; Ke, X.; Zhang, Q.; Shen, B.; Kot, A.; and Jiang, X. 2026a. Universal Adversarial Attacks against Closed-Source MLLMs via Target-View Routed Meta Optimization. arXiv preprint arXiv:2601.23179 .Lu, H.; Yu, Y.; Yang, Y.; Yi, C.; Zhang, Q.; Shen, B.; Kot, A. C.; and Jiang, X. 2026b. When Robots Obey the Patch: Universal Transferable Patch Attacks on Vision-Language-Action Models. In IEEE/CVF Conference on Computer Vi-sion and Pattern Recognition , 22867–22878. Lyu, X.; Lin, C.-C.; Al Arafat, A.; von der Brüggen, G.; Chen, J.-J.; and Guo, Z. 2026. CertMask: Certifiable De-fense Against Adversarial Patches via Theoretically Optimal Mask Coverage. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 40, 7735–7743. McCoyd, M.; Park, W.; Chen, S.; Shah, N.; Roggenkemper, R.; Hwang, M.; Liu, J. X.; and Wagner, D. 2020. Minority Reports Defense: Defending Against Adversarial Patches. 
+
+arXiv preprint arXiv:2004.13799 .Octo Model Team; Ghosh, D.; et al. 2024. Octo: An Open-Source Generalist Robot Policy. In Robotics: Science and Systems .Open X-Embodiment Collaboration; O’Neill, A.; Rehman, A.; et al. 2023. Open X-Embodiment: Robotic Learn-ing Datasets and RT-X Models. arXiv preprint arXiv:2310.08864 .Physical Intelligence; Black, K.; Brown, N.; et al. 2025. π0.5:A Vision-Language-Action Model with Open-World Gener-alization. arXiv preprint arXiv:2504.16054 .Shawn, L.; Qu, J.; Song, L.; Zhou, Y.; Qin, Y.; Yang, T.; and Zhao, Y. 2025. Treble Counterfactual VLMs: A Causal Ap-proach to Hallucination. In Association for Computational Linguistics: EMNLP 2025 , 18423–18434. Suzhou, China: Association for Computational Linguistics. ISBN 979-8-89176-335-7. Tarchoun, B.; Ben Khalifa, A.; Mahjoub, M. A.; Abu-Ghazaleh, N.; and Alouani, I. 2023. Jedi: Entropy-Based Localization and Removal of Adversarial Patches. In Pro-ceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 4087–4095. Wang, T.; Liu, D.; Liang, J. C.; Yang, W.; Wang, Q.; Han, C.; Luo, J.; and Tang, R. 2025. Exploring the Adversarial Vul-nerabilities of Vision-Language-Action Models in Robotics. In IEEE/CVF International Conference on Computer Vision ,6948–6958. Xiang, C.; Bhagoji, A. N.; Sehwag, V.; and Mittal, P. 2021. PatchGuard: A Provably Robust Defense against Adversarial Patches via Small Receptive Fields and Masking. In 30th USENIX Security Symposium , 2237–2254. USENIX Asso-ciation. Xiang, C.; Mahloujifar, S.; and Mittal, P. 2022. Patch-Cleanser: Certifiably Robust Defense against Adversarial Patches for Any Image Classifier. In 31st USENIX Secu-rity Symposium , 2065–2082. USENIX Association. Xiang, C.; and Mittal, P. 2021. PatchGuard++: Efficient Provable Attack Detection against Adversarial Patches. arXiv preprint arXiv:2104.12609 .Xiang, C.; Wu, T.; Dai, S.; Petit, J.; Jana, S.; and Mittal, P. 2024. PatchCURE: Improving Certifiable Robustness, Model Utility, and Computation Efficiency of Adversarial Patch Defenses. In 33rd USENIX Security Symposium , 3675– 3692. USENIX Association. Xie, Y.; Yan, Y.; Zhao, Y.; Wang, H.; and Jin, Y. 2026. STRONG-VLA: Decoupled Robustness Learning for Vision-Language-Action Models under Multimodal Perturbations. 
+
+arXiv preprint arXiv:2604.10055 .Xu, K.; Xiao, Y.; Zheng, Z.; Cai, K.; and Nevatia, R. 2023. PatchZero: Defending Against Adversarial Patch Attacks by Detecting and Zeroing the Patch. In Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision , 4632–4641. Yang, Y.; Guo, Y.; Lu, H.; and Wang, Y. 2025. VidLBE-val: Benchmarking and Mitigating Language Bias in Video-Involved LVLMs. arXiv preprint arXiv:2502.16602 .Yankelev, I.; Grolman, E.; Levi, Y. Y.; Giloni, A.; Hofman, O.; Shimizu, T.; Elovici, Y.; and Shabtai, A. 2026. Anti-Styler: Defending Object Detection Models Against Adver-sarial Patch Attacks Using Style Removal. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 27936–27945. Yu, Y.; Xia, S.; Lin, X.; Kong, C.; Yang, W.; Lu, S.; Tan, Y.-P.; and Kot, A. C. 2025a. Towards Model Resistant to Transferable Adversarial Examples via Trigger Activation. 
+
+IEEE Transactions on Information Forensics and Security .Yu, Y.; Xia, S.; Lin, X.; Yang, W.; Lu, S.; Tan, Y.-P.; and Kot, A. 2025b. Backdoor attacks against no-reference image quality assessment models via a scalable trigger. In Pro-ceedings of the AAAI Conference on Artificial Intelligence ,volume 39, 9698–9706. Yu, Y.; Xia, S.; Yang, S.; Kong, C.; Yang, W.; Lu, S.; Tan, Y.; and Kot, A. C. 2025c. MTL-UE: Learning to Learn Nothing for Multi-Task Learning. CoRR , abs/2505.05279. Yu, Y.; Zheng, Q.; Yang, S.; Yang, W.; Liu, J.; Lu, S.; Tan, Y.-P.; Lam, K.-Y.; and Kot, A. 2024. Unlearnable examples detection via iterative filtering. In International Conference on Artificial Neural Networks , 241–256. Springer. Zitkovich, B.; et al. 2023. RT-2: Vision-Language-Action Models Transfer Web Knowledge to Robotic Control. In 
+
+Conference on Robot Learning , 2165–2183. PMLR.

@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-27</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-28</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 24 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 19 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>12</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>7</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>12</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-27 22:23:18 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-28 22:52:46 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共生成 24 篇推荐（精读 12 篇，速读 12 篇）</p>
-<p>精读：《ClawSentry: A Progressive Multi-Tier Security Monitor for Safeguarding Autonomous LLM Agents》（10.0/10）, 《ReFrame: Evidence-Guided Test-Time Safety Alignment in Multimodal Large Language Models》（9.0/10）</p>
-<p>速读：《Large Language Models at the Intersection of Software Engineering and Software Security:An Evidence-Centered Structured Survey and Research Agenda》（8.0/10）, 《On Predicting Vulnerability Severity Using In-Context Learning: An Industrial Case Study》（8.0/10）, 《Risk-Aware Reranking for Agentic Tool Retrieval》（8.0/10）</p>
+<p>今日共生成 19 篇推荐（精读 7 篇，速读 12 篇）</p>
+<p>精读：《ARQ: Agentic CodeQL Query Refinement for C/C++ Vulnerability Detection》（9.0/10）, 《Large Language Models at the Intersection of Software Engineering and Software Security:An Evidence-Centered Structured Survey and Research Agenda》（9.0/10）</p>
+<p>速读：《EVOMAL: Self-Poisoning in Self-Evolving Coding Agents》（8.0/10）, 《ADeptS-Bench: Measuring the Trustworthiness of Computer Use Agents Across Devices》（8.0/10）, 《When Tool Outputs Become Commands: Separating Action Induction from Runtime Authorization in Tool-Augmented LLM Agents》（8.0/10）</p>
 <p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
   </div>
 </section>
@@ -74,12 +74,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">12 篇</strong>
+    <strong class="dpr-home-dashboard-count">7 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ClawSentry: A Progressive Multi-Tier Security Monitor for Safeguarding Autonomous LLM Agents">ClawSentry: A Progressive Multi-Tier Security Monitor for Safeguarding Autonomous LLM Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="ReFrame: Evidence-Guided Test-Time Safety Alignment in Multimodal Large Language Models">ReFrame: Evidence-Guided Test-Time Safety Alignment in Multimodal Large Language Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="No One Model Catches Every Harm: Benchmarking Content Moderation Across Safety Scenarios">No One Model Catches Every Harm: Benchmarking Content Moderation Across Safety Scenarios</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ARQ: Agentic CodeQL Query Refinement for C/C++ Vulnerability Detection">ARQ: Agentic CodeQL Query Refinement for C/C++ Vulnerability Detection</span></li><li><span class="dpr-home-dashboard-paper-title" title="Large Language Models at the Intersection of Software Engineering and Software Security:An Evidence-Centered Structured Survey and Research Agenda">Large Language Models at the Intersection of Software Engineering and Software Security:An Evidence-Centered Structured Survey and Research Agenda</span></li><li><span class="dpr-home-dashboard-paper-title" title="When &quot;Must&quot; Becomes &quot;Maybe&quot;: Constraint Weakening in LLM Agent Workflows">When &quot;Must&quot; Becomes &quot;Maybe&quot;: Constraint Weakening in LLM Agent Workflows</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>11</strong></span><span class="dpr-home-dashboard-tag">vuldet <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>4</strong></span><span class="dpr-home-dashboard-tag">vuldet <strong>3</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -90,9 +90,9 @@
     <strong class="dpr-home-dashboard-count">12 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Large Language Models at the Intersection of Software Engineering and Software Security:An Evidence-Centered Structured Survey and Research Agenda">Large Language Models at the Intersection of Software Engineering and Software Security:An Evidence-Centered Structured Survey and Research Agenda</span></li><li><span class="dpr-home-dashboard-paper-title" title="On Predicting Vulnerability Severity Using In-Context Learning: An Industrial Case Study">On Predicting Vulnerability Severity Using In-Context Learning: An Industrial Case Study</span></li><li><span class="dpr-home-dashboard-paper-title" title="Risk-Aware Reranking for Agentic Tool Retrieval">Risk-Aware Reranking for Agentic Tool Retrieval</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="EVOMAL: Self-Poisoning in Self-Evolving Coding Agents">EVOMAL: Self-Poisoning in Self-Evolving Coding Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="ADeptS-Bench: Measuring the Trustworthiness of Computer Use Agents Across Devices">ADeptS-Bench: Measuring the Trustworthiness of Computer Use Agents Across Devices</span></li><li><span class="dpr-home-dashboard-paper-title" title="When Tool Outputs Become Commands: Separating Action Induction from Runtime Authorization in Tool-Augmented LLM Agents">When Tool Outputs Become Commands: Separating Action Induction from Runtime Authorization in Tool-Augmented LLM Agents</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>9</strong></span><span class="dpr-home-dashboard-tag">vuldet <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>10</strong></span><span class="dpr-home-dashboard-tag">vuldet <strong>2</strong></span></div>
 </section>
 </div>
 

@@ -1,0 +1,785 @@
+Faults That Fortify: CNN Adversarial Robustness
+via GPU Undervolting
+Behnam Omidi∗,Ahmad Tahmasivand∗, Husam Alsyouri∗, Saba Al-Sayouri†, Chongzhou Fang‡
+Ihsen Alouani§,and Khaled N. Khasawneh∗
+∗George Mason University, Fairfax, USA - Email: {bomidi, atahmasi, halsyour, kkhasawn}@gmu.edu
+†SecureMind Technologies Inc, Fairfax, USA - Email: saba@securemindtech.ai
+‡Rochester Institute of Technology, Rochester, USA - Email: cxfeec@rit.edu
+§Queen’s University, Belfast, UK - Email: i.alouani@qub.ac.uk
+Abstract—Convolutional Neural Networks (CNNs) face a dual
+challenge: vulnerability to adversarial attacks and prohibitive
+training cost. Adversarial training is effective but expensive, a
+burden that grows as learning shifts to the energy-constrained
+edge. This paper addresses both through GPU undervolting
+during training. Reducing supply voltage introduces stochastic
+perturbations in arithmetic that act as implicit regulariza-
+tion, improving robustness while lowering power. We charac-
+terize undervolting-induced faults at the bit level, then train
+LeNet, VGG-6, and MobileNetV3 on MNIST and CIFAR-10
+under two training regimes, standard and adversarial, each
+at nominal and undervolted voltage, and evaluate all models
+against adversarial attacks. In both regimes, the undervolted
+model consistently achieves higher adversarial accuracy than
+its nominal-voltage counterpart, showing that hardware-induced
+faults strengthen even adversarial training. Because dynamic
+power scales quadratically with supply voltage, these robustness
+gains arrive with substantial energy savings. GPU undervolting is
+therefore a readily deployable hardware-level defense requiring
+no algorithmic change, and opens a promising direction in which
+robustness and energy efficiency move together.
+Index Terms—Machine learning, Adversarial attacks, Fault
+injection, Undervolting, Power efficient training, AI Robustness.
+I. INTRODUCTION
+Convolutional Neural Networks (CNNs) have become a
+fundamental component of modern computer vision, enabling
+applications ranging from medical imaging to autonomous
+driving. However, training these models requires substantial
+computational resources, including high-performance GPUs
+and significant energy consumption [1]. These challenges are
+particularly pronounced in edge computing, where models
+are increasingly fine-tuned in addition to being deployed
+on resource-constrained platforms such as drones, wearable
+devices, and autonomous vehicles operating under stringent
+power budgets [2]. In such settings, the computational over-
+head of robustness-enhancing techniques is often prohibitive.
+Consequently, improving training efficiency while preserving
+both model accuracy and robustness has emerged as a critical
+research objective.
+Recent research focuses on the algorithmic level through
+quantization, pruning, and accelerator codesign [3], [4]. A
+complementary lever acts beneath it, where hardware modi-
+fications such as voltage scaling influence model performance
+Fig. 1: Workflow overview
+and learning dynamics [5]. Prior works have examined the se-
+curity implications of this behavior, showing how undervolting
+can be exploited to induce faults in controlled ways [6], [7],
+while also demonstrating its potential as a defensive mecha-
+nism that injects benign noise to disrupt adversarial attacks
+[8], [9], [10]. These undervolting-induced faults result from
+diminished voltage margins that degrade transistor switch-
+ing reliability, potentially causing timing violations, unstable
+storage behavior, and incorrect signal sampling during com-
+putation. Unlike memory-centric fault mechanisms, such as
+Rowhammer-induced DRAM disturbances or targeted weight
+corruption attacks [11], [12], [13], which involve persistent
+alterations to stored data and are addressed through corre-
+sponding mitigation approaches [14], [15], undervolting faults
+arise from transient disruptions in the underlying hardware
+execution process.
+It is also worth noting that these defensive mechanisms
+primarily operate during inference, where faults are introduced
+into an already trained model and are typically emulated
+through software-based injection [10], [8] rather than exper-
+imentally observed under undervolted hardware conditions.
+Consequently, the impact of transient faults during the training
+phase remains largely unexplored. In contrast, this work inves-
+tigates transient faults induced exclusively through undervolt-
+ing a physical GPU and examines whether such perturbations
+can be leveraged to beneficially influence training dynamics.
+arXiv:2608.20572v1  [cs.LG]  20 Aug 2026
+
+
+Undervolting injects subtle stochasticity into the arithmetic
+of learning itself, which may push the network toward flatter
+representations rather than the sharp decision boundaries that
+gradient-based attacks exploit. Because dynamic power scales
+quadratically with supply voltage, the same knob also lowers
+energy consumption. The technique therefore carries a dual
+benefit, greener training and more resilient models, from one
+hardware setting requiring no algorithmic change.
+To investigate this, we run standard and adversarial train-
+ing, each at nominal and undervolted GPU voltage, train-
+ing LeNet [16], VGG-6 [17], and MobileNetV3 [18] on
+MNIST [16] and CIFAR-10 [19] and evaluating all models
+against PGD attacks [20] across a range of perturbation
+budgets (Figure 1). In both regimes, the undervolted variant is
+consistently more robust than its nominal-voltage counterpart
+while consuming less energy.
+These findings represent an encouraging first step rather
+than a complete defense. Beyond demonstrating that under-
+volting can improve robustness against adversarial attacks
+while simultaneously offering energy-efficiency benefits, our
+results suggest a promising new research direction at the
+intersection of hardware reliability, energy optimization, and
+AI robustness. Building on these encouraging results, future
+work in this area is encouraged to further explore bit-level
+fault behavior and extend evaluations to larger foundation and
+quantized models, where both robustness dynamics and energy
+savings may become even more pronounced. The contributions
+of this paper are summarized as follows.
+• We characterize the computational faults induced by un-
+dervolting on a real GPU, showing that they are stochastic
+yet controllable.
+• We propose training-time undervolting as a novel means
+of improving CNN robustness on GPUs, demonstrat-
+ing that hardware-generated noise during training is a
+practical, easily deployable, and energy-efficient security
+mechanism.
+• We evaluate undervolting under both standard and adver-
+sarial training and show that it improves robustness in
+both regimes.
+• We quantify the resulting power reduction, showing that
+these robustness gains arrive alongside measurable energy
+savings and acceptable computational reliability.
+II. BACKGROUND AND RELATED WORK
+A. Undervolting-Induced Faults
+Undervolting, the reduction of a circuit’s supply voltage
+below its nominal level, is an effective way to improve
+energy efficiency in high-performance systems such as GPUs,
+since dynamic power scales approximately with the square
+of the supply voltage. The same reduction, however, slows
+transistor switching and degrades circuit timing, producing
+computational instability and transient faults. The quantitative
+relation between voltage, delay, and error probability therefore
+determines how undervolting affects GPU-based deep learn-
+ing.
+Impact on Power Consumption: Total GPU power is the sum
+of dynamic and static components,
+Ptotal = Pdyn + Pstatic = αsCLV 2
+ddfclk + IleakVdd,
+(1)
+where αs is the switching activity factor, CL the effective load
+capacitance, fclk the clock frequency, and Ileak the leakage
+current. Because Pdyn scales quadratically with Vdd while
+Pstatic decreases linearly, lowering the voltage reduces both
+terms, at the cost of timing reliability.
+Voltage-Delay Relationship and Timing Faults: The prop-
+agation delay td of a CMOS logic gate depends strongly on
+the supply voltage,
+td ∝
+Vdd
+(Vdd −Vth)α ,
+td ≤Tclk =
+1
+fclk
+,
+(2)
+where Vth is the threshold voltage, α (typically between 1
+and 2) the velocity saturation index, and Tclk the clock period.
+Correct operation requires the second condition to hold on
+every logic path. When undervolting pushes td beyond Tclk,
+timing violations occur and produce incorrect outputs or tran-
+sient faults. The likelihood of such faults grows exponentially
+as the voltage margin shrinks,
+Pfault ≈e−β(Vdd−Vmin),
+(3)
+where Vmin is the minimum stable voltage and β a hardware-
+dependent sensitivity constant. As Vdd approaches Vmin, the
+system transitions sharply from reliable computation to fre-
+quent soft errors. In GPU workloads these faults appear mainly
+as small perturbations in floating-point arithmetic,
+˜y = y + δ(Vdd),
+(4)
+where y is the correct output, ˜y the computed result un-
+der undervolting, and δ(Vdd) voltage-dependent noise whose
+variance grows as the voltage is lowered. Mild undervolting
+therefore introduces stochastic noise, whereas aggressive un-
+dervolting causes substantial numerical instability.
+Implications for Deep Learning: Such faults are not always
+harmful. Neural networks tolerate low-level noise because of
+their distributed representations, and the random errors in-
+duced by undervolting may act as a regularizer comparable to
+dropout or weight noise, potentially improving generalization
+and robustness. Excessive undervolting, in contrast, disrupts
+gradient-based optimization and degrades convergence and
+accuracy.
+B. Randomization-based Defenses
+Convolutional Neural Networks (CNNs) remain vulnerable
+to adversarial perturbations, small crafted input changes that
+drastically alter predictions. Randomization-based defenses
+counter this threat by injecting stochasticity into inference
+or training so that the structured gradients attackers rely on
+become unreliable. Randomness has been applied at three
+levels: to inputs, through stochastic resizing, padding, and
+augmentation
+[21], [22]; to intermediate features, through
+2
+
+
+noise injection that turns a single network into an implicit
+ensemble of stochastic models [23]; and to parameters, through
+Monte Carlo dropout, Bayesian uncertainty modeling, and
+stochastic quantization or weight noise [24]. Randomized
+smoothing formalizes the idea by averaging predictions under
+Gaussian noise to obtain probabilistic robustness guarantees
+within a norm-ball [25], [26], with later variants improving
+certified robustness at comparable accuracy [27], [24].
+The
+paradigm
+has
+known
+limits.
+Expectation-over-
+transformation attacks recover usable gradients by averaging
+over the randomization itself [28], and excessive noise
+degrades clean-input accuracy, so the degree of stochasticity
+requires calibration. Randomization nevertheless remains a
+flexible and inexpensive route to robustness, and hardware-
+level stochastic effects such as those induced by GPU
+undervolting extend it by supplying intrinsic randomization
+during training at no additional computational cost, while
+leaving inference deterministic.
+III. PROPOSED METHODOLOGY
+We propose a training methodology that exploits hardware-
+level undervolting to inject beneficial stochastic noise into
+CNN training. This section defines the threat model, for-
+malizes how undervolting-induced faults enter the learning
+process, and describes the training procedure and operating-
+point selection.
+A. Threat Model
+We consider the standard white-box evasion setting: the
+adversary has full knowledge of the trained model’s architec-
+ture and parameters and crafts Lp-bounded perturbations using
+first-order methods, instantiated in our evaluation as PGD over
+a range of budgets ϵ. The adversary attacks the deployed
+model, which executes at nominal voltage; the defender con-
+trols only the hardware configuration of the training process.
+We assume the defender’s GPU supports voltage adjustment
+through standard driver tooling and that training completes
+without fatal faults, a condition enforced by the operating-
+point selection in Section III-C. Fault-injection attacks on the
+model itself [11], [12], [13] are outside our scope.
+B. Undervolting as a Training-Time Noise Source
+As established in Section II, operating below nominal
+voltage perturbs individual arithmetic operations as ˜y = y +
+δ(Vdd), where the variance of δ grows as voltage decreases.
+During training, every operation in the forward pass, back-
+ward pass, and weight update is subject to such perturbation.
+The parameter update at step t is therefore effectively
+wt+1 = wt −η (∇L(wt) + δt) ,
+(5)
+where η is the learning rate, L the training loss, and δt aggre-
+gates the voltage-induced perturbations accumulated through
+the computation of the gradient. Unlike software-based noise
+injection, which adds computation and targets a chosen site
+(inputs, activations, or weights), δt arises in every operation
+at zero computational cost and with no modification to the
+training pipeline. Rather than suppressing these perturbations
+as errors, we treat them as intrinsic noise regularization,
+consistent with prior evidence that stochastic noise applied
+during training improves adversarial robustness [25]. Because
+per-operation perturbations concentrate in low-significance
+mantissa bits (Section V-A), they are small enough for op-
+timization to converge to full clean accuracy, yet pervasive
+enough that their cumulative effect shapes the learned solution.
+At deployment, the model executes at nominal voltage; no
+faults occur at inference and the model’s outputs are fully
+deterministic.
+C. Training Procedure and Operating-Point Selection
+For each architecture–dataset pair, we sweep voltage–
+frequency operating points downward from nominal and select
+the lowest voltage at which training reliably completes, the
+point of maximum fault incidence short of instability. The
+GPU is held at this voltage for the entire training run,
+so perturbations act on every iteration from initialization to
+convergence.
+We evaluate the method under a 2×2 design: two training
+regimes, standard and adversarial, each executed at nominal
+and undervolted voltage with matched random seeds, weight
+initializations, and hyperparameters, so that within each regime
+the applied voltage is the only systematic difference between
+runs. Adversarial noise is deliberately crafted to maximize
+model error within a constrained threat model, whereas un-
+dervolting noise arises from hardware fluctuations outside
+the nominal voltage margin; because the two differ in both
+origin and statistical properties, we hypothesize that they act
+as complementary robustness mechanisms. In the adversarial
+regime, on-the-fly PGD example generation executes under the
+same voltage condition as the weight updates, since both are
+components of the training process. All trained models are
+evaluated identically at nominal voltage.
+IV. EXPERIMENTAL SETUP
+All experiments used PyTorch on a dedicated server with
+an NVIDIA RTX 3090 GPU, which provides 10,496 CUDA
+cores and 24 GB of GDDR6X memory. Undervolting was
+applied through MSI Afterburner, which exposes voltage
+in 6 mV steps and frequency in 15 MHz steps, fine enough to
+explore the energy-accuracy trade-off across operating points
+systematically.
+We evaluated three architectures spanning a range of depths
+and computational budgets: the classical LeNet, a lightweight
+VGG-6, and MobileNetV3. Training used two benchmark
+image-classification datasets, MNIST and CIFAR-10. MNIST
+offers a clean, low-complexity setting for controlled obser-
+vation of basic behavior, while CIFAR-10 demands deeper
+feature extraction and exercises undervolting under heavier
+computational load. To evaluate the robustness of the model,
+we employed the untargeted PGD attack implemented in the
+torchattacks version 3.5.1 library with α = 0.007 and
+100 optimization steps, varying the perturbation budget ϵ until
+the model accuracy approached zero.
+3
+
+
+23
+0
+0
+1
+2
+3
+4
+5
+6
+Bit Flip (%)
+Sign
+Exponent
+(8 bits)
+Mantissa
+(23 bits)
+Flip 1 
+ 0 (bottom)
+Flip 0 
+ 1 (top, lighter)
+(a) Bit flip distribution across bit position
+0.0
+0.5
+1.0
+1.5
+2.0
+1e38
+0%
+22%
+44%
+66%
+87%
+Density
+(b) Diversity
+31
+28
+25
+22
+19
+16
+13
+10
+7
+4
+1
+# Bit Flips
+0
+2
+4
+6
+8
+10
+12
+Bit Flip (%)
+(c) Number of bit flips
+Fig. 2: Impact of undervolting on multiplication in GPU
+0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+0.30
+0.35
+0.40
+ (Noise Budget)
+0
+20
+40
+60
+80
+100
+accuracy (%)
+acc_normal
+acc_undervolt
+(a) LeNet-MNIST
+0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+0.30
+0.35
+0.40
+ (Noise Budget)
+0
+20
+40
+60
+80
+100
+accuracy (%)
+acc_normal
+acc_undervolt
+(b) VGG-6-MNIST
+0.000
+0.001
+0.002
+0.003
+0.004
+0.005
+0.006
+0.007
+ (Noise Budget)
+0
+20
+40
+60
+80
+100
+accuracy (%)
+acc_normal
+acc_undervolt
+(c) MobileNet-V3-CIFAR-10
+Fig. 3: Comparison of the robustness of original models trained under normal GPU operation and undervolted GPU conditions
+using adversarial samples generated with various noise budgets
+V. EVALUATION
+A. Characterizing Undervolting-Induced Faults
+Before evaluating training outcomes, we characterize the
+faults undervolting induces on our GPU, since these faults
+are the noise source our method relies on. Prior characteri-
+zations were performed on CPUs [10] and FPGAs [29], [9],
+where undervolting measurably perturbs inference computa-
+tion; whether GPU faults behave comparably has not been
+examined.
+We recreated the core experiment of [10], originally con-
+ducted on a CPU, multiplying two tensors repeatedly, a billion
+times in our case, to amplify faults until bit-level errors be-
+come measurable. We ran the computation at nominal voltage
+and at the lowest stable undervolted setting the hardware sup-
+ports, then compared outputs bit by bit, tracking the number
+of flips and their distribution across the 32-bit floating-point
+representation. Figure 2 reports the frequency of flips and the
+direction of each transition per bit position.
+Nearly all observed flips fall in the mantissa, with far fewer
+in the exponent field. Mantissa bits encode fine-grained preci-
+sion rather than large numeric shifts, so each fault perturbs a
+result by an amount well below the sensitivity threshold of a
+trained network. Consistent with this, we verified that a trained
+model’s inference accuracy is nearly identical at nominal and
+undervolted voltage on our GPU, in contrast to the degradation
+reported on other platforms [29]; individual faults are simply
+too small to alter predictions in a single forward pass.
+This characterization explains why undervolted training
+remains viable and beneficial. Because per-operation pertur-
+bations are small, stochastic, and unbiased, gradient descent
+tolerates them and converges to full clean accuracy. Because
+they are injected into every arithmetic operation across mil-
+lions of training iterations, their cumulative effect nonetheless
+shapes the optimization, acting as the implicit regularization
+whose impact on robustness we evaluate next.
+B. Undervolted Training
+Figure 3 contrasts standard and undervolted training under
+adversarial perturbation. For each model we first trained con-
+ventionally at nominal GPU voltage, then generated adversar-
+ial samples with PGD, sweeping over a range of perturbation
+budgets. The resulting accuracies form the blue curve in the
+figure and show the expected degradation as perturbation
+strength grows.
+We then repeated the pipeline on the same datasets with the
+GPU held at the lowest voltage at which the system remained
+stable, producing what we call the undervolted model.
+Table I reports the voltage and frequency for nominal and
+undervolted operation together with the resulting power im-
+provement. Frequency is unchanged between the two settings,
+so the reduction is attributable to voltage alone.
+Turning to robustness, Figure 3 shows that the gap between
+the two training regimes widens as the adversarial budget
+grows; baseline models lose accuracy rapidly under stronger
+perturbations, consistent with the documented vulnerability of
+4
+
+
+0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+0.30
+0.35
+0.40
+ (Noise Budget)
+0
+20
+40
+60
+80
+100
+accuracy (%)
+acc_normal
+acc_undervolt
+(a) LeNet-MNIST
+0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+0.30
+0.35
+0.40
+ (Noise Budget)
+0
+20
+40
+60
+80
+100
+accuracy (%)
+acc_normal
+acc_undervolt
+(b) VGG-6-MNIST
+0.000 0.001 0.002 0.003 0.004 0.005 0.006 0.007 0.008
+ (Noise Budget)
+0
+20
+40
+60
+80
+100
+accuracy (%)
+acc_normal
+acc_undervolt
+(c) MobileNet-V3-CIFAR-10
+Fig. 4: Comparison of the robustness of adversarial-trained models trained under normal GPU operation and undervolted GPU
+conditions using adversarial samples generated with various noise budgets
+TABLE I: Voltage, Frequency, and Power Improvement Across
+Models
+Model
+Nominal
+Voltage (V)
+Undervolted
+Voltage (V)
+Frequency
+(MHz)
+Power Im-
+provement
+(%)
+LeNet
+1.031
+0.806
+1980
+38.8
+VGG-6
+1.031
+0.837
+1980
+33.9
+MobileNet
+1.031
+0.806
+1980
+38.8
+CNNs, while undervolted models retain higher accuracy across
+all budgets at which either retains nonzero accuracy. The
+trend holds across every architecture and dataset evaluated, so
+controlled hardware-level noise introduced during training acts
+as an implicit regularizer that improves adversarial robustness,
+perhaps by favoring flatter minima or by exposing the network
+to fluctuations that resemble adversarial distortion.
+The gain was not uniform across different models, however,
+it was noticeably smaller for larger, deeper models such
+as MobileNetV3 (Figure 3c). We attribute this to greater
+fault masking in their deeper convolutional and intermediate
+computations, where the many nonlinear stages and pooling
+operations tend to absorb small perturbations before they
+propagate to the output. This interpretation is reinforced by
+our fault characterization, which shows that most observed
+faults occurred in lower-significance bits (Figure 2a), whose
+corruption is more easily tolerated by an already redundant
+representation. As future work, we plan to evaluate larger
+models with a higher proportion of linear layers, which offer
+fewer masking opportunities, to better understand how this
+robustness behavior generalizes across network depth and
+structure.
+C. Undervolted Adversarial Training
+To test the complementarity hypothesized in Section III-C,
+we performed adversarial training under nominal and un-
+dervolted conditions. Both runs followed the standard PGD
+procedure: adversarial examples were generated on-the-fly
+from the model’s current parameters at each iteration and
+used to update the weights, keeping the model exposed to
+perturbations throughout training.
+We then evaluated both models across a wide range of
+PGD attack strengths. Figure 4 compares the two. The un-
+dervolted version is consistently more robust across every
+architecture and dataset, with the margin widening at medium
+to high perturbation budgets where the baseline begins to
+deteriorate. The gain is notable given that adversarial training
+already ranks among the strongest available defenses, yet
+undervolting-induced noise improves it further.
+VI. DISCUSSION AND FUTURE WORK
+The proposed undervolting-based approach demonstrated
+noticeable improvements over the baseline, highlighting its
+effectiveness as a promising technique for enhancing both the
+robustness and energy efficiency of AI models. Although the
+current results are preliminary, they provide strong evidence
+that undervolting can be leveraged not only as a power
+optimization technique but also as a mechanism for improving
+model resilience, introducing a new research direction at the
+intersection of energy-efficient computing and AI robustness.
+Neural networks and AI now serve as the backbone of a
+wide range of application domains [30], [31], so a hardware-
+level defense is only valuable insofar as it transfers beyond
+the architectures evaluated here. Building on these encouraging
+results, several directions will be explored in future work. First,
+we plan to extend the evaluation to larger and more complex
+foundation models particularly those with a higher proportion
+of linear layers, which offer fewer masking opportunities as
+well as quantized and other optimized AI models, to assess
+the generality and scalability of the approach. We also intend
+to investigate more advanced voltage and frequency scaling
+strategies to identify optimal operating points that maximize
+robustness while preserving computational efficiency. Another
+important direction is the characterization and localization of
+undervolting-induced bit-flips. By analyzing where bit-flips
+occur, their frequency, and their impact on model behavior, we
+aim to better understand fault propagation under undervolting
+conditions and support the development of more targeted and
+effective undervolting strategies.
+VII. CONCLUSION
+This study demonstrates that controlled GPU undervolt-
+ing offers a promising avenue for enhancing the robustness
+5
+
+
+of CNNs while simultaneously reducing GPU energy con-
+sumption. By characterizing the stochastic faults induced by
+lowering voltage on real GPUs, we show that hardware-level
+perturbations can act as an implicit regularizer, improving
+generalization and resilience to both natural and adversarial
+input variations, without significant degradation in model
+accuracy. This work opens a new perspective at the intersection
+of GPU hardware and machine learning, motivating future
+research on larger foundation models.
+REFERENCES
+[1] D.
+Patterson,
+J.
+Gonzalez,
+Q.
+Le,
+C.
+Liang,
+L.-M.
+Munguia,
+D. Rothchild, D. So, M. Texier, and J. Dean, “Carbon emissions and
+large neural network training,” arXiv preprint arXiv:2104.10350, 2021.
+[2] J. Lin, L. Zhu, W.-M. Chen, W.-C. Wang, C. Gan, and S. Han, “On-
+device training under 256kb memory,” Advances in Neural Information
+Processing Systems, vol. 35, pp. 22 941–22 954, 2022.
+[3] G. Menghani, “Efficient deep learning: A survey on making deep
+learning models smaller, faster, and better,” ACM Computing Surveys,
+vol. 55, no. 12, pp. 1–37, 2023.
+[4] A. Gholami, S. Kim, Z. Dong, Z. Yao, M. W. Mahoney, and K. Keutzer,
+“A survey of quantization methods for efficient neural network infer-
+ence,” in Low-power computer vision.
+Chapman and Hall/CRC, 2022,
+pp. 291–326.
+[5] J. Leng, A. Buyuktosunoglu, R. Bertran, P. Bose, and V. J. Reddi, “Safe
+limits on voltage reduction efficiency in gpus: A direct measurement
+approach,” in Proceedings of the 48th International Symposium on
+Microarchitecture, 2015, pp. 294–307.
+[6] J. Juffinger, S. Kalinin, D. Gruss, and F. Mueller, “Suit: Secure un-
+dervolting with instruction traps,” in Proceedings of the 29th ACM
+International Conference on Architectural Support for Programming
+Languages and Operating Systems, Volume 2, 2024, pp. 1128–1145.
+[7] A. Tang, S. Sethumadhavan, and S. Stolfo, “{CLKSCREW}: Exposing
+the perils of {Security-Oblivious} energy management,” in 26th USENIX
+Security Symposium (USENIX Security 17), 2017, pp. 1057–1074.
+[8] S. Majumdar, M. H. Samavatian, K. Barber, and R. Teodorescu, “Us-
+ing undervolting as an on-device defense against adversarial machine
+learning attacks,” in 2021 IEEE International Symposium on Hardware
+Oriented Security and Trust (HOST).
+IEEE, 2021, pp. 158–169.
+[9] M. S. Islam, B. Omidi, I. Alouani, and K. N. Khasawneh, “Vpp:
+Privacy preserving machine learning via undervolting,” in 2023 IEEE
+International Symposium on Hardware Oriented Security and Trust
+(HOST).
+IEEE, 2023, pp. 315–325.
+[10] S. Islam, I. Alouani, and K. N. Khasawneh, “Lower voltage for higher
+security: Using voltage overscaling to secure deep neural networks,” in
+2021 IEEE/ACM International Conference On Computer Aided Design
+(ICCAD).
+IEEE, 2021, pp. 1–9.
+[11] Z. Coalson, J. Woo, S. Chen, Y. Sun, L. Yang, P. Nair, B. Fang, and
+S. Hong, “Prisonbreak: Jailbreaking large language models with fewer
+than twenty-five targeted bit-flips,” arXiv preprint arXiv:2412.07192,
+2024.
+[12] N. Zahran, A. Tahmasivand, I. Alouani, K. Khasawneh, and M. Fouda,
+“On jailbreaking quantized language models through fault injection
+attacks,” in Proceedings of the Great Lakes Symposium on VLSI 2025,
+2025, pp. 554–561.
+[13] S. K. Abharian and S. M. P. Dinakarrao, “Gbfa: Gradual bit-flip fault
+attack on graph neural network accelerators,” in 2026 27th International
+Symposium on Quality Electronic Design (ISQED).
+IEEE, 2026, pp.
+1–8.
+[14] A. Tahmasivand, N. Zahran, S. Al-Sayouri, M. Fouda, and K. N.
+Khasawneh, “Lm-fix: Lightweight bit-flip detection and rapid recovery
+framework for language models,” in 2025 IEEE 43rd International
+Conference on Computer Design (ICCD).
+IEEE, 2025, pp. 432–440.
+[15] N. Nazari, H. M. Makrani, C. Fang, H. Sayadi, S. Rafatirad, K. N.
+Khasawneh, and H. Homayoun, “Forget and rewire: Enhancing the
+resilience of transformer-based models against {Bit-Flip} attacks,” in
+33rd USENIX Security Symposium (USENIX Security 24), 2024, pp.
+1349–1366.
+[16] Y. LeCun, “The mnist database of handwritten digits,” http://yann. lecun.
+com/exdb/mnist/, 1998.
+[17] K. Simonyan and A. Zisserman, “Very deep convolutional networks
+for large-scale image recognition,” in 3rd international conference on
+learning representations (ICLR 2015).
+Computational and Biological
+Learning Society, 2015.
+[18] A. Howard, M. Sandler, B. Chen, W. Wang, L.-C. Chen, M. Tan, G. Chu,
+V. Vasudevan, Y. Zhu, R. Pang et al., “Searching for mobilenetv3,” in
+2019 IEEE/CVF international conference on computer vision (ICCV).
+IEEE, 2019, pp. 1314–1324.
+[19] A. Krizhevsky, G. Hinton et al., “Learning multiple layers of features
+from tiny images,” 2009.
+[20] A. Madry, A. Makelov, L. Schmidt, D. Tsipras, and A. Vladu, “Towards
+deep learning models resistant to adversarial attacks,” in International
+conference on learning representations, 2018.
+[21] C. Xie, J. Wang, Z. Zhang, Z. Ren, and A. Yuille, “Mitigating adversarial
+effects through randomization,” arXiv preprint arXiv:1711.01991, 2017.
+[22] G. S. Dhillon, K. Azizzadenesheli, Z. C. Lipton, J. Bernstein, J. Kossaifi,
+A. Khanna, and A. Anandkumar, “Stochastic activation pruning for
+robust adversarial defense,” arXiv preprint arXiv:1803.01442, 2018.
+[23] X. Liu, M. Cheng, H. Zhang, and C.-J. Hsieh, “Towards robust neural
+networks via random self-ensemble,” in Proceedings of the european
+conference on computer vision (ECCV), 2018, pp. 369–385.
+[24] H. Hong and Y. Hong, “Certified adversarial robustness via anisotropic
+randomized smoothing,” arXiv preprint arXiv:2207.05327, 2022.
+[25] M. Lecuyer, V. Atlidakis, R. Geambasu, D. Hsu, and S. Jana, “Certified
+robustness to adversarial examples with differential privacy,” in 2019
+IEEE symposium on security and privacy (SP).
+IEEE, 2019, pp. 656–
+672.
+[26] J. Cohen, E. Rosenfeld, and Z. Kolter, “Certified adversarial robustness
+via randomized smoothing,” in international conference on machine
+learning.
+PMLR, 2019, pp. 1310–1320.
+[27] Z. Hao, C. Ying, Y. Dong, H. Su, J. Song, and J. Zhu, “Gsmooth:
+Certified robustness against semantic transformations via generalized
+randomized smoothing,” in International Conference on Machine Learn-
+ing.
+PMLR, 2022, pp. 8465–8483.
+[28] A. Athalye, N. Carlini, and D. Wagner, “Obfuscated gradients give a
+false sense of security: Circumventing defenses to adversarial examples,”
+in International conference on machine learning.
+PMLR, 2018, pp.
+274–283.
+[29] B. Salami, E. B. Onural, I. E. Yuksel, F. Koc, O. Ergin, A. C.
+Kestelman, O. Unsal, H. Sarbazi-Azad, and O. Mutlu, “An experimental
+study of reduced-voltage operation in modern fpgas for neural network
+acceleration,” in 2020 50th Annual IEEE/IFIP International Conference
+on Dependable Systems and Networks (DSN).
+IEEE, 2020, pp. 138–
+149.
+[30] M. Hariri, W. Chen, N. Shahini, V. Singh, K. Ye, A. Samandar,
+D. Ganguly, S. Sankar, Y. Zhang, S. Wang et al., “Test-time scaling
+in reasoning llms: Inference regimes, evaluation, and reproducibility,”
+arXiv preprint arXiv:2608.04001, 2026.
+[31] M. Hadi Nezhad, F. E. V. Castro, E. Mak, P. J. Haas, D. Allessio,
+L. Osterweil, I. Rasul, H. Conboy, and I. Arroyo, “Embedding ethical
+awareness in computer science and ai education: the pearce approach
+to responsible computing,” in International Conference on Artificial
+Intelligence in Education.
+Springer, 2025, pp. 135–149.
+6

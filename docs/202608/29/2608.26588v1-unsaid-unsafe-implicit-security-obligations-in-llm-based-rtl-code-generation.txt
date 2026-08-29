@@ -1,0 +1,2166 @@
+IEEE TRANSACTIONS ON DEPENDABLE AND SECURE COMPUTING
+1
+Unsaid, Unsafe? Implicit Security Obligations in
+LLM-Based RTL Code Generation
+Guang Yang, Xing Hu∗, Xiang Chen, and Xin Xia
+Abstract—Large Language Models (LLMs) generate register-transfer-level (RTL) code with rapidly improving functional correctness.
+Security of LLM-generated code, however, has been studied mainly for software, where flaws can still be patched after deployment.
+Insecure RTL offers no such remedy once taped out into silicon. We construct SECRTL-GEN, a multi-language resource-access
+security benchmark grounded in real SoC IP: 392 tasks over five CWE families and four HDLs (Verilog, SystemVerilog, VHDL, and
+Python), each with black-box functional and security testbenches. Functional specifications intentionally omit security obligations,
+matching how obligations are often kept out of functional docs in practice. An empirical study of five frontier LLMs shows a sharp gap:
+under vanilla prompts they pass functional tests in about 73–79% of cases but security tests in only 14–35%, and stronger functional
+models are not safer. Adding CWE knowledge raises security, while unaided self-thinking helps less and both security-oriented
+prompts cut functional pass rates, showing that the bottleneck is missing weakness awareness in the specification, not an inability to
+write defensive RTL. We present RTL-Obliger, a neuro-symbolic framework that infers these implicit obligations. An LLM extracts a
+functional-semantic graph from the specification; a symbolic engine then matches it against a CWE pattern ontology to surface
+mitigation-evidence gaps and signal-level obligations; the LLM finally revises RTL under those obligations in a functionality-preserving
+two-stage generation. Across five models and four languages, RTL-Obliger raises mean all-pass from 49.6–51.4% (SecV/RESCUE) to
+61.6%, with higher security and functional rates than these secure-generation baselines.
+Index Terms—Large Language Models, RTL Code Generation, Hardware Security
+✦
+1
+INTRODUCTION
+L
+ARGE language models (LLMs) are increasingly used to
+generate register-transfer-level (RTL) code [1], [2], [3].
+Functional pass rates keep rising, but security has received
+far less attention. This gap matters more for hardware than
+for software. Software vulnerabilities can often be patched
+after deployment. Insecure RTL is baked into silicon after
+tape-out and cannot be fixed in the field.
+The security of LLM-generated software is already a
+known concern [4], [5]. Hardware raises a sharper question:
+given only a functional specification, does the model also
+enforce the defenses a safe design needs? In practice, that
+specification states what the module should do, while many
+required defenses live in separate security configurations,
+threat models, or review checklists. We call these implicit
+security obligations: constraints still required of a safe
+implementation, yet not entailed by the written functional
+specification (§2.3). Human designers can recover them
+from those external sources; but the LLM sees only the
+functional text, so the obligations never enter its input.
+OpenTitan illustrates the pattern: countermeasures appear
+in machine-readable configuration files, not in the functional
+IP description [6], [7]. Standard benchmark-style prompts go
+further: they typically contain no security-obligation content
+•
+G. Yang is with the State Key Laboratory of Blockchain and Data Security,
+Zhejiang University, Hangzhou, China, and also with the Hangzhou
+High-Tech Zone (Binjiang) Institute of Blockchain and Data Security,
+Hangzhou, China.
+•
+X. Hu and X. Xia are with the State Key Laboratory of Blockchain and
+Data Security, Zhejiang University, Hangzhou, China.
+•
+X. Chen is with the School of Artificial Intelligence and Computer Science,
+Nantong University, Nantong, China.
+•
+Corresponding author: Xing Hu (e-mail: xinghu@zju.edu.cn). Other e-
+mails: novelyg@outlook.com, xin.xia@acm.org, xchencs@ntu.edu.cn.
+Manuscript received XXX XX, 2026; revised XXX XX, 2026.
+at all.
+Existing work does not close this gap. RTL generation
+benchmarks mainly score functional simulation [2], [3], [8].
+Recent security benchmarks and audits show that LLM-
+written RTL can pass functional checks and still fail security
+tests [9], [10], but they do not focus on real SoC IP under
+multi-HDL, obligation-omitted prompts. Secure-generation
+methods such as SecV [11] and RESCUE [12] inject CWE
+knowledge through graph exploration or retrieval. They
+still rely on the LLM to turn coarse guidance into design-
+specific constraints, which is exactly where our controlled
+study finds the bottleneck (§3).
+This paper asks two linked questions. First, how large is
+the functional–security gap when LLMs generate RTL from
+security-incomplete specifications? Second, can we infer the
+missing obligations and use them to generate secure RTL
+without breaking functionality? We scope both questions to
+resource-access weaknesses that are port-observable under
+black-box simulation, matching the families covered by
+SECRTL-GEN.
+We build SECRTL-GEN (§3.1) to measure the gap. Em-
+pirically, many implicit obligations appear as mitigation-
+evidence gaps: the specification shows weakness precondi-
+tions (for example, a reusable secret register is written) but
+not the required mitigation. If the specification is lifted into
+a checkable evidence model, and complete mitigation pat-
+terns are stored in a reusable ontology, obligation inference
+becomes a deterministic signal-level check rather than open-
+ended guessing. We therefore present RTL-Obliger (§4): an
+LLM extracts a functional-semantic graph; a symbolic en-
+gine matches it against a CWE pattern ontology to emit
+signal-level obligations; and the LLM revises RTL in two
+stages, first a functional draft and then local obligation-
+arXiv:2608.26588v1  [cs.CR]  27 Aug 2026
+
+
+IEEE TRANSACTIONS ON DEPENDABLE AND SECURE COMPUTING
+2
+guided edits. On SECRTL-GEN, five frontier LLMs under
+vanilla prompts pass functional tests in 73–79% of cases but
+security tests in only 14–35%; RTL-Obliger raises mean all-
+pass from 49.6–51.4% (SecV/RESCUE) to 61.6%.
+In summary, we make four contributions:
+• SECRTL-GEN: a 392-task, four-HDL security benchmark
+from real SoC IP, with black-box functional and security
+tests under obligation-omitted specifications (§3.1).
+• Empirical study: five LLMs reach 73–79% functional pass
+but only 14–35% security pass; CWE knowledge helps
+more than self-thinking, and security prompting lowers
+functional pass (§3).
+• RTL-Obliger: a neuro-symbolic method that infers signal-
+level obligations from a functional-semantic graph and
+a CWE ontology, then applies them in two-stage RTL
+generation (§4).
+• Evaluation: RTL-Obliger raises mean all-pass from 49.6–
+51.4% (SecV/RESCUE) to 61.6%; symbolic inference is
+the main gain, and residual failures center on obligation-
+guided generation and matching recall (§5.1–§5.3).
+To facilitate the replication of RTL-Obliger, we make our
+datasets and source code publicly available on GitHub.1
+Paper structure. Section 2 reviews LLM-based RTL gener-
+ation, hardware security weaknesses, and implicit security
+obligations. Section 3 presents SECRTL-GEN and the em-
+pirical study of the functional–security gap. Section 4 intro-
+duces the RTL-Obliger framework. Section 5 reports eval-
+uation results. Section 6 discusses implications and threats
+to validity, Section 7 reviews related work, and Section 8
+concludes.
+2
+BACKGROUND
+2.1
+LLM-Based RTL Code Generation
+We formalize LLM-based RTL code generation as a mapping
+from a natural-language functional specification to RTL
+code:
+Gθ : S →∆(C),
+c ∼Gθ(s)
+(1)
+where S is the space of functional specifications, C is the
+space of RTL programs, and c ∼Gθ(s) is one generation
+sample. Functional correctness is checked by a simulation
+testbench Tfunc; we write c |= Tfunc when all functional
+assertions pass.
+2.2
+Hardware Security Weaknesses
+The Common Weakness Enumeration (CWE) [13] cata-
+logs recurring hardware design flaws. We scope this pa-
+per with MITRE’s Most Important Hardware Weaknesses
+(MIHW) [14], [15], and for each selected family w write
+Ow for the abstract class of security obligations that an
+implementation must satisfy to be free of w:
+c is free of w ⇐⇒∀o ∈Ow, c ⊨o
+(2)
+We derive Ow from MITRE mitigation guidance. Equation 2
+is definitional: CWE does not provide an exhaustive mitiga-
+tion set.
+Example: O226. CWE-226 covers sensitive data left in
+a reusable resource. For a module that stores secrets, O226
+1. https://github.com/NTDXYG/SecRTL-Gen
+includes: (o1) overwrite every secret-holding element before
+completion; (o2) do so on error and abort as well as suc-
+cess; (o3) do not expose residual values on ports between
+completion and the next write. None of these is needed for
+functional ciphertext output, so a functional specification
+can omit them without that omission being visible in Tfunc.
+In evaluation, we approximate Equation 2 with a se-
+curity testbench Tsec over obligations from Ow, and write
+c |= Tsec when all security assertions pass. Passing Tsec is
+evidence for the exercised obligations, not a proof that every
+o ∈Ow holds.
+2.3
+Implicit Security Obligations
+In practice, many obligations in Ow are absent from the
+functional specification given to a generator [16], [17], [18].
+Let content(s) be the constraints stated in s. We say s is
+security-incomplete w.r.t. w when
+Incomplete(s, w)
+⇐⇒
+∃o ∈Ow s.t. content(s) ⊭o
+(3)
+Entailment is the right test: stating that a buffer must read
+as zero after completion entails o1 of O226 even without the
+word “security”. The omitted obligations remain required
+of any implementation that is free of w. This mismatch
+between what s states and what freedom from w requires
+is the problem studied in §3.
+3
+EMPIRICAL STUDY
+Existing RTL generation benchmarks [2], [3], [8] check func-
+tional correctness, but not security. We therefore construct
+SECRTL-GEN, a multi-language security benchmark built
+from real SoC IP, and run a controlled study of this security
+gap.
+3.1
+SECRTL-GEN: Benchmark Construction
+3.1.1
+Scope and CWE Families
+Hardware weaknesses span a broad spectrum, from side-
+channel leakage to power-management flaws. From the
+MIHW entries and the broader CWE hardware view [13], we
+select five CWE families that cover the main resource-access
+attack surfaces in SoC designs. Table 1 lists the selected
+families and their case counts.
+We scope SECRTL-GEN to resource-access security for
+three reasons. First, these families are prioritized by MIHW:
+three were on the 2021 list and all five are on the 2025
+list [14], [15]. Second, they are port-observable and thus
+checkable by black-box simulation. Third, access-control
+obligations are often missing from functional specs: security
+properties are frequently incomplete or kept separate from
+functional intent [17], [18], [19].
+3.1.2
+Case Construction
+Each case is extracted from a real SoC IP block rather
+than a synthetic example. We source designs from four
+open-source projects: OpenTitan [7], Hack@DAC 2021 [20],
+CVA6/Ariane [21], and PULP Platform [22]. We select mod-
+ules that meet three criteria: (i) the module can be com-
+piled and simulated in isolation, without the full SoC bus
+environment; (ii) its security property is observable through
+
+
+IEEE TRANSACTIONS ON DEPENDABLE AND SECURE COMPUTING
+3
+TABLE 1
+CWE families covered by SECRTL-GEN (names from MITRE
+CWE [13]). Each family maps to an abstract obligation class Ow.
+CWE
+Description
+#Cases
+CWE-226
+Sensitive Information in Resource
+Not Removed Before Reuse
+26
+CWE-1189
+Improper Isolation of Shared
+Resources on System-on-a-Chip (SoC)
+23
+CWE-1256
+Improper Restriction of Software
+Interfaces to Hardware Features
+26
+CWE-1260
+Improper Handling of Overlap
+Between Protected Memory Ranges
+7
+CWE-1262
+Improper Access Control for Register
+Interface
+16
+Total unique designs (× 4 HDLs = 392 instances)
+98
+port-level I/O; and (iii) it aligns with at least one of the five
+CWE families.
+Each case consists of four artifacts:
+• A functional specification describing ports, reset behav-
+ior, and functional truth tables or FSM rules, following the
+prompt style of prior RTL benchmarks [2], [3].
+• A golden implementation that satisfies both functional
+and security requirements, preserved from the original
+SoC source.
+• A functional testbench that verifies input/output correct-
+ness through simulation assertions.
+• A security testbench that exercises the security obliga-
+tions Ow relevant to the case’s CWE family.
+The functional specification uses a practice-motivated
+omission: it states what the module should do, and intention-
+ally withholds how it should be secured. This instantiates
+the security-incompleteness notion in §2.3; §3.1.3 reports
+how closely it matches the original documents. Each case
+is written in four hardware description languages (Verilog,
+SystemVerilog, VHDL, and Python via Amaranth), yielding
+98 × 4 = 392 language-specific instances. The multi-HDL
+setup is a first-class part of the benchmark: the same security
+property must hold across languages.
+3.1.3
+Where Security Obligations Live in Practice
+Our practice-motivated omission matches how real SoC
+projects document security. We study OpenTitan as the
+strongest case among our sources. Its standard requires
+every IP to list security countermeasures in a machine-
+readable configuration file, checked at signoff [6]. Of the 31
+IPs with such a file, 28 list countermeasures (283 in total).
+All 283 entries appear in the configuration file; none appear
+only in the functional description.
+This gap matters for RTL generation. A generation task
+usually gives the model a functional specification, not the
+machine-readable configuration file. So most security obli-
+gations never reach the model. Hack@DAC 2021, CVA6, and
+PULP do not keep such a configuration record at all.
+3.1.4
+Testbench Design
+Functional testbenches: we apply stimulus vectors to the
+design under test (DUT) and check output responses against
+expected values. A generated module c passes if c |= Tfunc,
+i.e., all assertions hold under all stimulus sequences.
+TABLE 2
+Comparison with existing RTL generation benchmarks. SECRTL-GEN
+scale is 98 unique designs × 4 HDLs (=392 instances).
+Benchmark
+Scale
+Black-box sec. TB
+Manual review
+Multi-HDL
+VerilogEval
+∼156
+✗
+✗
+✗
+RTLLM
+32
+✗
+✓
+✗
+HardSecBench
+924
+Partial
+Sampled
+✗
+SecV
+23
+N/A
+✓
+✗
+SecFSM
+25
+N/A
+✓
+✗
+SECRTL-GEN
+392
+✓
+✓
+✓
+Security testbenches: we exercise scenarios targeting the
+obligations Ow of the case’s CWE family. For CWE-226,
+this means reading a buffer after a transaction completes
+to detect residual sensitive data; for CWE-1262, issuing
+an access from an unauthorized privilege level; for CWE-
+1260, configuring overlapping memory regions to probe
+priority-enforcement logic. A module passes if c |= Tsec, i.e.,
+the design correctly prevents every exercised attack vector.
+As noted in §2.2, Tsec is an operational approximation of
+checking Ow.
+3.1.5
+Quality Assurance
+Testbench Coverage: We measure statement coverage of
+each golden implementation under its combined functional
+and security testbenches. Across all 98 designs, the average
+line coverage is 95.84%. This is a sanity check that the
+testbenches exercise most of the golden RTL; it does not
+by itself prove that every obligation in Ow is covered.
+Obligation coverage is instead reviewed manually (below)
+against the scenarios for each CWE family.
+Manual Review: Every case is reviewed independently
+by three engineers, each with at least three years of industry
+experience. Reviewers check that (i) the specification is
+functionally clear and complete, while security obligations
+are intentionally withheld; (ii) the golden implementation
+is correct and meets both functional and security require-
+ments; and (iii) the testbenches are sound and cover the
+relevant security obligations. Conflicts are discussed until
+the three reviewers reach consensus.
+3.1.6
+Comparison with Existing Benchmarks
+Table 2 compares SECRTL-GEN with prior work. Functional
+benchmarks [2], [3] omit security; security-aware sets are
+either synthetic and single-HDL [9] or small and unreleased
+(SecV [11], SecFSM [23]). SECRTL-GEN instead uses real
+SoC IP, full manual review, four HDLs, and black-box se-
+curity testbenches (98 designs × 4 HDLs = 392 instances).
+3.2
+Empirical Setup
+3.2.1
+Models
+We evaluate five frontier LLMs spanning major providers:
+GPT-5.6-Luna, Mimo-v2.5-Pro, MiniMax-M3, GLM-5.2, and
+DeepSeek-v4-Pro.2 Each experiment is repeated five times
+per case per language; we report mean and standard devi-
+ation. This section characterizes the security deficit rather
+2. All models are accessed through their official APIs in a zero-shot
+setting with temperature 0.6 and non-thinking mode.
+
+
+IEEE TRANSACTIONS ON DEPENDABLE AND SECURE COMPUTING
+4
+TABLE 3
+Functional (F), security (S), and all-pass (A) rates (%) on SECRTL-GEN (mean±std over 5 runs). L0: Vanilla; L1: Self-think; L2: CWE-Vanilla
+(§3.2.2). Avg. rows are lightly highlighted. Bold marks the best mean per metric within each language row. A is the decisive metric.
+Functional
+Security
+All-pass
+Model
+Lang.
+L0
+L1
+L2
+L0
+L1
+L2
+L0
+L1
+L2
+Verilog
+76.3±1.9
+56.5±2.6
+56.9±1.2
+15.7±0.5
+58.2±0.9
+64.7±2.6
+8.2±1.1
+41.2±2.6
+46.9±2.2
+SystemVerilog
+81.6±1.8
+70.8±4.0
+69.8±1.5
+14.7±1.0
+64.3±4.7
+68.8±1.9
+9.8±0.5
+52.4±5.3
+59.8±1.5
+VHDL
+63.3±0.9
+54.6±2.3
+49.4±3.6
+9.6±1.9
+48.9±3.3
+49.2±2.0
+8.0±1.6
+42.2±2.9
+45.1±3.2
+Python
+72.5±1.7
+62.5±1.8
+55.9±4.3
+18.0±1.7
+56.8±3.1
+63.1±4.9
+7.5±1.7
+44.1±1.2
+48.0±4.4
+DS-v4
+Avg.
+73.4±0.3
+61.1±1.6
+58.0±1.1
+14.5±0.8
+57.0±1.0
+61.4±1.6
+8.4±0.6
+45.0±1.0
+50.0±1.5
+Verilog
+84.7±2.8
+70.6±3.3
+66.9±3.8
+21.2±1.9
+51.6±4.2
+64.3±3.2
+16.9±2.1
+44.3±3.3
+54.1±2.3
+SystemVerilog
+83.1±1.4
+69.0±2.4
+60.8±2.9
+19.2±1.8
+53.1±2.6
+62.5±1.6
+15.5±1.6
+46.3±2.4
+50.2±3.7
+VHDL
+64.9±1.7
+48.6±1.9
+47.5±1.4
+11.0±1.5
+41.0±2.5
+46.9±3.3
+10.2±1.7
+34.9±2.5
+39.4±2.0
+Python
+72.0±3.1
+59.6±3.3
+49.6±3.3
+19.2±2.5
+46.1±0.8
+49.4±3.2
+14.3±2.2
+35.7±1.7
+43.5±3.3
+GLM-5.2
+Avg.
+76.2±1.1
+61.9±1.4
+56.2±1.8
+17.6±0.8
+48.0±1.6
+55.8±1.3
+14.2±1.0
+40.3±1.7
+46.8±1.6
+Verilog
+92.5±0.8
+78.4±3.8
+70.2±0.8
+42.7±0.8
+61.2±2.8
+65.1±1.6
+40.6±0.8
+54.7±2.0
+59.0±1.8
+SystemVerilog
+85.9±1.0
+77.5±1.8
+70.4±1.3
+47.1±1.8
+62.3±1.3
+69.0±2.4
+40.8±1.3
+54.1±2.1
+59.6±2.0
+VHDL
+65.5±1.5
+54.7±3.2
+49.0±3.0
+24.1±2.1
+43.9±1.6
+48.4±1.9
+22.4±2.1
+38.4±1.8
+44.3±3.5
+Python
+69.0±2.3
+58.0±2.8
+53.3±2.2
+27.6±1.3
+49.4±3.1
+56.1±3.4
+22.2±1.5
+40.4±2.6
+45.9±3.1
+GPT-5.6
+Avg.
+78.2±0.7
+67.1±0.5
+60.7±0.9
+35.4±0.7
+54.2±0.8
+59.6±1.9
+31.5±0.9
+46.9±0.4
+52.2±1.9
+Verilog
+76.7±1.6
+67.3±5.1
+65.5±1.5
+38.6±3.8
+61.0±2.7
+66.9±2.9
+33.7±3.5
+53.5±3.4
+55.5±1.8
+SystemVerilog
+78.4±2.2
+68.3±1.8
+66.1±3.6
+33.9±2.5
+64.8±2.9
+70.8±1.5
+28.4±2.8
+54.5±2.0
+59.6±2.7
+VHDL
+59.6±1.5
+53.1±1.7
+49.4±2.0
+17.8±1.0
+45.7±2.2
+50.8±1.6
+15.9±0.5
+43.3±1.9
+44.3±1.9
+Python
+82.0±1.5
+70.8±2.2
+67.3±2.7
+24.7±1.8
+59.8±2.5
+65.5±3.4
+21.2±2.0
+53.5±1.5
+56.5±2.4
+Mimo-v2.5
+Avg.
+74.2±0.9
+64.9±1.3
+62.1±1.7
+28.7±1.3
+57.8±1.2
+63.5±1.2
+24.8±1.4
+51.2±0.7
+54.0±1.8
+Verilog
+88.2±1.0
+73.7±5.4
+74.7±4.4
+22.4±3.6
+60.8±2.8
+65.5±4.9
+18.0±2.9
+52.6±3.8
+58.6±4.5
+SystemVerilog
+85.3±2.0
+65.9±4.6
+68.2±5.8
+23.1±3.0
+59.7±5.1
+62.9±3.1
+19.0±2.5
+48.8±3.5
+51.6±3.9
+VHDL
+67.2±2.0
+53.4±3.8
+48.8±4.8
+18.2±3.4
+44.8±2.4
+46.7±5.9
+15.5±3.3
+37.4±1.7
+39.2±4.6
+Python
+76.9±2.7
+54.6±2.5
+63.1±2.3
+16.5±3.0
+50.9±4.4
+52.0±3.6
+12.0±2.1
+40.2±1.9
+42.9±2.7
+MM-M3
+Avg.
+79.4±1.0
+61.9±0.9
+63.7±3.3
+20.1±1.5
+54.1±1.3
+56.8±2.4
+16.1±1.2
+44.7±1.2
+48.1±2.3
+than ranking methods, so we do not run pairwise signifi-
+cance tests.
+3.2.2
+Prompting Strategies
+We use three prompting strategies that vary the security
+knowledge given to Gθ:
+1) Vanilla (L0). The model receives only the functional
+specification s and draws code c ∼Gθ(s). No security
+information is provided.
+2) Self-think (L1). Before generating code, the model must
+first write a security analysis of s, then generate RTL.
+This tests whether Gθ can infer obligations on its own.
+3) CWE-Vanilla (L2). The prompt includes the CWE entry
+aligned with the case, using the official identifier and
+description (e.g., “CWE-226: Sensitive Information in
+Resource Not Removed Before Reuse”). The model is
+asked to analyze the security obligations by the given
+CWE entry and then generate RTL.
+L0 is the no-knowledge baseline. L1 keeps the setting
+closed: the model may reason, but receives no CWE knowl-
+edge. L2 is an intentional upper-bound cue: it assumes the
+relevant hardware weakness is known, as in CWE-retrieval
+pipelines. L2 still leaves concrete obligations implicit; the
+model must turn the CWE entry into design-specific con-
+straints by itself.
+3.2.3
+Evaluation Metrics
+We score each generated module c with three binary indica-
+tors defined by the black-box testbenches in §3.1.4:
+• Functional pass (F): c |= Tfunc.
+• Security pass (S): c |= Tsec.
+• All-pass (A): c |= Tfunc ∧c |= Tsec.
+Rates are aggregated over cases and languages and
+reported as mean±std across five runs. All-pass is the de-
+cisive metric: raising F or S alone is insufficient when the
+other fails. Compile or simulation failures count as neither
+F nor S. Language-specific simulators are Icarus Verilog3
+(-g2012) for Verilog and SystemVerilog, GHDL4 for VHDL,
+and Amaranth’s built-in simulator5 for Python.
+3.3
+Empirical Results
+Table 3 reports F, S, and A across the three prompting
+strategies and five models. We organize the analysis around
+two findings.
+3.3.1
+Finding 1: CWE Knowledge Helps, but Obligations
+Stay Implicit
+Under the standard baseline (L0), all five models achieve
+high average functional pass rates (73.4%–79.4%), yet their
+security pass rates remain strikingly low (14.5%–35.4%).
+This functional-security disparity persists across all target
+languages. Crucially, strong functional capability does not
+guarantee security; for instance, MiniMax-M3 achieves the
+highest average functional rate (79.4%) but ranks near the
+bottom in security performance (20.1%).
+Providing aligned CWE knowledge (L2) substantially
+mitigates this gap, elevating mean security from 23.3%
+to 59.4% (L0 < L2 holds strictly across all models and
+3. https://github.com/steveicarus/iverilog
+4. https://github.com/ghdl/ghdl
+5. https://github.com/amaranth-lang/amaranth
+
+
+IEEE TRANSACTIONS ON DEPENDABLE AND SECURE COMPUTING
+5
+languages). This marked improvement confirms that low
+security under L0 stems not from an inability to synthesize
+defensive RTL, but from a lack of weakness awareness
+during generation.
+Finding 1. Standard specifications (L0) yield high func-
+tional correctness (∼76%) but severe security vulnera-
+bilities (14 – 35%). Providing explicit CWE knowledge
+(L2) raises mean security to 59%, proving that weakness
+awareness—rather than RTL synthesis capability—is the
+primary bottleneck.
+3.3.2
+Finding 2: Self-Thinking Helps, but Cannot Replace
+CWE Knowledge
+Prompting
+models
+to
+infer
+security
+obligations
+au-
+tonomously (L1) yields substantial gains over L0, boosting
+mean security from 23.3% to 54.2% and all-pass from 19.0%
+to 45.6%. This L1 > L0 shift proves that LLMs possess latent
+defensive capabilities that can be activated through prompt-
+induced self-thinking.
+However, L1 consistently lags behind L2 across all mod-
+els (mean S: 54.2% vs. 59.4%; mean A: 45.6% vs. 50.2%):
+self-thinking alone cannot replace explicit CWE knowledge.
+Because hardware specifications frequently leave security
+obligations implicit, unassisted self-thinking cannot fully
+bridge the domain knowledge gap without explicit CWE
+guidance. Furthermore, both L1 and L2 induce a clear
+functional penalty: mean functional pass rate drops from
+76.3% (L0) to 63.4% (L1) and 60.1% (L2).
+Finding 2. Self-thinking (L1) effectively activates la-
+tent defenses (L1 > L0), but cannot replace explicit
+CWE knowledge (L1 < L2) due to implicit spec gaps.
+Moreover, these methods trade functional correctness for
+security (F drops from 76% to ∼60%), capping overall
+all-pass at roughly 50%.
+3.4
+Implications
+Findings 1–2 motivate RTL-Obliger. CWE knowledge is
+needed, self-thinking cannot replace it, and single-pass se-
+curity prompting still trades functionality for security. The
+remaining task is to infer signal-level obligations from the
+specification, then apply them without degrading functional
+correctness.
+4
+RTL-OBLIGER: INFERRING IMPLICIT SECURITY
+OBLIGATIONS
+Following §3, RTL-Obliger infers implicit security obliga-
+tions rather than prompting the LLM to invent them. We
+treat many such obligations as mitigation-evidence gaps: s
+shows weakness preconditions (e.g., a reusable secret reg-
+ister is written) but not the required mitigation (e.g., a clear
+at done). Matching s against a reusable mitigation ontology
+then reduces inference to a deterministic signal-level gap
+check.
+4.1
+Overview and Design Goals
+These observations yield three design goals for RTL-Obliger:
+• G1 (Inferable). Obligations are inferred from structural
+evidence in the specification together with an explicit
+security ontology, not guessed end-to-end by an LLM.
+• G2 (Auditable). Each inferred obligation is traceable to
+matched structures, uncovered elements, and a CWE
+scenario, forming a reproducible witness rather than an
+opaque model belief.
+• G3 (Functionality-preserving). Patch the design to satisfy
+the inferred security obligations while changing its func-
+tional behavior as little as possible.
+RTL-Obliger realizes these goals through a three-stage
+pipeline (Figure 1). An evidence model binds a per-
+specification Functional-Semantic Graph (FSG) to a reusable
+CWE pattern ontology over a shared closed vocabu-
+lary (§4.2). A symbolic engine infers signal-level security
+obligations by checking for mitigation-evidence gaps and
+pinpointing the responsible elements, with all gap decisions
+made symbolically (§4.3). Finally, an LLM filters inappli-
+cable obligations and generates RTL via obligation-guided
+revision (§4.4).
+4.2
+Evidence Model
+Inferring implicit obligations requires two complementary
+kinds of structured evidence: what security-relevant structure
+is present in a given specification? and what mitigation evidence
+should be present for that structure? RTL-Obliger encodes both
+as graphs over a shared closed vocabulary Σ, so that the
+symbolic engine can answer these questions by matching.
+4.2.1
+Closed Vocabulary Σ
+All structural labels in RTL-Obliger are drawn from a fixed
+vocabulary:
+Σ = (Kind, Lifetime, Sens, Op, Guard, Exit)
+(4)
+where each dimension is a finite set (Table 4).
+The first three dimensions characterize elements: Kind
+denotes the hardware type (e.g., register, buffer), Lifetime
+indicates how long the element’s data persists (e.g., reusable
+across transactions vs. local to one), and Sens records its
+security sensitivity level.
+The remaining three characterize transfers: Op specifies
+the operation performed (e.g., clear, latch, crypto), Guard
+captures the control condition under which the transfer fires
+(e.g., on reset or state transition), and Exit identifies the
+control-state phase in which the transfer occurs (e.g., done,
+idle, error).
+Because every label comes from a finite set, the matching
+predicates in §4.3.1 always terminate. Deterministic evalua-
+tion then makes every structural decision reproducible.
+4.2.2
+Spec Graph Gspec
+The functional-semantic graph (FSG) is the specification-
+side evidence extracted from one functional specification:
+Gspec = (E, T, S)
+(5)
+• E ⊆Name × Kind × Lifetime × Sens: stateful ele-
+ments. Example: (key_reg, register, reusable,
+secret).
+
+
+IEEE TRANSACTIONS ON DEPENDABLE AND SECURE COMPUTING
+6
+Fig. 1. Overview of the RTL-Obliger pipeline.
+TABLE 4
+Closed vocabulary Σ. Every element and transfer label is drawn
+exclusively from these six finite sets.
+Dimension
+Values
+Kind
+port, register, memory, buffer, bus
+Lifetime
+reusable, local, parameter
+Sens
+secret, internal, public
+Op
+clear, latch, mux, validate,
+configure, crypto, debug
+Guard
+reset, transition, error
+Exit
+idle, success, done, reset, error
+• T ⊆Id×Op×E×Guard∗×(S∪{ε}): transfers (operation,
+target, guards, and exit phase; ε if unbound).
+• S ⊆Exit: control-state phases of the module lifecycle
+(e.g., done, idle, error).
+A well-formedness constraint requires ∀t ∈T: t.exit ∈
+S∪{ε}. Gspec records structural evidence for later inference;
+it does not decide whether any obligation is required.
+The LLM translates the unstructured functional specifi-
+cation into Gspec. It receives the specification text together
+with Σ as a schema constraint and outputs a JSON object
+conforming to the FSG schema.
+4.2.3
+CWE Pattern Ontology Gonto
+While Gspec describes one design, Gonto encodes reusable
+security knowledge: for a given structure, what mitigation
+evidence should be present. Gonto is built from the MITRE
+CWE definitions for the resource-access families in this
+paper. Each CWE entry is a JSON file over Σ.
+For each family w, Gonto contains:
+• Element patterns PE: constraints on kind, lifetime, and
+sensitivity (e.g., a reusable/secret element).
+• Transfer patterns PT : constraints on operation, guards,
+exit, and target (e.g., a clear at done on the matched
+element).
+• Scenarios: rules that list required element/transfer pat-
+terns, optional context transfers, and missing-transfer pat-
+terns (the expected mitigation).
+• Hints: natural-language obligation templates filled with
+specific signal names when a scenario fires.
+Gspec records what one specification contains; Gonto
+states what complete mitigation evidence should look like.
+Shared vocabulary Σ lets §4.3 connect the two by determin-
+istic matching (G1–G2).
+4.3
+Symbolic Inference
+The symbolic core takes Gspec and Gonto and outputs signal-
+level security obligations: instantiations of the abstract classes
+Ow (§2.2) for the current specification. This stage makes no
+LLM calls; every decision is deterministic.
+A scenario sc fires when its structural preconditions
+match and at least one written element still lacks the ex-
+pected mitigation:
+triggered(sc, Gspec)
+⇐⇒
+reqE ∧reqT ∧ctxT ∧missT
+(6)
+where:
+• reqE: every required element pattern has ≥1 match in E.
+• reqT: every required transfer pattern has ≥1 match in T
+(e.g., a secret element is written).
+• ctxT: every contextual transfer pattern has ≥1 match.
+• missT: the uncovered-element set U is non-empty. Here
+U is computed from sc’s missing-transfer patterns (the
+mitigation that should be present): a written element is
+uncovered if it is targeted by a required transfer but not
+covered by any matching mitigation transfer.
+Thus missT means a mitigation-evidence gap, not the pres-
+ence of mitigation. This matches how implicit obligations
+appear in functional specifications: the weakness precondi-
+tions are present, while the required mitigation is absent.
+
+
+IEEE TRANSACTIONS ON DEPENDABLE AND SECURE COMPUTING
+7
+Algorithm 1: Symbolic Obligation Inference
+Input: Gspec, Gonto;
+Output: Triggered scenarios with uncovered
+elements;
+1 σE ←{p.id : {e ∈E | match(e, p)} ∀p ∈PE};
+2 σT ←{p.id : {t ∈T | match(t, p, σE)} ∀p ∈PT };
+3 R ←∅;
+4 foreach scenario sc ∈Gonto.scenarios do
+5
+reqE ok ←V
+p∈sc.req elems σE[p]̸ = ∅;
+6
+reqT ok ←V
+p∈sc.req trans σT [p]̸ = ∅;
+7
+ctx ok ←V
+p∈sc.ctx trans σT [p]̸ = ∅;
+8
+U ←UNCOVEREDELEMENTS(Gspec, sc, σT );
+9
+if reqE ok ∧reqT ok ∧ctx ok ∧U̸ = ∅then
+10
+R ←R ∪{(sc, σE, σT , U)};
+11 return R;
+4.3.1
+Matching and Inference
+Element matching checks whether an instance element e ∈
+E satisfies a pattern p ∈PE:
+match(e, p)
+⇐⇒
+^
+d∈{Kind,Lifetime,Sens}
+ p.d = ∅∨e.d ∈p.d
+
+(7)
+An empty constraint set is a wildcard.
+Transfer matching also checks operation, guard tags, exit
+path, and target binding:
+match(t, p, σ)
+⇐⇒
+(p.ops = ∅∨t.op ∈p.ops)
+∧(p.target = ∅∨t.target ∈σ(p.target))
+∧p.guard+ ⊆tags(t)
+∧p.guard−∩tags(t) = ∅
+∧(p.exit = ∅∨t.exit ∈p.exit)
+(8)
+where σ maps element-pattern identifiers to matched in-
+stances, and tags(t) is the set of Guard tokens for t after
+the keyword normalization above. Matches are collected per
+pattern rather than per scenario. The symbolic stage is thus
+high-recall by construction, and joint consistency is resolved
+by the downstream LLM-as-Judge (§4.4.1), which sees the
+specification and rejects obligations that do not apply to the
+design.
+Algorithm 1 evaluates every scenario in Gonto against
+Gspec. The last conjunct is exactly missT in Equation 6:
+preconditions hold and U̸ = ∅.
+4.3.2
+Uncovered-Element Detection
+Let Ew ⊆E be the written elements: elements in the FSG
+targeted by the scenario’s required transfers. UNCOVERE-
+DELEMENTS compares Ew to the scenario’s missing-transfer
+patterns (expected mitigations).
+For each missing-transfer pattern m:
+• Per-element check. If m binds to a target element, writ-
+ten elements already covered by a matching mitigation
+transfer are dropped; the rest join U: U ←U ∪(Ew \
+mitigatedm).
+• Global check. If m has no target binding, and no transfer
+in the design matches m, then every element in Ew is
+uncovered.
+This yields signal-level output (G2). For example, in-
+stead of “beware CWE-226,” RTL-Obliger can report that
+plaintext_reg and key_reg lack a clear at done.
+4.3.3
+Obligation Instantiation
+Each triggered scenario has one or more hint templates in
+Gonto. An inferred security obligation is:
+o = (sc, cwe, U, text)
+(9)
+where sc is the scenario, cwe
+is the CWE id, U
+is
+the uncovered-element set, and text is the filled natural-
+language statement.
+Placeholders are filled as:
+• {elem_names} ←U;
+• {trans_names} ←operations targeting elements in U;
+• {exit_hints} ←exit keywords from the scenario.
+The pair (sc, U) is the structural witness for o. Let O =
+{o1, . . . , on} be all candidate obligations for the specifica-
+tion. O is high-recall: every structurally supported gap is
+kept for the next stage.
+4.4
+Obligation-Guided RTL Generation
+The final stage filters O and generates RTL while changing
+functional behavior as little as possible (G3).
+4.4.1
+Obligation Filtering via LLM-as-Judge
+Some candidates are structural false positives. An LLM-as-
+Judge re-checks each oi against s and an FSG summary:
+filter : O × s × Gspec →O′ ⊆O
+(10)
+The judge may only keep or reject; it cannot invent obliga-
+tions. If its output cannot be parsed, we set O′=O so filtering
+never silently drops a true candidate.
+4.4.2
+Functionality-Preserving Two-Stage Generation
+One-shot generation c ∼Gθ(s ∥O′) recreates the functional
+penalty in Finding 2. We therefore use two stages. Stage 1
+builds a functional draft from the specification alone:
+c0 ∼Gθ(s)
+(11)
+Stage 2 revises c0. If O′̸ = ∅, revision is obligation-guided:
+c∗∼Gθ(c0 ∥O′)
+(12)
+Because obligations name uncovered elements in U, edits
+are local patches rather than a full rewrite. If O′ = ∅
+or FSG extraction fails, Stage 2 uses a secure fallback c∗∼
+Gθ(c0 ∥sfb), asking the model to harden c0 while preserving
+function and the module interface. This keeps the pipeline
+uniform when the symbolic path yields no obligations.
+5
+RESULTS ANALYSIS
+5.1
+RQ1: How Does RTL-Obliger Perform on Secure
+RTL Generation?
+5.1.1
+Baselines
+To evaluate the effectiveness of RTL-Obliger for secure RTL
+generation, we compare it with SecV [11] and RESCUE [12],
+two methods that add external security knowledge to LLM
+code generation.
+
+
+IEEE TRANSACTIONS ON DEPENDABLE AND SECURE COMPUTING
+8
+TABLE 5
+Functional, security, and all-pass rates (%) on SECRTL-GEN (mean±std over 5 runs). Avg. rows are lightly highlighted. Bold marks the best mean
+per metric within each language row.
+Functional
+Security
+All-pass
+Model
+Lang.
+SecV
+RESCUE
+RTL-Obliger
+SecV
+RESCUE
+RTL-Obliger
+SecV
+RESCUE
+RTL-Obliger
+Verilog
+58.0±5.1
+53.1±3.0
+66.1±1.8
+67.3±2.8
+70.4±3.6
+68.8±3.5
+48.6±4.5
+48.2±1.6
+55.1±3.3
+SV
+62.3±1.3
+70.4±2.8
+76.3±2.1
+72.9±1.8
+81.0±3.4
+78.4±1.0
+55.7±0.5
+65.5±4.6
+66.3±1.6
+VHDL
+47.5±3.1
+51.0±1.8
+58.2±2.3
+51.2±2.0
+53.3±1.5
+55.9±1.2
+44.5±2.6
+49.0±1.8
+49.6±2.4
+Python
+53.7±2.4
+55.9±1.8
+67.3±2.6
+64.5±2.7
+69.0±2.9
+76.1±2.3
+48.0±2.3
+50.6±1.4
+60.0±3.3
+DS-v4
+Avg.
+55.4±0.5
+57.6±1.5
+67.0±0.9
+64.0±1.6
+68.4±1.1
+69.8±1.6
+49.2±0.6
+53.3±1.4
+57.8±1.8
+Verilog
+65.3±3.6
+56.3±3.7
+81.6±3.8
+66.1±3.2
+66.7±2.2
+77.8±3.1
+57.8±2.6
+49.6±2.9
+72.0±4.9
+SV
+59.2±0.7
+51.6±2.9
+79.4±2.3
+65.3±2.4
+66.9±1.9
+75.5±2.1
+53.9±1.4
+44.9±2.6
+67.3±1.4
+VHDL
+43.1±1.6
+48.0±1.6
+62.9±1.7
+44.9±1.8
+49.6±3.5
+56.5±0.5
+37.5±2.0
+41.4±1.9
+53.5±0.5
+Python
+43.9±3.8
+49.6±5.7
+66.9±1.0
+52.3±3.3
+56.1±5.1
+65.9±3.5
+39.0±5.2
+43.9±5.3
+59.2±2.2
+GLM-5.2
+Avg.
+52.9±1.7
+51.4±0.8
+72.7±1.2
+57.2±1.9
+59.9±1.4
+68.9±1.5
+47.0±1.5
+45.0±1.2
+63.0±1.1
+Verilog
+69.8±1.0
+69.2±1.0
+86.5±1.0
+70.6±1.4
+71.0±2.4
+76.7±1.2
+64.5±2.1
+61.6±1.8
+71.8±1.0
+SV
+67.2±1.0
+68.8±2.4
+89.8±1.4
+73.1±1.4
+70.4±3.0
+78.0±0.8
+62.2±0.9
+60.4±3.1
+73.1±1.2
+VHDL
+46.1±1.6
+49.2±1.2
+68.4±1.7
+47.5±1.8
+51.4±1.5
+59.4±1.0
+42.2±2.2
+45.7±1.8
+54.9±2.1
+Python
+53.1±1.3
+52.6±3.2
+77.5±2.2
+62.0±3.0
+60.2±1.7
+70.6±1.4
+49.4±1.4
+48.2±3.4
+64.7±2.2
+GPT-5.6
+Avg.
+59.0±0.7
+60.0±0.6
+80.6±0.2
+63.3±1.2
+63.3±1.2
+71.2±0.5
+54.6±0.7
+54.0±0.8
+66.1±0.4
+Verilog
+59.6±4.0
+63.1±3.1
+77.8±2.4
+66.1±3.6
+71.2±1.2
+79.0±2.9
+52.6±3.1
+58.2±1.7
+69.6±3.3
+SV
+58.4±2.2
+65.7±3.1
+76.1±2.9
+66.5±4.0
+74.7±2.4
+77.5±1.4
+53.1±3.9
+61.0±2.5
+67.3±2.7
+VHDL
+32.0±4.2
+45.9±2.7
+58.4±2.0
+35.1±2.5
+49.2±2.1
+54.5±2.1
+28.6±3.6
+42.7±1.8
+49.0±1.4
+Python
+63.7±1.7
+63.5±1.8
+69.6±2.6
+66.1±2.4
+66.1±4.8
+71.6±3.8
+58.2±2.1
+57.1±2.5
+62.0±1.8
+Mimo-v2.5
+Avg.
+53.4±1.8
+59.5±1.1
+70.5±1.2
+58.5±2.6
+65.3±0.7
+70.7±1.6
+48.1±2.4
+54.7±0.9
+62.0±1.4
+Verilog
+65.9±2.7
+64.9±3.3
+76.3±4.6
+70.8±2.8
+68.2±1.4
+74.9±1.7
+59.0±2.4
+56.3±1.8
+65.5±4.0
+SV
+57.6±4.4
+64.5±4.6
+75.5±1.7
+65.3±1.9
+71.4±3.4
+71.6±2.5
+51.0±3.2
+57.1±3.4
+63.7±3.5
+VHDL
+40.8±3.6
+44.1±2.5
+55.3±4.0
+44.7±4.2
+50.4±3.8
+52.2±4.9
+36.9±2.4
+40.8±3.1
+48.0±4.6
+Python
+52.4±5.3
+50.4±3.3
+67.8±2.4
+58.6±4.8
+59.2±3.4
+68.0±1.9
+49.4±4.6
+46.1±4.0
+59.0±2.1
+MM-M3
+Avg.
+54.2±1.6
+56.0±1.6
+68.7±1.3
+59.8±2.2
+62.3±1.0
+66.7±1.5
+49.1±1.4
+50.1±1.7
+59.0±2.1
+• SecV constructs a Hardware-CWE knowledge graph
+and uses clue-guided exploration to retrieve security
+subgraphs for secure Verilog generation.
+• RESCUE is a RAG method for secure software gen-
+eration: it stores CWE guidelines and sliced secure
+code examples, then retrieves them with multi-faceted
+search.
+Both baselines obtain security guidance through the
+LLM by exploring a graph (SecV) or retrieving text and
+code (RESCUE). RTL-Obliger instead infers signal-level obli-
+gations with a symbolic engine (§4.3), filters them with an
+LLM-as-Judge (§4.4.1), and generates RTL in two stages: a
+functional draft, then an obligation-guided revision (§4.4.2).
+Security guidance thus comes from deterministic matching
+on the specification, not from free-form retrieved or gener-
+ated advice.
+5.1.2
+Setup
+Neither SecV nor RESCUE provides an artifact for SECRTL-
+GEN. We re-implement both from their published designs
+and adapt them to our setting: a Hardware-CWE knowledge
+graph for SecV, and a knowledge base of CWE guidelines
+plus sliced secure code examples for RESCUE, each covering
+the five CWE families and four HDLs in the benchmark. We
+then evaluate all three methods with the same five LLMs on
+SECRTL-GEN. Each configuration is run five times; Table 5
+reports mean±std for functional, security, and all-pass rates.
+5.1.3
+Results
+Table 5 reports functional (F), security (S), and all-pass (A)
+rates. We discuss A, then F and S, and finally statistical tests.
+(1) All-pass. As in §3.2, all-pass is the main metric: gen-
+erated RTL must pass both the functional and the security
+testbenches. RTL-Obliger has the highest average all-pass
+on every model. Averaged over models, all-pass is 61.6%
+for RTL-Obliger, 49.6% for SecV, and 51.4% for RESCUE,
+i.e., gains of +12.0 and +10.2 points. GLM-5.2 shows the
+largest gain (63.0% vs. 47.0% SecV and 45.0% RESCUE);
+DS-v4 shows the smallest (57.8% vs. 49.2% and 53.3%),
+but the gain is still clear. The same order holds by lan-
+guage. Averaged over models, RTL-Obliger reaches 66.8%,
+67.6%, 51.0%, and 61.0% all-pass on Verilog, SystemVerilog,
+VHDL, and Python; the better baseline reaches at most
+56.5%, 57.8%, 43.9%, and 49.2% on these languages. VHDL
+is hardest for all methods, but RTL-Obliger still improves
+all-pass in every model and language cell.
+(2) Functional pass rate. The largest gains are on F.
+Averaged over models, F rises from 55.0% (SecV) and 56.9%
+(RESCUE) to 71.9% (RTL-Obliger), a +15.0 point gain over
+the stronger baseline. RTL-Obliger leads on every model av-
+erage; GPT-5.6 reaches the highest F (80.6%). This matches
+the two-stage design in §4.4.2: Stage 1 builds a functional
+draft from the specification alone, and Stage 2 applies local
+obligation-guided edits. SecV and RESCUE put retrieved
+security content into one generation pass, which more often
+lowers F. This is the same trade-off seen under L1 and L2 in
+§3.3.
+(3) Security pass rate. RTL-Obliger also has the highest
+average S on every model: 69.5% versus 60.6% (SecV)
+and 63.8% (RESCUE), a +5.6 point gain over RESCUE.
+The S gain is smaller than the F gain, which is expected
+because both baselines already add CWE knowledge. Two
+
+
+IEEE TRANSACTIONS ON DEPENDABLE AND SECURE COMPUTING
+9
+TABLE 6
+Paired gains of RTL-Obliger over SecV and RESCUE (percentage points). ∆F/∆S/∆A: mean difference of five run-level rates. pA: paired
+Wilcoxon signed-rank p-value on case-level mean all-pass (n=392); Overall uses run-level rates pooled across models (n=25). † marks the
+non-significant security contrast discussed in the text.
+vs. SecV
+vs. RESCUE
+Model
+∆F
+∆S
+∆A
+pA
+∆F
+∆S
+∆A
+pA
+DeepSeek-v4 pro
++11.6
++5.8
++8.6
+1.5×10−6
++9.4
++1.4†
++4.4
+8.5×10−3
+GLM-5.2
++19.8
++11.8
++16.0
+5.2×10−15
++21.3
++9.1
++18.1
+5.0×10−16
+GPT-5.6 Luna
++21.5
++7.9
++11.5
+1.6×10−6
++20.6
++7.9
++12.1
+1.4×10−8
+Mimo-v2.5 pro
++17.0
++12.2
++13.9
+9.4×10−14
++10.9
++5.4
++7.2
+4.4×10−6
+MinMax-M3
++14.5
++6.8
++10.0
+8.4×10−7
++12.8
++4.4
++8.9
+5.2×10−6
+Overall
++16.9
++8.9
++12.0
+1.2×10−5
++15.0
++5.6
++10.2
+1.2×10−5
+cells break the pattern: on DS-v4 Verilog and SystemVerilog,
+RESCUE has higher S than RTL-Obliger (70.4% vs. 68.8%;
+81.0% vs. 78.4%). Even in these cells, all-pass still favors
+RTL-Obliger (55.1% and 66.3% vs. 48.2% and 65.5%), be-
+cause RESCUE loses more on F. Higher S alone is therefore
+not enough for better joint success.
+(4) Statistical significance. Table 6 lists paired gains of
+RTL-Obliger over each baseline and the related tests. For
+each model, ∆F, ∆S, and ∆A are mean differences of the
+five run-level rates. The pA column is a paired Wilcoxon
+signed-rank test on case-level mean all-pass over five runs
+(n=392). The Overall row pools run-level rates across mod-
+els (n=25) and uses a run-level Wilcoxon test. All-pass
+gains are significant for every model against both baselines
+(pA ≤8.5×10−3). On the Overall row, all three metrics are
+significant (p < 10−4). Paired effect sizes on Overall all-pass
+are large (Cohen’s d=3.37 vs. SecV; d=1.91 vs. RESCUE).
+RQ1 Summary. RTL-Obliger raises mean all-pass from
+49.6% (SecV) and 51.4% (RESCUE) to 61.6%, with sig-
+nificant gains on F and S across models. Retrieved or
+explored security knowledge helps, but does not replace
+signal-level obligations inferred from the specification.
+5.2
+RQ2: How Effective are the Components of RTL-
+Obliger?
+RQ1 shows that the full RTL-Obliger pipeline outperforms
+SecV and RESCUE on all-pass. We next isolate which design
+choices drive that gain. We ablate three stages that realize
+goals G1–G3 (§4.1): symbolic obligation inference, LLM-as-
+Judge filtering, and two-stage generation.
+5.2.1
+Setup
+Because a full five-model ablation on SECRTL-GEN is costly,
+we run RQ2 with DeepSeek-v4-Pro as a representative
+backbone. Among the five models in RQ1, it sits near the
+middle of the all-pass range, so it is a practical default for
+controlled component analysis. We evaluate every ablation
+on the full benchmark (392 instances). As in the agent
+study (§6.1), each ablation uses a single run; the Full row
+reuses the RQ1 five-run mean±std for the same model.
+Metrics remain F, S, and A; Full is the reference in every
+comparison.
+5.2.2
+Ablation Variants
+Each variant disables exactly one component and leaves the
+remaining pipeline unchanged:
+• w/o Symbolic (§4.3). We only remove the CWE-ontology
+matcher and ask the LLM to propose security obligations
+directly from the functional specification s, without a
+mitigation-evidence gap check. This variant tests whether
+deterministic symbolic inference (G1) is necessary, or
+whether free-form obligation proposal suffices inside the
+same downstream pipeline.
+• w/o Judge (§4.4.1). We skip applicability filtering and pass
+the full candidate set from symbolic matching to genera-
+tion (O′=O). This variant tests the role of the precision
+gate that follows our high-recall matcher.
+• w/o Two-stage (§4.4.2). We replace generate-then-revise
+with a single pass c ∼Gθ(s ∥O′), while retaining sym-
+bolic inference and the Judge. This variant tests whether
+separating a functional draft from obligation-guided re-
+vision (G3) is needed to avoid the functional penalty of
+security-augmented one-shot generation.
+5.2.3
+Results
+Figure 2 reports F, S, and A for Full RTL-Obliger and the
+three ablations. We discuss all-pass first, then each removed
+component.
+Full RTL-Obliger reaches the highest average all-pass
+(57.8%). Removing symbolic matching hurts most (Avg.
+A 49.7%, −8.1 points). Removing the Judge or two-stage
+generation yields smaller drops (55.6% and 54.8%). The
+same order holds on Verilog, SystemVerilog, and Python; on
+VHDL, w/o Two-stage is slightly above Full on this single
+run (51.0% vs. 49.6%), but its average across languages
+remains below Full. Overall, every component contributes
+positively to joint success, and symbolic inference is the
+largest driver.
+(1) w/o Symbolic. Without the ontology matcher, secu-
+rity falls from 69.8% to 59.4% Avg. S, and all-pass follows.
+Functional rates stay close to Full (63.8% vs. 67.0%), so
+the damage is concentrated on security rather than on
+basic RTL synthesis. This matches Finding 1–2 in §3: when
+obligations are proposed by the LLM alone, defensive intent
+is incomplete even if the rest of the pipeline is unchanged.
+Deterministic mitigation-evidence checking (G1) is therefore
+necessary for the security gains in RQ1.
+(2) w/o Judge. Skipping applicability filtering lowers
+Avg. A by 2.2 points (57.8% →55.6%), with modest drops
+
+
+IEEE TRANSACTIONS ON DEPENDABLE AND SECURE COMPUTING
+10
+30
+40
+50
+60
+70
+80
+Pass rate (%)
+(a) Functional
+30
+40
+50
+60
+70
+80
+Pass rate (%)
+(b) Security
+Verilog
+SV
+VHDL
+Python
+Avg.
+30
+40
+50
+60
+70
+Pass rate (%)
+(c) All-pass
+Full
+w/o Symbolic
+w/o Judge
+w/o Two-stage
+Fig. 2. RQ2 component ablation on SECRTL-GEN (DeepSeek-v4-Pro). Panels show functional, security, and all-pass rates (%) for Full RTL-Obliger
+and three leave-one-out variants. Full reports the RQ1 five-run mean with error bars (±std); each ablation is one run.
+on both F (67.0% →63.3%) and S (69.8% →67.3%).
+The Judge is thus a useful precision gate over the high-
+recall matcher, but not the main source of all-pass. This
+is consistent with RQ3, where Judge over-filtering explains
+only a small share of Full-pipeline failures on DeepSeek-v4-
+Pro.
+(3) w/o Two-stage. One-shot generation c ∼Gθ(s ∥O′)
+lowers Avg. A to 54.8% (−3.0 points), mainly through
+security (69.8% →64.5%). Functional pass does not drop
+on this single run (Avg. F 69.6% vs. Full 67.0%); the two-
+stage design still helps all-pass by letting obligation-guided
+revision specialize in security edits after a clean functional
+draft. Together with the larger F gains of Full RTL-Obliger
+over SecV/RESCUE in RQ1, this supports keeping generate-
+then-revise (G3), while the present single-run ablation in-
+dicates that its benefit on DeepSeek-v4-Pro appears more
+in joint success than in a large F penalty for one-shot
+prompting.
+RQ2 Summary. Removing symbolic matching cuts Avg.
+all-pass from 57.8% to 49.7%; removing the Judge or
+two-stage yields smaller drops (55.6% / 54.8%). Sym-
+bolic inference is the primary contributor to security
+and all-pass; Judge filtering and two-stage generation
+provide complementary gains.
+5.3
+RQ3: Why Does RTL-Obliger Still Fail?
+RQ1 shows that RTL-Obliger beats SecV and RESCUE on
+all-pass, yet failures remain. This RQ studies those failures:
+where the pipeline breaks, what tests fail, and what to
+improve next.
+5.3.1
+Setup and classification
+We inspect all 9,800 evaluations of RTL-Obliger on SECRTL-
+GEN (5 models × 5 runs × 392 instances). In total, 6,035 pass
+all-pass and 3,765 fail (38.4%). For each failure, we check
+the pipeline log and mark where it broke and how the tests
+failed. We mark Stage as the first pipeline step that went
+wrong. We mark Outcome as whether F, S, or both failed.
+Table 7 lists the labels.
+5.3.2
+Results
+Figure 3 shows the share of each stage and outcome among
+failures, by model.
+(1) Failure stage. Of the 3,765 failures, 2,755 (73.2%)
+keep obligations and still fail at obligation-guided genera-
+tion. Another 799 (21.2%) miss the gold CWE in symbolic
+matching, so Stage 2 never sees the right signal-level ed-
+its. LLM-as-Judge over-filtering accounts for 203 failures
+(5.4%); FSG extraction accounts for only 8 (0.2%). The pat-
+tern is stable across models: generation dominates for every
+backbone. GPT-5.6 is the main outlier on the judge: 116 of
+its 664 failures (17.5%) come from rejecting all candidates,
+versus under 5% for the other models.
+(2) Failure outcome. Among the same 3,765 failures,
+1,984 (52.7%) fail both F and S, 1,010 (26.8%) fail security
+only, and 771 (20.5%) fail function only. Both-fail is the
+largest class for four of five models. GPT-5.6 again differs:
+283 security-only fails versus 282 both-fails, and only 99
+functional-only fails, which matches its higher F in Table 5.
+So when GPT-5.6 fails, the RTL is more often functionally
+usable but still insecure.
+
+
+IEEE TRANSACTIONS ON DEPENDABLE AND SECURE COMPUTING
+11
+TABLE 7
+Failure taxonomy for RQ3. Each failed evaluation gets one stage (earliest explainable pipeline step) and one outcome (test pattern). Counts are
+over all 3,765 failures.
+Axis
+Label
+Definition
+#Fail
+Stage
+FSG extraction
+FSG parse fails; use secure fallback (§4.2.2)
+8
+Symbolic matching
+Gold CWE not triggered; no correct obligations (§4.3.1)
+799
+LLM-as-Judge
+Candidates exist, but judge rejects all (§4.4.1)
+203
+Obligation-guided gen.
+Kept obligations reach Stage 2, yet RTL fails (§4.4.2)
+2,755
+Outcome
+Sec-only fail
+Tfunc pass; Tsec fail
+1,010
+Func-only fail
+Tfunc fail; Tsec pass
+771
+Both fail
+Both Tfunc and Tsec fail
+1,984
+DS-v4
+GLM-5.2
+GPT-5.6
+Mimo-v2.5
+MM-M3
+0
+20
+40
+60
+80
+100
+Share of failures (%)
+(a) Failure stage
+Obligation-guided gen.
+Symbolic matching
+LLM-as-Judge
+FSG extraction
+DS-v4
+GLM-5.2
+GPT-5.6
+Mimo-v2.5
+MM-M3
+0
+20
+40
+60
+80
+100
+Share of failures (%)
+(b) Failure outcome
+Sec-only fail
+Func-only fail
+Both fail
+Fig. 3. Error analysis of RTL-Obliger failures on SECRTL-GEN (n=3,765). (a) Earliest pipeline stage that explains the failure. (b) Test outcome of
+the failure.
+5.3.3
+Implications
+These counts point to two concrete next steps. First, Stage 2
+revision must better enforce kept obligations without break-
+ing function: this single stage covers 2,755 failures. Sec-
+ond, symbolic matching must raise gold-CWE recall: the
+799 matching misses never reach obligation-guided repair.
+Judge filtering and FSG extraction are not the main bottle-
+necks today, except that stronger models may over-reject
+(GPT-5.6). Overall, RTL-Obliger already reduces the gap to
+prior secure-generation baselines; closing the rest mainly
+needs better obligation application and more complete CWE
+matching.
+RQ3 Summary. Of 3,765 RTL-Obliger failures, 73.2%
+keep obligations but fail at generation, and 21.2% miss
+the gold CWE in matching. LLM-as-Judge and FSG ex-
+traction cause few failures (5.4% and 0.2%). Future work
+should focus on Stage 2 revision and CWE-matching
+recall.
+6
+DISCUSSION
+6.1
+Comparison with Coding Agents
+We
+further
+compare
+RTL-Obliger
+with
+coding-agent
+pipelines for RTL. MAGE is a multi-agent system for func-
+tional RTL generation [24]: it samples candidates, gener-
+ates testbenches, judges simulation feedback, and debugs
+iteratively. We also evaluate Sec-MAGE, our security-aware
+variant that adds a Secure Testbench Agent to generate
+security-oriented tests and drive repair.
+Because agent loops are expensive, we run this study
+only with DeepSeek-v4-Pro and a single run per method
+on the full SECRTL-GEN (392 instances). For a fair cost
+comparison, we report RTL-Obliger on the same model and
+the same first run. Table 8 summarizes pass rates and token
+cost.
+On all-pass, RTL-Obliger leads on every language (Ta-
+ble 8), with Avg. 58.7% versus 7.9% (MAGE) and 24.2%
+(Sec-MAGE). Security follows the same pattern (Avg. 70.4%
+vs. 14.0%/30.6%). Functional correctness is mixed: MAGE
+and Sec-MAGE are higher on Verilog, SystemVerilog, and
+VHDL, while RTL-Obliger is higher on Python; Avg. F is
+71.9%/73.0%/67.9%. Agent loops with a testbench agent
+help protect F, and Sec-MAGE further raises S and A over
+MAGE, but both remain far below RTL-Obliger on all-pass at
+much higher cost. A promising direction is to keep explicit
+security obligations for repair, and add a light testbench
+agent when F drops.
+Token cost. Token cost follows the same order as agent
+complexity (Table 8). MAGE uses 13.7M tokens (34.9k per
+case) and 3,116 LLM calls. Sec-MAGE uses 33.2M tokens
+(84.6k per case) and 5,178 calls. RTL-Obliger uses 3.8M
+tokens (9.7k per case) and 1,536 calls on the same model
+and run. Relative to RTL-Obliger, MAGE spends about
+3.6× more tokens and Sec-MAGE about 8.7× more. RTL-
+Obliger therefore offers a better trade-off between security
+
+
+IEEE TRANSACTIONS ON DEPENDABLE AND SECURE COMPUTING
+12
+TABLE 8
+Comparison with coding agents on SECRTL-GEN (DeepSeek-v4-Pro, one run). Per-language rates (%) plus Avg. over the four languages. Token
+counts are totals over 392 instances.
+Method
+Verilog
+SystemVerilog
+VHDL
+Python
+Avg.
+Calls
+Tokens
+Tokens/case
+Functional
+72.5
+81.6
+74.5
+59.2
+71.9
+-
+-
+-
+Security
+15.3
+16.3
+12.2
+12.2
+14.0
+-
+-
+-
+MAGE
+All-pass
+7.1
+8.2
+10.2
+6.1
+7.9
+3,116
+13.7M
+34.9k
+Functional
+76.5
+84.7
+72.5
+58.2
+73.0
+-
+-
+-
+Security
+28.6
+33.7
+25.5
+34.7
+30.6
+-
+-
+-
+Sec-MAGE
+All-pass
+20.4
+27.6
+20.4
+28.6
+24.2
+5,178
+33.2M
+84.6k
+Functional
+65.3
+79.6
+57.1
+69.4
+67.9
+-
+-
+-
+Security
+70.4
+78.6
+57.1
+75.5
+70.4
+-
+-
+-
+RTL-Obliger
+All-pass
+55.1
+69.4
+51.0
+59.2
+58.7
+1,536
+3.8M
+9.7k
+and functionality at substantially lower token cost than the
+adapted agent baselines under this cost-controlled setting.
+6.2
+Threats to Validity
+Internal validity. LLM sampling is stochastic. For the main
+comparison we repeat each setting five times and report
+mean±std; the agent study uses one run for cost reasons,
+so those absolute rates are less stable. We also re-implement
+SecV and adapt RESCUE and MAGE to SECRTL-GEN.
+Faithful re-implementation reduces bias, but differences
+from the original artifacts may remain.
+External validity. SECRTL-GEN covers five resource-
+access CWE families chosen for MIHW priority and port-
+level observability. These families are only part of hard-
+ware security: OpenTitan alone lists many countermeasures
+aimed at fault injection and side channels outside our threat
+model. Results may not transfer to those properties, to
+closed-source SoCs, or to full-chip multi-IP integration. We
+evaluate five frontier LLMs and four HDLs; newer models
+or other languages may shift absolute rates, though the
+obligation-inference design itself is model-agnostic.
+Construct validity. All-pass depends on our functional
+and security testbenches. Black-box, port-observable checks
+avoid teaching to internal signals, but they may still miss
+some insecure behaviors. We mitigate this with manual re-
+view of cases and golden implementations, and by checking
+that golden RTL largely passes the suites.
+7
+RELATED WORK
+7.1
+LLM-Based RTL Generation
+A growing body of work applies LLMs to register-
+transfer-level (RTL) design. Benchmarks such as Verilo-
+gEval [2], RTLLM [3], and CVDP [8] evaluate functional
+correctness via simulation against golden designs. Domain-
+adapted models and pipelines (including VeriGen [25],
+RTLCoder [26], ChipNeMo [27], and multi-agent systems
+such as MAGE [24]) further raise pass rates through fine-
+tuning, synthetic data, or iterative generate–simulate–repair
+loops [1]. Related tools also repair syntax errors in generated
+RTL [28]. These lines of work treat functional behavior as the
+primary success criterion and do not systematically measure
+whether generated RTL satisfies security obligations.
+7.2
+Security of LLM-Generated Code
+The security risks of LLM-generated software are well doc-
+umented. Pearce et al. [4] find that roughly 40% of Copilot
+suggestions in CWE-aligned scenarios are vulnerable, and
+datasets such as LLMSecEval [5] broaden evaluation over
+natural-language prompts. Secure-generation methods then
+inject external knowledge: SafeCoder [29] security-tunes
+models for software, and RESCUE [12] retrieves CWE guide-
+lines and sliced secure examples via RAG. These studies
+assume a post-deployment patching model that silicon does
+not admit.
+Hardware-facing work is more recent. HardSecBench [9]
+synthesizes Verilog and firmware-C tasks spanning many
+CWEs and reports that models often pass functional checks
+while failing security tests; concurrent audits observe sim-
+ilar residual-state and access-control issues [10]. LLMs can
+also repair known hardware security bugs once the bug is
+identified [30], but that setting starts from buggy RTL rather
+than from an obligation-omitted functional specification.
+On the generation side, SecV [11] retrieves Hardware-CWE
+knowledge-graph subgraphs, and SecFSM [23] specializes
+this idea to FSM security for SoC control logic. Outside the
+LLM setting, formal tools such as VeriSketch [19] enforce
+security when properties are stated up front [16], [31], yet
+such intent is often incomplete or left implicit [17], [18], [32].
+Compared to related work, SECRTL-GEN evaluates real
+SoC IP across four HDLs, and RTL-Obliger symbolically
+infers signal-level obligations from a functional-semantic
+graph and a CWE ontology.
+8
+CONCLUSION
+Insecure RTL cannot be patched after tape-out, yet LLM-
+based generators are still judged mainly by functional
+tests. We release SECRTL-GEN, a multi-HDL benchmark
+of real SoC IP with black-box functional and security or-
+acles under practice-motivated omission of security obli-
+gations. Across five frontier models, vanilla generation is
+functionally strong but insecure; adding CWE knowledge
+helps, while unaided self-thinking cannot close the gap
+and security prompting trades away functionality. RTL-
+Obliger addresses this by symbolically inferring signal-level
+obligations from a functional-semantic graph and a CWE
+ontology, then applying them in a two-stage generation.
+In this work, our scope is resource-access properties
+checked by black-box tests; side-channel and fault defenses
+
+
+IEEE TRANSACTIONS ON DEPENDABLE AND SECURE COMPUTING
+13
+typically need white-box oracles and fit repair-from-buggy-
+RTL settings better than pure generation from functional
+specs. In the future, we plan to broaden the CWE ontology
+within this resource-access class, and to study repair work-
+flows for weaknesses that demand white-box evaluation.
+ACKNOWLEDGMENTS
+This work was supported by National Key R&D Program of
+China (No. 2024YFB4506400). Guang Yang is also supported
+by the Postdoctoral Fellowship Program of CPSF under
+Grant Number GZC20260902.
+REFERENCES
+[1]
+G. Yang, W. Zheng, X. Chen, D. Liang, P. Hu, Y. Yang, S. Peng,
+Z. Li, J. Feng, X. Wei et al., “Large language model for verilog code
+generation: Literature review and the road ahead,” arXiv preprint
+arXiv:2512.00020, 2025.
+[2]
+M. Liu, N. Pinckney, B. Khailany, and H. Ren, “VerilogEval:
+Evaluating large language models for Verilog code generation,”
+in Proceedings of the 42nd IEEE/ACM International Conference
+on Computer-Aided Design (ICCAD), 2023, pp. 1–8.
+[3]
+Y. Lu, S. Liu, Q. Zhang, and Z. Xie, “RTLLM: An open-
+source benchmark for design RTL generation with large language
+model,” in Proceedings of the 29th Asia and South Pacific Design
+Automation Conference (ASP-DAC), 2024, pp. 722–727.
+[4]
+H. Pearce, B. Ahmad, B. Tan, B. Dolan-Gavitt, and R. Karri,
+“Asleep at the keyboard? Assessing the security of GitHub
+Copilot’s code contributions,” in Proceedings of the 43rd IEEE
+Symposium on Security and Privacy (S&P).
+IEEE, 2022, pp. 754–
+768.
+[5]
+C. Tony, M. Mutas, N. E. D. Ferreyra, and R. Scandariato, “LLM-
+SecEval: A dataset of natural language prompts for security eval-
+uations,” in Proceedings of the 20th International Conference on
+Mining Software Repositories (MSR), 2023, pp. 588–592.
+[6]
+lowRISC
+OpenTitan
+Project,
+“Comportability
+definition
+and
+specification,”
+https://opentitan.org/book/doc/contributing/
+hw/comportability/, 2025, accessed July 2026.
+[7]
+A. Meza, F. Restuccia, J. Oberg, D. Rizzo, and R. Kastner, “Secu-
+rity verification of the OpenTitan hardware root of trust,” IEEE
+Security & Privacy, vol. 21, no. 3, pp. 27–36, 2023.
+[8]
+N. Pinckney, C. Deng, C.-T. Ho, Y.-D. Tsai, M. Liu, W. Zhou,
+B. Khailany, and H. Ren, “Comprehensive verilog design prob-
+lems: A next-generation benchmark dataset for evaluating large
+language models and agents on rtl design and verification,” arXiv
+preprint arXiv:2506.14074, 2025.
+[9]
+Q. Chen, J. Shuai, S. Chen, S. Ye, Z. Wen, X. Su, J. Jin, J. Li, J. Chen,
+X. Tan, and J. Yang, “HardSecBench: Benchmarking the security
+awareness of LLMs for hardware code generation,” in Proceedings
+of the Thirty-Fifth International Joint Conference on Artificial
+Intelligence (IJCAI), 2026, also available as arXiv:2601.13864.
+[10] Z. Ibnat, P. E. Calzada, D. Saha, H. Al Shaikh, S. K. Saha, J. Zhou,
+F. Farahmandi, and M. Tehranipoor, “Trusting the machine: How
+secure is LLM-generated RTL code?” in Proceedings of the 7th
+ACM/IEEE Symposium on Machine Learning for CAD (MLCAD),
+2025, pp. 1–8.
+[11] F. Fan, Y. Xia, and L. Kuang, “Secv: Llm-based secure verilog gen-
+eration with clue-guided exploration on hardware-cwe knowledge
+graph,” in Proceedings of the Thirty-Fourth International Joint
+Conference on Artificial Intelligence, 2025, pp. 8049–8057.
+[12] J. Shi and T. Zhang, “Rescue: Retrieval augmented secure
+code generation,” in The Fourteenth International Conference
+on Learning Representations, 2026. [Online]. Available: https:
+//openreview.net/forum?id=gbxhesw4UH
+[13] MITRE Corporation, “CWE — Common Weakness Enumeration,”
+https://cwe.mitre.org/, 2024.
+[14] ——, “2021 CWE most important hardware weaknesses,” https:
+//cwe.mitre.org/topHW/archive/2021/2021 CWE MIHW.html,
+2021.
+[15] ——, “2025 CWE most important hardware weaknesses,” https:
+//cwe.mitre.org/topHW/archive/2025/2025 CWE MIHW.html,
+2025.
+[16] G. Mohr, Z. Wang, K. von Gleissenthall, J. Reineke, and
+M. Guarnieri, “Specification and verification of side-channel
+security for open-source processors via leakage contracts,” in
+Proceedings of the 2023 ACM SIGSAC Conference on Computer
+and Communications Security (CCS), 2023, pp. 163–177.
+[17] G. Dessouky, D. Gens, P. Haney, G. Persyn, A. Kanuparthi,
+H. Khattri, J. M. Fung, A.-R. Sadeghi, and J. Rajendran, “HardFails:
+Insights into software-exploitable hardware bugs,” in Proceedings
+of the 28th USENIX Security Symposium (USENIX Security 19).
+USENIX Association, 2019, pp. 213–230.
+[18] M. Riaz, J. T. King, J. Slankas, L. Williams, F. Massacci, C. Quesada-
+L´opez, and M. Jenkins, “Identifying the implied: Findings from
+three differentiated replications on the use of security require-
+ments templates,” Empirical Software Engineering, vol. 22, no. 4,
+pp. 2127–2178, 2017.
+[19] A.
+Ardeshiricham,
+Y.
+Takashima,
+S.
+Gao,
+and
+R.
+Kastner,
+“VeriSketch: Synthesizing secure hardware designs with timing-
+sensitive information flow properties,” in Proceedings of the 2019
+ACM SIGSAC Conference on Computer and Communications
+Security (CCS), 2019, pp. 1623–1638.
+[20] C. Chen, R. Kande, P. Mahmoody, A.-R. Sadeghi, and J. Rajen-
+dran, “Trusting the trust anchor: Towards detecting cross-layer
+vulnerabilities with hardware fuzzing,” in Proceedings of the
+59th ACM/IEEE Design Automation Conference (DAC), 2022, pp.
+1379–1383.
+[21] F. Zaruba and L. Benini, “The cost of application-class processing:
+Energy and performance analysis of a Linux-ready 1.7-GHz 64-bit
+RISC-V core in 22-nm FDSOI technology,” IEEE Transactions on
+Very Large Scale Integration (VLSI) Systems, vol. 27, no. 11, pp.
+2629–2640, 2019.
+[22] A. Pullini, D. Rossi, I. Loi, G. Tagliavini, and L. Benini, “Mr.Wolf:
+An energy-precision scalable parallel ultra low power SoC for
+IoT edge processing,” IEEE Journal of Solid-State Circuits, vol. 54,
+no. 7, pp. 1970–1981, 2019.
+[23] Z. Hu, Y. Xia, J. Chen, L. Kuang, and Y. Wan, “SecFSM: Knowledge
+graph-guided LLMs for generating secure Verilog code of finite
+state machine in SoCs,” IEEE Transactions on Dependable and
+Secure Computing, 2026, early Access.
+[24] Y. Zhao, H. Zhang, H. Huang, Z. Yu, and J. Zhao, “MAGE: A multi-
+agent engine for automated RTL code generation,” in Proceedings
+of the 62nd ACM/IEEE Design Automation Conference (DAC),
+2025, also available as arXiv:2412.07822.
+[25] S. Thakur, B. Ahmad, H. Pearce, B. Tan, B. Dolan-Gavitt, R. Karri,
+and S. Garg, “VeriGen: A large language model for Verilog
+code generation,” ACM Transactions on Design Automation of
+Electronic Systems, vol. 29, no. 3, pp. 1–31, 2024.
+[26] S.
+Liu,
+W.
+Fang,
+Y.
+Lu,
+J.
+Wang,
+Q.
+Zhang,
+H.
+Zhang,
+and Z. Xie, “RTLCoder: Fully open-source and efficient LLM-
+assisted RTL code generation technique,” IEEE Transactions on
+Computer-Aided Design of Integrated Circuits and Systems,
+vol. 44, no. 4, pp. 1448–1461, 2025.
+[27] M. Liu, T.-D. Ene, R. Kirby, C. Cheng, N. Pinckney, R. Liang, J. Al-
+ben, H. Anand, S. Banerjee, I. Bayraktaroglu et al., “ChipNeMo:
+Domain-adapted LLMs for chip design,” 2023.
+[28] Y.-D. Tsai, M. Liu, and H. Ren, “RTLFixer: Automatically fixing
+RTL syntax errors with large language models,” in Proceedings of
+the 61st ACM/IEEE Design Automation Conference (DAC), 2024,
+pp. 1–6.
+[29] J. He, M. Vero, G. Krasnopolska, and M. Vechev, “Instruction
+tuning for secure code generation,” in Proceedings of the 41st
+International Conference on Machine Learning (ICML), vol. 235.
+PMLR, 2024, pp. 18 043–18 062.
+[30] B. Ahmad, S. Thakur, B. Tan, R. Karri, and H. Pearce, “On hard-
+ware security bug code fixes by prompting large language mod-
+els,” IEEE Transactions on Information Forensics and Security,
+vol. 19, pp. 4043–4057, 2024.
+[31] A. Athalye, I. Lebedev, A. Allen, M. F. Kaashoek, and N. Zel-
+dovich, “Verifying hardware security modules with information-
+preserving refinement,” in Proceedings of the 16th USENIX
+Symposium on Operating Systems Design and Implementation
+(OSDI), 2022, pp. 959–978.
+[32] A. Rashid, A. Naqvi, R. Ramdhany, M. Edwards, R. Chitchyan,
+and M. A. Babar, “Discovering “unknown known” security re-
+quirements,” in Proceedings of the 38th International Conference
+on Software Engineering (ICSE), 2016, pp. 866–876.

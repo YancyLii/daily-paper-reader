@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-29</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-30</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 10 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 6 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>6</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>4</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-29 19:42:02 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-30 19:17:04 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共生成 10 篇推荐（精读 4 篇，速读 6 篇）</p>
-<p>精读：《MMJailBench: A Factorized Benchmark for Disentangling Multimodal Jailbreak Vulnerabilities》（9.0/10）, 《When Context Gets Root: Privilege Escalation in LLM Harnesses》（9.0/10）</p>
-<p>速读：《NeuronFuzz: Safety Neuron Guided Fuzzing for LLM Safety Evaluation》（7.0/10）, 《RedEvoAgent: Automatic Red-Teaming Agent with Experience-Driven Skill Evolution》（7.0/10）, 《Faults That Fortify: CNN Adversarial Robustness via GPU Undervolting》（6.0/10）</p>
+<p>今日共生成 6 篇推荐（精读 2 篇，速读 4 篇）</p>
+<p>精读：《BanglaVeilGuard: Cross-Script Safety Benchmarking and Lightweight Guardrails for Bangla Large Language Models》（9.0/10）, 《ToolMinimize: Auditing and Rewriting LLM Agent Tool Calls to Minimize Privacy Exposure》（8.0/10）</p>
+<p>速读：《GuardianBench: A Same-Scene Instruction-Contrastive Benchmark for Latent Contextual Risk in Embodied AI》（7.0/10）, 《CyberFactory: Scaling Cyber Security Capabilities with Instances from the Wild》（6.0/10）, 《Rethinking the Transferable Adversarial Attacks and Robust Defense in Federated Learning》（6.0/10）</p>
 <p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
   </div>
 </section>
@@ -74,12 +74,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="MMJailBench: A Factorized Benchmark for Disentangling Multimodal Jailbreak Vulnerabilities">MMJailBench: A Factorized Benchmark for Disentangling Multimodal Jailbreak Vulnerabilities</span></li><li><span class="dpr-home-dashboard-paper-title" title="When Context Gets Root: Privilege Escalation in LLM Harnesses">When Context Gets Root: Privilege Escalation in LLM Harnesses</span></li><li><span class="dpr-home-dashboard-paper-title" title="Large Language Models at the Intersection of Software Engineering and Software Security:An Evidence-Centered Structured Survey and Research Agenda">Large Language Models at the Intersection of Software Engineering and Software Security:An Evidence-Centered Structured Survey and Research Agenda</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="BanglaVeilGuard: Cross-Script Safety Benchmarking and Lightweight Guardrails for Bangla Large Language Models">BanglaVeilGuard: Cross-Script Safety Benchmarking and Lightweight Guardrails for Bangla Large Language Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="ToolMinimize: Auditing and Rewriting LLM Agent Tool Calls to Minimize Privacy Exposure">ToolMinimize: Auditing and Rewriting LLM Agent Tool Calls to Minimize Privacy Exposure</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>2</strong></span><span class="dpr-home-dashboard-tag">vuldet <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,12 +87,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">6 篇</strong>
+    <strong class="dpr-home-dashboard-count">4 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="NeuronFuzz: Safety Neuron Guided Fuzzing for LLM Safety Evaluation">NeuronFuzz: Safety Neuron Guided Fuzzing for LLM Safety Evaluation</span></li><li><span class="dpr-home-dashboard-paper-title" title="RedEvoAgent: Automatic Red-Teaming Agent with Experience-Driven Skill Evolution">RedEvoAgent: Automatic Red-Teaming Agent with Experience-Driven Skill Evolution</span></li><li><span class="dpr-home-dashboard-paper-title" title="Faults That Fortify: CNN Adversarial Robustness via GPU Undervolting">Faults That Fortify: CNN Adversarial Robustness via GPU Undervolting</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="GuardianBench: A Same-Scene Instruction-Contrastive Benchmark for Latent Contextual Risk in Embodied AI">GuardianBench: A Same-Scene Instruction-Contrastive Benchmark for Latent Contextual Risk in Embodied AI</span></li><li><span class="dpr-home-dashboard-paper-title" title="CyberFactory: Scaling Cyber Security Capabilities with Instances from the Wild">CyberFactory: Scaling Cyber Security Capabilities with Instances from the Wild</span></li><li><span class="dpr-home-dashboard-paper-title" title="Rethinking the Transferable Adversarial Attacks and Robust Defense in Federated Learning">Rethinking the Transferable Adversarial Attacks and Robust Defense in Federated Learning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>5</strong></span><span class="dpr-home-dashboard-tag">vuldet <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">vuldet <strong>3</strong></span><span class="dpr-home-dashboard-tag">agsec <strong>1</strong></span></div>
 </section>
 </div>
 

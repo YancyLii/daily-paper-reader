@@ -1,0 +1,397 @@
+Title: KubeCap: A Framework for Capability Minimization in Kubernetes via Static Analysis and LLM-Assisted Rule Inference
+
+URL Source: https://arxiv.org/pdf/2608.26699v1
+
+Published Time: Fri, 28 Aug 2026 00:36:25 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# KubeCap : A Framework for Capability Minimization in Kubernetes via Static Analysis and LLM-Assisted Rule Inference 
+
+Yuhao Liu, Yingnan Zhou, Weijie Liu *, Yan Jia *, and Zheli Liu 
+
+Key Laboratory of Data and Intelligent System Security, Ministry of Education, China (DISSec), Tianjin Key Laboratory of Network and Data Security Technology (NDST), College of Cryptology and Cyber Science, Nankai University, Tianjin 300350, China 
+
+{yuhao.liu, yingnan.zhou }@mail.nankai.edu.cn 
+
+{weijieliu, jiay, liuzheli }@nankai.edu.cn 
+
+Abstract —As the most widely used container orchestration platform, Kubernetes provides flexible privilege configuration by allowing developers to manage Linux capabilities via manifest files. However, developers rely on default settings or coarse-grained security contexts in practice, violating the principle of least privilege and enlarging the attack surface of containerized workloads. Existing studies either detect vulnerable patterns in Kubernetes manifests or infer required capabilities for standalone Linux programs, but they do not directly address capability minimization in Kubernetes. To bridge this gap, we first conduct an empirical study on three open-source datasets, revealing that 74.67% of projects lack capability configurations. Motivated by our observations, we propose KubeCap , a framework for Kubernetes capability minimization. KubeCap translates deployment specifications into deterministic manifests, locates container entrypoints, performs reachability-guided system call analysis, and leverages LLM-assisted rule specification to derive syscall–parameter–capability relations from Linux kernel code. Based on these results, KubeCap 
+
+infers the minimal capability set required by each workload and automatically generates repaired manifests. Evaluation on 10 representative Go-based Kubernetes projects shows an average capability reduction rate of 54.97%, outperforming rapid type analysis and class hierarchy analysis baselines while maintaining practical analysis cost. These results demonstrate KubeCap ’s effectiveness in enforcing least privilege in Kubernetes. 
+
+Index Terms —Kubernetes, least privilege, Linux capabilities, privilege minimization, static analysis. 
+
+I. I NTRODUCTION 
+
+Kubernetes (K8s) is an open source container orchestra-tion system governed by Cloud Native Computing Founda-tion (CNCF) [1]. It is used to automate the deployment, capacity expansion, load balancing, rolling update, fault recovery, and other tasks of container applications [2]. Kubernetes applications are typically deployed through declarative YAML manifests, which specify workload objects such as Pods, which are the basic execution units that encapsulate one or more containers. Among the configuration fields of the manifests, 
+
+securityContext defines security-sensitive runtime set-tings for a container or Pod. The securityContext field 
+
+* Weijie Liu and Yan Jia are corresponding authors. cloudify-kubernetes-plugin Description:              
+
+> The manifest grants the container the SYS_ADMIN Linux capability through securityContext.capabilities.add.
+> Impact:
+> Granting SYS_ADMIN may weaken container isolation and increase the likelihood of container breakout or host-level abuse.
+> 1apiVersion: v1 2kind: Pod 3spec: 4containers: 5- name: cloudify-manager 6image: cloudifyplatform/premium 7…8securityContext: 9capabilities:
+> 10 add: ["SYS_ADMIN"]
+> 11 volumeMounts: 12 - mountPath: /sys/fs/cgroup 13 …
+
+Fig. 1. An example of the privileged container in the pod manifest of cloudify-kubernetes-plugins. 
+
+in a Pod manifest controls permission-related parameters, such as capabilities , privileged , and runAsNonRoot ,which directly determine how much authority a containerized process holds over the underlying host system. Although Kubernetes has become the mainstream platform for container orchestration, its flexibility in configuring con-tainer privileges introduces severe security challenges [3], [4]. The mechanisms of securityContext are intended to support the principle of least privilege. Security guidelines and compliance controls recommend minimizing assigned capabilities whenever possible [5]. However, the least privilege is difficult to enforce in practice. In Kubernetes deployments, to avoid complex permission debugging, developers often grant containers excessive privileges in the securityContext of YAML manifests, such as directly assigning CAP_SYS_ADMIN 
+
+or enabling privileged: true [6]. Even when developers do not explicitly enable fully privileged mode, containers still inherit a default set of Linux capabilities assigned by the container runtime, many of which are unnecessary for arXiv:2608.26699v1 [cs.CR] 27 Aug 2026 the application’s normal operation. This over-privileged con-figuration greatly expands the system’s attack surface. For example, as shown in Figure 1, the manifest grants the con-tainer cloudify-manager the broad CAP_SYS_ADMIN 
+
+capability. Such a configuration weakens container isolation and exposes the workload to a larger set of kernel-level operations. This excessive privilege may further increase the risk of container escape or host-level abuse. In addition, He et al. [3] and Yang et al. [7] demonstrated that even a single misconfigured privileged container can compromise an entire cluster through eBPF-based privilege escalation. To bridge the gap, we conducted an empirical study on three open-source Kubernetes datasets. Our results reveal that explicit capability configuration remains uncommon. Specifi-cally, 74.67% of projects lack capability configurations, and only 19.33% adopt the least-privilege pattern. Based on these findings, we propose KubeCap , a Kubernetes capability mini-mization framework with five components. First, it translates raw K8s template files into deployable manifests and extracts workload-level capability configurations. Second, it performs entrypoint localization to recover the actual executables and source-level entry files of containers, including multi-container settings such as init containers. Third, it conducts reachability-guided system call analysis on the recovered entrypoints to identify the system calls that are relevant to the deployed work-load. Fourth, it leverages the LLM-assisted rule specification and minimal capability inference to derive precise syscall– parameter–capability relations from Linux kernel code and infer the minimal capability set required by each workload. Finally, it performs deviation analysis between the originally declared capabilities and the inferred minimal set, and automatically generates repaired manifests that enforce least privilege. We evaluate KubeCap on 10 representative Go-based projects of Kubernetes. The results show that KubeCap achieves an average capability reduction rate of 54.97%, removing redundant privileges from real-world workloads. Compared with rapid type analysis (RTA) and class hierarchy analysis (CHA), the reachability-based design achieves a higher average reduction rate (54.97%, 38.00% and 7.68%, respectively). Points-to analysis (PTA) is competitive when it completes but often times out on larger projects. Case studies further validate the practicality of KubeCap on real-world projects. In addition, KubeCap achieves practical performance that the analysis completes within a few minutes on the largest subjects and within tens of seconds on most others, while keeping memory usage in a similar range of about 1 to 3.5 GiB. These results demonstrate that KubeCap can effectively and efficiently precompute minimized capabilities for K8s workloads. In summary, we make the main contributions as follows:  
+
+> •
+
+Empirical study. We conducted an empirical study on three open-source Kubernetes datasets and show that 74.67% of projects do not explicitly configure capabilities, and only 19.33% explicitly remove default capabilities.  
+
+> •
+
+Tool. We propose KubeCap , a framework for Kubernetes capability minimization. It can infer workload-specific minimal capability sets and generate repaired K8s mani-fests to prevent the over-privileged capability configura-tions in Kubernetes manifests. We make KubeCap publicly available at https://github.com/anabioticsoul/KubeCap/.  
+
+> •
+
+Effectiveness. Evaluation on 10 Kubernetes projects shows that KubeCap removes redundant capabilities, achieving an average reduction rate of 54.97% with practical time and memory overhead. II. R ELATED WORK 
+
+Prior studies have explored least-privilege enforcement from different perspectives. One line of work focuses on detecting security misconfigurations in Kubernetes manifests. Rahman et al. [6] systematically mined open-source Kubernetes projects and showed that security misconfigurations are widespread in real-world deployments. They further proposed SLI-KUBE, a rule-based analysis tool that uses Def-Use chain analysis to trace key configuration parameters across multiple Kubernetes manifest files. Malul et al. [8] collected and labeled a large corpus of Kubernetes configuration files, established a unified misconfiguration index, and fine-tuned an LLM to detect potential misconfigurations. These studies are effective at identifying vulnerable configuration patterns in Kubernetes manifests. However, they focus on whether a configuration violates known best practices, rather than whether the granted privileges are functionally required by the deployed workload. Another line of work infers required capabilities for privilege reduction. A key challenge here is that capability checks are often deeply embedded in helper functions and triggered only under specific syscall parameters. While Confine [9] restricts attack surfaces via seccomp filtering, tools like Decap [10] and LiCA [11] directly infer capabilities for privileged programs through static and path-sensitive analysis. Runtime solutions like CAPMAN [12] mitigate capability abuses, but their reliance on behavior learning, kernel in-strumentation and stable workloads limits their applicability in dynamic Kubernetes environments. Furthermore, due to the complexity of whole-kernel static analysis [13], prior approaches typically rely on manual rule extraction covering limited capabilities (e.g., CAP_SYS_ADMIN ) [10]. Crucially, they mainly target standalone binaries or generic images, failing to account for Kubernetes-specific complexities such as rendered manifests, command overrides, and init containers. To address these limitations, KubeCap performs demand-driven, LLM-assisted rule extraction. By tracing bounded caller chains from capability-checking sites, KubeCap leverages an LLM to summarize syscall-level parameter conditions into structured rules, enabling a highly accurate mapping of both direct and condition-dependent capability requirements. Recent K8s works focus on API-layer and manifest hard-ening. KubeFence [14] reduces the Kubernetes API attack surface by deriving fine-grained API filtering policies from K8s workloads. KubeGuard [15] uses LLMs with manifests and runtime logs to recommend least-privilege K8s configurations, including Roles, NetworkPolicies, and Deployments. Different from these systems, KubeCap focuses specifically on Linux capability minimization in container securityContext fields. It links rendered manifests, actual container entrypoints, reachable syscall sites, and kernel-derived syscall–parameter– capability rules to precompute workload-specific capability sets. Therefore, KubeCap is complementary to existing Kubernetes misconfiguration detectors, capability-inference tools, and hardening systems. III. B ACKGROUND 
+
+A. Capabilities in Kubernetes 
+
+Linux capabilities provide a fine-grained privilege model by decomposing superuser privileges into independently enabled or disabled capability units [16]. In Kubernetes, developers customize container privileges through the 
+
+securityContext field using capabilities.add and 
+
+capabilities.drop [17]. Kubernetes itself does not define a fixed default capability set for containers; instead, the effective privilege set depends on the underlying container runtime [17], [18]. Therefore, if a container does not explicitly drop unnecessary capabilities, it may retain a non-trivial baseline capability set granted at runtime.          
+
+> TABLE I REPRESENTATIVE RISKS OF EXCESSIVE CAPABILITIES IN KUBERNETES
+> Capability CVEs Impact
+> CAP NET RAW CVE-2020-14386 [19] Packet forgery CAP NET ADMIN CVE-2017-6074 [20] Container compromise CAP SYS ADMIN CVE-2022-0185 [21] Cluster compromise
+
+B. Threat Model 
+
+In Kubernetes, the security risk of Linux capabilities does not arise merely from their existence, but from the gap between the capabilities actually required by a workload and those retained by default or granted in configuration. Whether inherited from the container runtime or explicitly added in YAML manifests, unnecessary capabilities enlarge the attack surface available to an attacker after initial container compromise. As shown in Figure 2, there are two aspects that can make over-privileged capabilities especially risky in Kubernetes. Workload Container   
+
+> Capabilities …
+> SYS_ADMIN NET_RAW Evil application
+> K8s Config files
+> Other Application
+> User misconfiguration
+> Project default configuration
+> Over-privileged
+> Cluster Compromise
+> Fig. 2. How excessive capability configurations in Kubernetes amplify post-compromise risks.
+
+Container escalation. Once a container is compromised, its privileges may lead to host-level impact. The K8s documenta-tion notes that, without Linux user namespaces, a root container may obtain root privileges on the node after a breakout, and any capabilities granted to the container remain valid on the host as well [23]. Note that K8s namespaces and Linux namespaces are different. K8s namespaces are API-level abstractions for organizing Kubernetes objects, while Linux namespaces isolate user and group identities between a container and the host. Moreover, as shown in Table I, certain kernel attack surfaces are directly controlled or facilitated by specific capabilities. For example, the OSS-security advisory for CVE-2020-14386 states that creating AF PACKET sockets requires CAP_NET_RAW 
+
+in the corresponding network namespace. Therefore, retaining capabilities such as CAP_NET_RAW can expose containers to a broader class of kernel networking attacks, such as packet forgery. More generally, prior measurement studies have shown that default container configurations are often overly permissive. Lin et al. [24] found that a substantial fraction of real-world exploits could still be successfully launched from within containers under default settings, and further showed that kernel security mechanisms such as capabilities, seccomp, and MAC play a more critical role in preventing privilege escalation than namespaces and cgroups alone [19], [20]. 
+
+Compromising the whole cluster. In Kubernetes, excessive capabilities may impact an entire cluster beyond a single container or node. Once an attacker gains code execution in an over-privileged container, those capabilities can be used to achieve container escape or node-level compromise. Table I shows that broad capabilities attacks, such as CVE-2022-0185, are associated with cluster-level compromise risks. Recent work has shown that after escaping a container via eBPF-enabled privileges (typically requiring CAP_SYS_ADMIN ), attackers can abuse over-privileged Operator Pods and their ServiceAccounts on the same node to interact with the K8s API server and create or update Pods on other nodes, thereby expanding the attack from one compromised node to the entire cluster [3]. Note that Operator Pods are Kubernetes controllers. Unlike standard application Pods, which execute business logic, Operator Pods are designed to watch, create, update, or reconcile Kubernetes resources via the API server. This threat model assumes that the attacker has already obtained initial execution in a container and attempts to exploit capabilities that exceed the workload’s actual needs to compromise the node and pivot through over-privileged Kubernetes components. IV. E MPIRICAL STUDY : P REVALENCE OF OVER -PRIVILEGED 
+
+CAPABILITIES IN REAL -WORLD KUBERNETES PROJECTS 
+
+We first conduct an empirical study of how Linux capabilities are configured in real-world projects. We collect and examine capability-related configurations from open-source Kubernetes repositories. Our study aims to answer two questions. 1) How frequently are capabilities explicitly configured in real-world K8s projects? 2) What level of granularity are the capabilities configured in practice? In particular, do developers apply least-privilege patterns such as dropping all the capabilities and adding back only those necessary, or do they retain broad defaults, add capabilities in an ad hoc manner, or even use privileged containers? If explicit configuration is uncommon, or if projects mainly rely on default or overly coarse-grained TABLE II PROJECT -LEVEL PREVALENCE OF CAPABILITY -RELATED CONFIGURATIONS ACROSS THREE OSS K UBERNETES DATASETS .                         
+
+> Dataset Total w/ Container w/ SecurityContext w/ Capabilities w/ Drop-All Capabilities
+> Rahman et al. [6] 57 52 19 (36.5%) 10 (17.3%) 7 (13.5%) Shamim et al. [22] 33 15 10 (46.7%) 4 (26.7%) 2 (13.3%) This work 102 83 51 (61.4%) 24 (28.9%) 20 (24.1%)
+> Total 192 150 53.33% 25.33% 19.33%
+
+privilege settings, this would indicate substantial room for improvement. Answering these questions helps us understand the current practice of capability configuration and motivates the need for privilege analysis and recommendation. 
+
+A. Study Design and Dataset Construction 
+
+Search source. To broaden the empirical basis of our study, we incorporate two public datasets released by prior work on Kubernetes configurations. The first is the dataset of Rahman et al. [6], which investigates security misconfigurations in open-source Kubernetes manifests. The second is the dataset of Shamim et al. [22], which analyzes community-prescribed security configurations for Kubernetes. Since these datasets were originally constructed for different research goals, we do not directly reuse their reported statistics. Instead, we re-analyze all included projects under a unified standard. To complement these datasets, we construct our own dataset from GitHub, which provides publicly accessible deployment artifacts and has been widely used in previous studies. 
+
+Search strategy. Following prior studies that mined GitHub repositories for software engineering research [25], [26], we used “kubernetes helm” as the search query and systematically crawled candidate repositories. We applied explicit filtering rules in line with common empirical dataset construction practices [27]. Specifically, we excluded repositories with fewer than 20 stars, filtered out archived repositories, and removed inaccessible or duplicate repositories. This process resulted in a dataset of 102 open-source repositories. 
+
+Quantification analysis. We analyzed and identified the Kubernetes manifests in projects that configure containers (hereafter referred to as container projects ). For each project, we examined whether at least one manifest explicitly configures 
+
+securityContext , capabilities , or the least-privilege pattern drop: ["ALL"] (i.e., drop all capabilities). We used a single project rather than an individual YAML file as the unit of analysis, so each repository was counted at most once per category. To reduce extraction errors, we manually validated a subset of parsed manifests and confirmed the consistency between the extracted fields and the original YAML files. 
+
+B. Prevalence of Explicit Capabilities Configuration 
+
+Table II summarizes the prevalence of capability-related configurations across the three datasets. 
+
+Observation 1: Capability configuration is uncommon across all three datasets. 112 of 150 projects (74.67%) do not set capabilities and thus still rely on Kubernetes default configu-ration, while only 19.33% drop all capabilities. Table II summa-rizes the results. In Rahman et al.’s dataset, only 10 of 52 con-tainer projects (17.3%) configure capabilities , and only 7 (13.5%) use the drop-all pattern. In Shamim et al.’s dataset, 4 of 15 container projects (26.7%) configure capabilities ,and only 2 (13.3%) adopt drop: ["ALL"] . Our dataset shows the same trend that among 83 container projects, only 24 (28.9%) configure capabilities , and only 20 (24.1%) use the drop-all pattern. These results indicate that explicit capability customization remains uncommon in real-world Kubernetes projects. 
+
+Observation 2: The configuration of security context is more common than capabilities. Across the three datasets, 53.33% of container projects specify security context, but only 25.33% explicitly configure capabilities. As shown in Table II, this gap is consistent across all three datasets. In Rahman et al.’s dataset, 19 of 52 container projects (36.5%) define securityContext , but only 10 (17.3%) further con-figure capabilities . In Shamim et al.’s dataset, 10 of 15 projects (46.7%) specify securityContext , compared with 4 (26.7%) that configure capabilities . Our dataset shows that 51 of 83 projects (61.4%) specify securityContext ,while only 24 (28.9%) explicitly configure capabilities .These results suggest that developers are more likely to adopt coarse-grained security settings than fine-grained ones. Overall, the results suggest that least-privilege capability configuration is still not common practice in real-world Kubernetes projects. This gap motivates the need for capability analysis and minimization. V. M ETHODOLOGY 
+
+A. Overview 
+
+We propose KubeCap which is designed for minimizing over-privileged capability configurations in Kubernetes. As shown in Figure 3, it first translates raw template files into Kubernetes manifests, locates the container runtime entrypoints, and performs reachability-guided system call analysis on the corresponding source code. In parallel, KubeCap extracts syscall–condition–capability rules from Linux kernel code via the LLM-assisted rule specification. It then combines both results to infer the minimal capability set required by the workload, compares it with the original manifest, and generates a repaired least-privilege configuration. 
+
+B. Configuration Translator 
+
+In modern cloud-native practice, Kubernetes workloads are rarely specified as plain static YAML files. Instead, developers often define workloads using Helm charts and Kustomize K8s Application raw manifest files K8s Application source code     
+
+> Translator Entrypoint locator Reachability analysis Deviation analysis
+> Report
+> Linux kernel source code
+> LLM-assisted rule specification
+> Declared capabilities Minimized capabilities
+> Minimal capability inference
+> Rendered manifest files
+> extracting
+> Patched manifest files
+> Inputs Analysis Pipeline Outputs
+
+Fig. 3. The workflow of KubeCap .
+
+overlays [28], [29] to dynamically generate manifests from templates, dependency packages, and environment-specific values. Directly analyzing these raw templates would lose the deployment semantics and lead to inaccurate privilege inference. To address this problem, KubeCap introduces the Configuration Translator that translates raw template files into deterministic Kubernetes manifests. Given a target repository, the translator identifies its configuration paradigm in the order of Helm charts, Kustomize overlays, and plain YAML files. For Helm-based repositories, KubeCap recursively discovers candidate chart directories by locating Chart.yaml files, while excluding common testing fixtures such as testdata and tests . For each chart, KubeCap invokes a resilient rendering procedure that first executes helm dependency build and then runs 
+
+helm template to generate the fully expanded manifest. The rendering output is persisted as a fixed intermediate artifact, 
+
+rendered.yaml , which serves as the canonical input to subsequent analysis stages. To improve robustness, KubeCap 
+
+performs bounded automatic repair and retry when rendering fails. Specifically, it handles several common failure modes observed in practice, including invalid placeholder versions in 
+
+Chart.yaml , malformed apiVersion fields, missing chart dependencies, and absent .Values.* parameters. Temporary metadata changes are reverted after rendering so that the original repository state is preserved. After rendering, the translator parses rendered.yaml to identify workload objects, including Deployment , DaemonSet ,
+
+StatefulSet , Job , CronJob , and Pod . For each workload, it ex-tracts the securityContext together with container defini-tions, distinguishing containers from initContainers .It also records the declared image, command , and args 
+
+fields, which are essential to recover the actual runtime entrypoint in the next stage. For example, as shown in Figure 4, KubeCap renders the podinfo Helm template into a deterministic rendered.yaml fragment by resolving variables in the container specification. In the original tem-plate, fields such as container name, image name, image pull policy, and command-line arguments are parameterized with Helm expressions (e.g., {{ .Chart.Name }} and {{ 
+
+.Values.* }} ). After rendering, these symbolic placehold-ers are materialized into concrete runtime values, such as                                
+
+> containers: -name: {{ .Chart.Name }} image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}" imagePullPolicy: {{ .Values.image.pullPolicy }} command: -./podinfo ---port={{ .Values.service.httpPort |default 9898 }} ---cert-path={{ .Values.tls.certPath }} ---port-metrics={{ .Values.service. metricsPort }} ---grpc-port={{ .Values.service.grpcPort }} ---grpc-service-name={{ .Values.service. grpcService }} ---level={{ .Values.logLevel }} ...
+
+Helm Template            
+
+> containers: -name: podinfo image: "ghcr.io/stefanprodan/podinfo:6.9.4" imagePullPolicy: IfNotPresent command: -./podinfo ---port=9898 ---cert-path=/data/cert ---port-metrics=9797 ---grpc-port=9999 ---grpc-service-name=podinfo ---level=info ...
+
+Rendered Manifest 
+
+Helm rendering 
+
+Fig. 4. An example of Helm template rendering. 
+
+podinfo , ghcr.io/stefanprodan/podinfo:6.9.4 ,
+
+IfNotPresent , and explicit command arguments like 
+
+--port=9898 and --grpc-port=9999 .
+
+C. Entrypoint Locator 
+
+While Kubernetes manifests specify container images, static analysis requires the exact program entrypoint and the corre-sponding source code file. In practice, this mapping is obscured by multiple layers of indirection, including image defaults, manifest overrides, and wrapper scripts. To correlate rendered manifests with the source code of K8s application, we design the entrypoint locator. It takes the mani-fests as input, parsing each workload from rendered.yaml 
+
+and iterating containers. For each container, KubeCap pulls the specified image, retrieves the default entrypoints and arguments (e.g., command and args ) recorded in the metadata. It then combines the image defaults with the arguments according to K8s command resolution semantics to recover the runtime startup command. However, the startup command may not correspond to the actual application entrypoint. Many containers use wrapper scripts or helper binaries (e.g., sh -c ) for envi-ronment initialization and signal handling. KubeCap therefore applies heuristic script unwrapping to recursively resolve such indirections until it reaches the underlying executable responsible for the main application logic. Once the target executable is identified, KubeCap extracts the binary from the container and maps it back to the source repository. Since many Kubernetes components and cloud-native con-trollers are implemented in Go, KubeCap leverages Go-specific binary analysis to bridge compiled artifacts and source code. In particular, it uses go tool to analyze symbol information and locate the main function. By matching the recovered file paths with the cloned repository structure, KubeCap 
+
+pinpoints the exact entry file associated with the rendered container configuration. The output of this stage is a precise mapping from each rendered Kubernetes workload to its actual executable entrypoint and source code path. It ensures that static single assignment (SSA) construction and reachability analysis are performed on the exact code paths induced by the rendered Kubernetes workload, rather than on unrelated binaries, dead code, or repository-wide over-approximations. 
+
+D. System Call Analysis based on Graph Reachability 
+
+After obtaining the source code path at container runtime through the entrypoint locator, the system needs to calculate all system calls that the program may trigger during actual execution. Since modern cloud-native projects have massive standard libraries and third-party dependencies, directly per-forming a full scan at the source code level would lead to an overwhelming number of false positives. To address this problem, KubeCap performs reachability-guided system call analysis on top of the SSA representation. As shown in Algorithm 1, KubeCap first initializes the entry functions from the target main package and then iteratively expands the worklist to compute the set of reachable functions. For each visited function, KubeCap first performs syscall clas-sification and then discovers its callees from SSA instructions. Newly discovered callees are added to the worklist until a fixed point is reached. In this way, KubeCap restricts the analysis scope to functions that are actually reachable from the real container entrypoint. KubeCap reachability analyzer traverses the reachable graph top-down and identifies three types of system call trigger points: 
+
+Syscall traps. Direct invocations of low-level trap instructions, such as syscall.Syscall and 
+
+syscall.Syscall6 .
+
+Syscall wrappers. Secure encapsulations of the oper-ating system within the high-level language’s standard li-brary, such as various file and network operations under the 
+
+golang.org/x/sys/unix package. 
+
+Algorithm 1 Reachability-Guided System Call Analysis                                                                                        
+
+> Require: SSA program P,entry options excludeMain and
+> excludeInit
+> Ensure: Reachable functions Rand syscall categories
+> Ctrap , C wrap , C rt
+> 1: E←initialize entry functions in package main
+> 2: R←E;W←E
+> 3: Ctrap , C wrap , C rt ← ∅
+> 4: while W̸=∅do
+> 5: f←pop( W)
+> 6: if ISTRAP (f)then
+> 7: Ctrap ←Ctrap ∪ { fullName (f)}
+> 8: else if ISRUNTIME SYSCALL (f)then
+> 9: Crt ←Crt ∪ { fullName (f)}
+> 10: else if ISWRAPPER (f)then
+> 11: Cwrap ←Cwrap ∪ { fullName (f)}
+> 12: end if
+> 13: S←FIND CALLEES (f)
+> 14: for each g∈Sdo
+> 15: if g / ∈Rthen
+> 16: R←R∪ { g}
+> 17: push( W, g )
+> 18: end if
+> 19: end for
+> 20: end while
+> 21: return (R, C trap , C wrap , C rt )
+
+Syscall runtimes. Low-level calls triggered by the language runtime for garbage collection and goroutine scheduling, such as futex - and mmap -related calls in the runtime package. By strictly restricting the analysis to reachable paths origi-nating from the true entrypoint, this module naturally filters out unlinked and unexecuted dead code within the project. Consequently, it outputs a precise set of system calls tightly bound to the specific K8s configuration context. 
+
+E. LLM-assisted Rule Specification 
+
+Kernel slice extraction. KubeCap first constructs capability-relevant kernel code slices. It identifies representative capability-checking APIs in the Linux kernel, such as capable() ,
+
+ns_capable() , and related variants. Each matched location is treated as a seed capability-check site. For each seed site, 
+
+KubeCap performs bounded caller tracing to recover the syscall-level context of the capability check. Starting from the function that contains the capability-checking API, KubeCap recursively searches its callers until a syscall-like function is reached or the caller context no longer contributes syscall-level parameter information. The resulting slice contains not only the capability-checking call itself, but also the relevant caller context, branch predicates, and argument-propagation information needed to explain when the check can be triggered. 
+
+Rule Inference. KubeCap employs one-shot learning [30], a technique widely adopted in prior studies [31]. The prompt consists of four components: task description, input speci-fication, output format, and a representative example. First, the task instruction defines the LLM as a Linux kernel and security expert, and provides a detailed description of the task, including the types of inputs provided, how they should be processed, and the required structure and content of the output. Second, KubeCap provides three types of inputs: (1) 
+
+Source file , (2) Line range , and (3) Caller-augmented code slice . The output is required to be a structured array containing: (1) Syscall name ; (2) Parameter information ; (3) Trigger condition ; (4) Inferred capability ; and (5) Side condition . If the provided slice does not support a valid syscall–parameter– capability relationship, the LLM must return an empty array. Third, the representative example enables the LLM to generate responses following the required output schema. The generated rules are subsequently consumed by KubeCap ’s deterministic minimal capability inference stage, which matches them against reachable syscall sites and resolved argument constraints in the analyzed workload. 
+
+F. Minimal Capability Inference 
+
+The rules extracted from kernel code are not directly sufficient for capability minimization, because many capability requirements are guarded by argument-dependent predicates rather than triggered unconditionally. Therefore, after con-structing the syscall-condition-capability rule base, KubeCap 
+
+performs a dedicated constraint resolution stage to determine which conditional capability rules are actually satisfiable along the reachable execution paths of the target workload. Given the set of reachable functions derived from the true container entrypoint, KubeCap processes all conditional rules associated with the observed system calls. For each rule, it first identifies the argument positions involved in the condition. These argument indices may either be explicitly encoded in the rule metadata or extracted from the condition expression itself. 
+
+KubeCap then attempts to resolve the corresponding argument values through a constant analysis procedure. Concretely, it prioritizes direct numeric literals at call sites, then queries previously resolved constants from the analysis cache, followed by source-level constant definition lookup, and finally performs SSA-based backward tracing to recover constant origins. The resolved values are cached in the analysis manager to avoid redundant propagation across rules and call sites. To improve precision for frequently used syscall wrappers, 
+
+KubeCap further incorporates a set of syscall-specific handlers. For representative interfaces such as fcntl and ioctl , these handlers directly inspect wrapper call sites, retrieve concrete arguments from callers, and match them against rule predicates. Once a condition is satisfied, the corresponding conditional capability requirement is appended to the inferred result. This design allows KubeCap to handle common argument-sensitive system calls more precisely than purely generic propagation. At the same time, for highly context-sensitive interfaces such as open , mmap , and ptrace , KubeCap deliberately avoids overly aggressive approximation in the special path in order to reduce false positives. After all rule conditions have been resolved, KubeCap aggre-gates the matched capability requirements across the reachable execution scope and computes the minimized capability set, denoted as Cap min . Intuitively, Cap min contains only those Linux capabilities whose guarding conditions are actually exercised by the program under the analyzed Kubernetes configuration. In this way, KubeCap bridges the gap between syntactic syscall reachability and semantically justified privilege requirements, enabling capability minimization to be driven by both program behavior and argument-level constraints. 
+
+G. Deviation Analysis 
+
+After inferring the minimized capability set required by the program, KubeCap compares the analysis result with the declaration in Kubernetes configuration. Specifically, KubeCap 
+
+compares the original capability set declared in the manifest, denoted as Cap orig , with the minimized capability set inferred from program analysis, denoted as Cap min . It then computes the redundant capability set as: 
+
+Cap del = Cap orig \ Cap min .
+
+Each capability in Cap del represents a privilege granted in the original securityContext but not required by the actual workload behavior, and is therefore treated as over-privileged. Based on this deviation analysis, KubeCap 
+
+automatically generates a patched Kubernetes manifest to enforce least privilege. KubeCap explicitly inserts drop: ["ALL"] into the securityContext to eliminate inherited default privileges. In addition, it adds back only the minimized capability set Cap min through the add: [...] field. VI. E VALUATION 
+
+We evaluate KubeCap by answering the following research questions: 
+
+RQ1: How effective is KubeCap in identifying and mini-mizing over-privileged capabilities in real-world Kubernetes workloads? 
+
+RQ2: How do different call-graph construction strategies affect KubeCap ’s capability reduction effectiveness? 
+
+RQ3: What is the runtime performance of KubeCap for large-scale Kubernetes analysis? 
+
+A. Experiment Setup 
+
+Implementation. We implement KubeCap on top of ar-go-tools [32], a static analysis framework for Go that offers reusable infrastructure for program loading, SSA-based analy-sis, data-flow reasoning, and reachability analysis. KubeCap 
+
+leverages GPT-4o-mini [33] to infer the syscall-condition-capability specifications. All experiments were conducted on a server with two Intel Xeon Gold 6248R CPUs at 3.00 GHz, 64 GB RAM, and a 1 TB hard disk, running Ubuntu 18.04 LTS and Python 3.6.8. 
+
+Dataset. For the evaluation, we selected 10 representative Go-based Kubernetes-related projects from the three datasets intro-duced in Section IV, covering both CNCF projects and Helm-based OSS projects: amazon-vpc-cni-k8s [34], deckhouse [35], 
+
+eks-anywhere [36], podinfo [37], twitter-go [38], ced [39], 
+
+gardener-extension-cri-resmgr [40], Intel-ECI-ExCat-K8s [41], 
+
+minibroker [42], and poolprovider-for-k8s [43]. We focus on Go projects because the current implementation of KubeCap 
+
+is built on the Go toolchain. Restricting the subjects to Go therefore ensures that all compared methods operate under the same language setting and analysis pipeline. TABLE III EFFECTIVENESS OF KubeCap IN REDUCING CAPABILITIES .                                                             
+
+> Project Container Original Caps ( Cap orig )LoC Reduced Caps ( Cap del )Reduction (%)
+> amazon-vpc-cni-k8s aws-node 28,861,258 150.00 deckhouse caps-controller-manager 14 2,206,710 642.86 eks-anywhere kube-vip 217,179,855 150.00 podinfo podinfo 14 924,637 10 71.43 twitter-go feeds 14 1,489,482 750.00 ced ced-server 14 1,029,028 10 71.43 gardener-extension-cri-resmgr gardener-extension-cri-resmgr 14 5,784,166 642.86 Intel-ECI-ExCat-K8s csl-excat-deviceplugin 41 1,666,339 35 85.37 minibroker minibroker 14 3,553,638 642.86 poolprovider-for-k8s k8s-poolprovider 14 1,294,652 642.86
+> Average ––––54.97
+
+B. RQ1: Effectiveness of KubeCap 
+
+We examine whether KubeCap can identify and remove redundant capabilities from real-world Kubernetes workloads. In addition, we examine syscall-site and kernel capability analysis to understand how many rules can be resolved with high confidence and how many require conservative approximation. Appendix A provides the detailed analysis. 
+
+1) Overall reduction effectiveness: We evaluate the ef-fectiveness of KubeCap by comparing the capability set originally declared in Kubernetes manifests ( Cap orig ) with the minimized capability set inferred by our analysis ( Cap min ). For each workload, KubeCap identifies capabilities that are declared but not required by the reachable execution paths and removes them from the final policy. Table III summarizes the effectiveness of KubeCap in removing redundant capabilities for 10 representative Go-based projects of Kubernetes. Overall, KubeCap consistently identifies excessive privileges across all evaluated subjects, achieving an average reduction rate of 54.97%. For projects that originally use the default Kubernetes capability set, KubeCap removes between 6 and 10 capabilities, corresponding to reduction rates from 42.86% to 71.43%, indicating that a substantial fraction of the originally granted privileges are unnecessary. For example, KubeCap 
+
+removes 6 capabilities (42.86%) from deckhouse , 7 capabilities (50%) from twitter-go , and 10 capabilities (71.43%) from both podinfo and ced . Even for projects with smaller original capability sets, KubeCap is still able to eliminate redundant priv-ileges: it removes 1 out of 2 capabilities for both amazon-vpc-cni-k8s and eks-anywhere , corresponding to a 50% reduction. Notably, for Intel-ECI-ExCat-K8s , whose container is originally configured with privileged: true , KubeCap identifies 35 removable capabilities, corresponding to an 85.37% reduction. This result shows that even highly over-privileged workloads can be substantially tightened. Overall, the results indicate that real-world Kubernetes workloads often request more privileges than necessary, and that KubeCap can effectively identify and remove such redundant capabilities. 
+
+2) Case studies: To evaluate whether the capabilities mini-mized by KubeCap remain practical for real-world projects, we validate the patched manifests on representative Kubernetes ap-plications and check whether their intended functionality is pre-served after removing the capabilities identified as unnecessary. We conducted case studies on three representative projects from three datasets respectively, covering different Kubernetes usage scenarios (cloud-native applications and Helm-based projects), including amazon-vpc-cni-k8s , podinfo , and minibroker . The 
+
+amazon-vpc-cni-k8s project is one of the most widely used Kubernetes CNI plugins in AWS environments and is suitable for validation because its manifest contains security-sensitive privilege settings while its correctness directly affects inter-Pod networking. The podinfo project exposes diverse cloud-native interfaces, including HTTP, WebSocket, gRPC, metrics, storage, cache, and service-to-service communication, making it suitable for testing user-visible application behavior across different deployment styles. The minibroker project implements the Open Service Broker workflow on Kubernetes and exercises Helm-based provisioning, Kubernetes resource labeling, secret/service discovery, credential generation, and deprovisioning. For each subject, we deployed both the original manifest and the patched manifest, exercised a documentation-driven functional work-load, and compared whether the minimized version preserved the same externally observable behavior as the original version. For project amazon-vpc-cni-k8s , the original manifest explicitly requested security-sensitive privileges, including 
+
+CAP_NET_ADMIN , CAP_NET_RAW , and privileged execu-tion. KubeCap identified CAP_NET_RAW as removable for 
+
+aws-node , while CAP_NET_ADMIN and privileged execu-tion were retained because removing them caused readiness failures or “CrashLoopBackOff” . We validated the patched manifest by checking CNI health and Pod-to-Pod connectivity. We provide the detailed case study in Appendix B. For podinfo ,the original manifests did not explicitly configure capabilities and therefore inherited the runtime default capability set. We validated three deployment scenarios: a standalone deployment, a three-tier stack, and a webapp-style two-service deployment. The workload covered representative operations such as rollout, liveness probes, HTTP APIs, service-to-service communication, etc. For Minibroker , KubeCap used patched manifest and preserved the existing non-root and read-only-root-filesystem settings. We validated the complete Open Service Broker life-cycle across five built-in service classes, including mariadb ,
+
+mongodb , mysql , postgresql , and redis . The workload exercised key stages such as catalog generation, provisioning, Helm installation, secret discovery, etc. After minimization, 
+
+amazon-vpc-cni-k8s remained healthy and preserved inter-Pod connectivity, podinfo passed all tested deployment and TABLE IV COMPARISON OF CAPABILITY REDUCTION RESULTS ACROSS REACHABILITY , RTA, CHA, AND PTA.                                                                                                                                                    
+
+> Project Reachability RTA CHA PTA #Nodes Cap del Reduction (%) #Nodes Cap del Reduction (%) #Nodes Cap del Reduction (%) #Nodes Cap del Reduction (%)
+> amazon-vpc-cni-k8s 129,616 150.00 143,939 00.00 189,919 00.00 N/A N/A N/A deckhouse 33,831 642.86 41,530 642.86 47,238 17.14 N/A N/A N/A eks-anywhere 59,947 150.00 47,620 00.00 61,606 00.00 N/A N/A N/A podinfo 14,301 10 71.43 15,614 642.86 18,282 17.14 10,913 642.86 twitter-go 11,324 750.00 11,296 750.00 13,699 17.14 7,846 642.86 ced 8,990 10 71.43 8,464 857.14 14,432 17.14 4,621 642.86 gardener-extension-cri-resmgr 51,871 642.86 57,421 642.86 64,263 17.14 N/A N/A N/A Intel-ECI-ExCat-K8s 30,896 35 85.37 36,811 24 58.54 40,799 11 26.83 N/A N/A N/A minibroker 37,396 642.86 41,761 642.86 43,310 17.14 N/A N/A N/A poolprovider-for-k8s 22,583 642.86 27,372 642.86 31,067 17.14 N/A N/A N/A
+> Average –8.8 54.97 –6.9 38.00 –1.8 7.68 –N/A N/A
+> *N/A indicates that no valid result was obtained.
+
+application-level checks, and Minibroker completed the full broker lifecycle for all five service classes. These results suggest that the removed capabilities were unnecessary for the functionality, while capabilities required for correct execution were conservatively retained. The detailed verification results can be found in our repository. 
+
+Answer to RQ1: KubeCap effectively removes re-dundant capabilities from real-world Kubernetes work-loads. On 10 representative Go-based projects, KubeCap 
+
+achieves an average reduction rate of 54.97%. It elimi-nates 42.86% to 71.43% of default capabilities across most subjects. 
+
+C. RQ2: Ablation study 
+
+We next study how different analysis strategies affect the reduction results of KubeCap . We include class hierarchy analysis (CHA) [44], rapid type analysis (RTA) [45], and points-to analysis (PTA) [46] as representative call-graph construction baselines widely used in static analysis. The reachability analysis used in KubeCap is an SSA-based analysis that resolves both direct calls and interface dispatches using SSA-level type information associated with call sites. Com-pared with traditional reachability algorithms [47], it achieves higher precision in call resolution. Unlike CHA and RTA, it further leverages SSA-level interface construction to identify potential dynamic dispatch targets. Compared with PTA, it does not perform full points-to tracking or interprocedural data-flow analysis, thereby trading marginal precision for essential scalability while remaining practically sound. Table IV compares the capability reduction results produced by these four analysis strategies on 10 projects. For each project, we report the number of analyzed nodes, the number of removable capabilities ( Cap del ), and the corresponding reduction rate. Overall, Reachability achieves the strongest capability re-duction among the four strategies, with an average of 8.8 removable capabilities (a 54.97% reduction rate), compared to 6.9 (38.00%) for RTA and only 1.8 (7.68%) for CHA. Reachability outperforms CHA across all projects and exceeds RTA on several key subjects, including amazon-vpc-cni-k8s , eks-anywhere , podinfo , ced , and Intel-ECI-ExCat-K8s . Crucially, the results demonstrate that analyzing more nodes does not necessarily lead to better capability reduction. Although CHA generally covers the largest number of nodes, it removes the fewest capabilities. This suggests that CHA’s coarse over-approximation retains substantially more unnecessary privilege requirements. In contrast, Reachability often analyzes fewer nodes while achieving stronger reductions, indicating that its entrypoint-guided pruning can better focus the analysis on code that is actually relevant to the deployed container. To further understand the impact of this over-approximation, we conducted a case study on ced , comparing the capability sets derived from Reachability and RTA under the same workload. The reachability-based analysis resulted in 8 capabilities, whereas RTA resulted in 15 capabilities. Functional testing confirmed that both configurations preserved all documented functionality in ced , including CSV data transfer, group man-agement operations, server liveness checks, fuzzy search, and RSVP updates. This indicates that RTA’s coarser approximation retains redundant capabilities, while Reachability achieves a more precise, functionally sound least-privilege configuration. While PTA shows competitive reduction results on the few subjects where it completes, its applicability is severely limited in our evaluation. As shown in Table IV, PTA frequently exceeded the timeout threshold on large real-world entrypoints and is therefore reported as N/A. Based on our investigation, these N/A results stem from a complexity spike in pointer-based call-graph construction rather than an analysis failure. The PTA branch triggers whole-program Andersen-style pointer analysis with reflection, and its computational cost increases sharply when the entrypoint induces a much larger SSA and reachable-function scope. The long silent periods started after computing the call graph, indicating that the dominant overhead lies inside call-graph construction. Overall, these results confirm that Reachability provides the optimal trade-off between analysis scope, scalability, and capability minimization effectiveness. 
+
+Answer to RQ2: Reachability achieves the strongest capability reduction overall, with an average reduction rate of 54.97%. It outperforms RTA (38.00%) and CHA (7.68%). While PTA can be competitive on a few completed cases, it often fails to finish on larger real-world entrypoints. D. RQ3: Efficiency and Scalability of KubeCap 
+
+To evaluate the practicality of KubeCap , as shown in Figure 5, we measure its total analysis time and average peak heap memory across the 10 representative projects. 
+
+1) Time overhead: Figure 5 (a) reports the total analysis time of four strategies, i.e., Reachability, CHA, RTA, and PTA, across 10 projects. Overall, Reachability incurs the highest runtime among the strategies that complete on all subjects, but its cost remains practical for offline analysis. In particular, the largest overhead is observed on amazon-vpc-cni-k8s and 
+
+eks-anywhere , where Reachability takes around 150 seconds and 130 seconds, respectively. For medium-sized subjects such as gardener-extension-cri-resmgr and minibroker , the analysis typically finishes in about 40 to 55 seconds, while for smaller projects such as podinfo , twitter-go , and poolprovider-for-k8s , it remains within roughly 5 to 20 seconds. Compared with CHA and RTA, the additional runtime of Reachability is expected, because it performs a more precise entrypoint-guided analysis rather than relying on coarser call-graph approximations. At the same time, PTA introduces the highest runtime overhead among all compared strategies and fails to complete on most projects within the one-hour timeout. Overall, these results indicate that KubeCap ’s reachability-based design trades moderate additional time for substantially stronger capability reduction, while still completing within a few minutes on the largest subjects and within tens of seconds on most others. 0 50 100 150 200 Total Time (s) amazon-vpc-cni-k8s deckhouse eks-anywhere podinfo twitter-go ced gardener-extension-cri-resmgr Intel-ECI-ExCat-K8s minibroker poolprovider-for-k8s T/O T/O T/O T/O T/O T/O T/O            
+
+> 01000 2000 3000 4000 5000 6000 Average Peak Heap (MiB) amazon-vpc-cni-k8s deckhouse eks-anywhere podinfo twitter-go ced gardener-extension-cri-resmgr Intel-ECI-ExCat-K8s minibroker poolprovider-for-k8s T/O T/O T/O T/O T/O T/O T/O
+> (b) Memory Consumption (a) Execution Time
+> Reachability CHA RTA PTA
+> Fig. 5. Execution time and memory consumption across different methods (T/O indicates a timeout after one hour).
+
+2) Memory overhead: Figure 5 (b) presents the average peak heap usage of four analysis strategies, i.e., Reachability, CHA, RTA, and PTA, across 10 projects. Overall, Reachability, CHA, and RTA fall into a broadly similar memory range, with most subjects requiring approximately 1 to 3.5 GiB of heap memory. The largest memory overhead is observed on amazon-vpc-cni-k8s , eks-anywhere , and gardener-extension-cri-resmgr , where these three methods all consume more than 3 GiB on average. In contrast, smaller projects such as podinfo and twitter-go 
+
+require only around 1 GiB. Compared with CHA and RTA, Reachability does not introduce a substantial memory penalty. Its peak heap usage is generally close to that of the other two methods, and in some cases even slightly lower than CHA, such as on amazon-vpc-cni-k8s . On projects such as eks-anywhere ,
+
+deckhouse , and gardener-extension-cri-resmgr , the differences also remain relatively small. In contrast, PTA exhibits the highest memory overhead among all compared strategies and fails to complete on most projects. Even on the few projects where PTA finishes, its memory usage is not lower than the other methods, while its reduction effectiveness still does not surpass Reachability. Overall, these results suggest that the stronger capability reduction achieved by Reachability mainly comes at the cost of additional analysis time, rather than a significant increase in memory consumption, making KubeCap 
+
+practical for offline analysis of real-world Kubernetes projects. 
+
+Answer to RQ3: KubeCap scales practically to real-world cloud-native projects. Reachability completes within a few minutes on the largest projects and within tens of seconds on most others, while keeping memory usage broadly within 1 to 3.5 GiB. VII. T HREATS TO VALIDITY 
+
+KubeCap has several threats to validity. First, our cur-rent implementation focuses on Go-based Kubernetes-related projects because entrypoint recovery, SSA construction, and the subsequent static analysis are built on the Go toolchain. This limits the direct generalizability of the current system. Instead, the methodology of KubeCap is language-agnostic in principle. Second, highly dynamic behaviors, reflective execution, shell-heavy startup logic, and indirect argument construction may still affect analysis precision, leading to over-approximation or missed capability requirements. We currently mitigate this threat through heuristic rules and manual confirmation of uncertain cases, but a more automated solution remains needed; future work could integrate LLM-based semantic reasoning to better interpret such complex behaviors. Third, KubeCap 
+
+employs the one-shot learning for syscall–parameter–capability rule specification, which may introduce hallucinations or inaccurate inferences. To reduce this risk, we perform human verification on LLM-assisted outputs before incorporating them into the final analysis pipeline. VIII. C ONCLUSION 
+
+In this paper, we first studied the prevalence of over-privileged capabilities in real-world Kubernetes projects and found that least-privilege capability configuration is still uncommon in practice. 74.67% of projects do not explicitly configure capabilities, and only 19.33% drop all capabilities in the datasets. To address this problem, we proposed KubeCap ,a framework for Kubernetes capability minimization. KubeCap 
+
+translates deployment specifications into deterministic mani-fests, locates actual container entrypoints, performs reachability-guided system call analysis, and leverages LLM-assisted rule specification to derive syscall–parameter–capability relations from Linux kernel code. Based on these results, KubeCap 
+
+infers the minimal capability set required by each workload and automatically generates repaired manifests. Our evaluation on 10 representative Kubernetes-related projects shows that 
+
+KubeCap can effectively reduce redundant capabilities in real-world workloads. On average, it achieves a capability reduction rate of 54.97%, and its reachability-based design outperforms both RTA and CHA while maintaining practical time and memory overhead. These results show that KubeCap 
+
+provides a practical and effective approach toward least-privilege capability enforcement in Kubernetes. IX. A CKNOWLEDGEMENT 
+
+This work was supported by the National Natural Science Foundation of China (under Grants 62572258 and 62502237), the National Cryptologic Science Fund of China (under Grant 2025NCSF01010), the Key Program of the National Natural Science Foundation of China (under Grants U25B2028 and 62432012), and the Fundamental Research Funds for the Central Universities (under Grant 079-63263257). APPENDIX ARELIABILITY ANALYSIS OF CONDITIONAL 
+
+SYSCALL –C APABILITY RULES 
+
+In addition to the unconditional capability mapping, we further construct conditional syscall–capability rules to im-prove the precision of capability inference. The unconditional mapping records coarse-grained relations between capabilities and syscalls, covering 40 capabilities, 124 syscalls, and 164 capability–syscall mappings. However, such mapping only indi-cates that a syscall may require a capability, without specifying the concrete argument values or branch predicates under which the capability check is triggered. Therefore, KubeCap uses LLM-assisted rule specification to extract conditional rules from Linux kernel code. We manually inspected 97 conditional rules extracted from Linux 5.4, covering 41 syscalls and 21 Linux capabilities. For each rule, we checked whether the inferred capability and the direction of the guarding condition are consistent with the kernel implementation. We also checked whether the condition can be explained by directly resolvable constants or literals defined in Linux 5.4. Finally, we classified whether the original condition can be preserved or whether it must be conservatively approximated. Table V summarizes the audit results. Among the 97 extracted conditional rules, 77 rules are valid, meaning that their capability mappings and condition directions are consistent with the kernel implementation. In addition, 73 rules contain conditions that can be solved through constants or literals, and 64 rules can be resolved without over-approximation. These re-sults show that a large portion of conditional syscall–capability rules can be handled through explicit argument-level reasoning, while the remaining cases require conservative treatment when their conditions cannot be statically resolved. As an illustrative case, consider fcntl(int fd, int cmd, int arg) .Different values of the cmd argument lead to different capability               
+
+> TABLE V SUMMARY OF THE CONDITIONAL SYSCALL –CAPABILITY RULE AUDIT .
+> Metric Count Percentage
+> Extracted
+> #Conditional rules 97 –#Syscalls 41 –#Capabilities 21 –
+> Verified
+> #Valid rules 77 79.38% (77/97) #Constant/Literal solved rules 73 75.26% (73/97) #Precisely resolved rules 64 65.98% (64/97)
+
+requirements. For example, F_SETFL with O_NOATIME may require CAP_FOWNER ; F_SETLEASE requires CAP_LEASE 
+
+when setting a file lease; and F_SETPIPE_SZ may require 
+
+CAP_SYS_RESOURCE when enlarging a pipe beyond the allowed limit. These cases are suitable for constant/literal-based resolution because the command values, such as F_SETFL ,
+
+F_SETLEASE , and F_SETPIPE_SZ , are defined as kernel constants. Therefore, when a Go or C program invokes fcntl 
+
+with these concrete command values, KubeCap can match the corresponding conditional rule and infer the required capability more precisely than treating all fcntl invocations uniformly. APPENDIX BDETAILED CASE STUDY : AMAZON -VPC -CNI -K8S
+
+We deployed the plugin in a self-built AWS Kubernetes cluster and constructed two test Pods ( nginx-pod and nginx-pod2 ) to check whether basic Pod-to-Pod communication remained functional after privilege reduction. As a control setting, we first deployed the same two Pods in a cluster using the Calico plugin, where the two Pods could successfully communicate with each other through ICMP ping. We then repeated the experiment in a cluster using Amazon VPC CNI. We manually removed different privilege settings from the 
+
+aws-node component to examine their actual necessity. The results clearly show that not all declared privileges are equally required. First, removing all capabilities caused the component to fail its readiness probe, indicating that some privileges are indeed essential. Second, removing the CAP_NET_ADMIN 
+
+capability from aws-node also led to repeated readiness probe failures, showing that this capability is required for the correct operation of the plugin. In contrast, removing CAP_NET_RAW 
+
+from aws-node did not affect the normal execution of the component: the Pods were created successfully, the CNI plugin remained healthy, and ICMP communication between the two Pods was still preserved. This result suggests that 
+
+CAP_NET_RAW is over-privileged for this workload and can be safely removed. We further examined another component, aws-eks-nodeagent .After removing its declared CAP_NET_ADMIN capability, the component still functioned correctly and Pod-to-Pod connectivity remained unaffected. This provides additional evidence that some capabilities declared in the original manifest are not functionally required by the actual runtime behavior. Finally, we tested whether the coarse-grained privileged: true setting could be removed from aws-node . In this case, the component entered “ CrashLoopBackOff ”, indicating that privileged execution is still necessary for certain operations in the current implementation. REFERENCES [1] Cloud Native Computing Foundation, “Graduated and incubating projects,” https://www.cncf.io/projects/, 2026, accessed: Apr. 16, 2026. [2] B. Burns, B. Grant, D. Oppenheimer, E. Brewer, and J. Wilkes, “Borg, omega, and kubernetes,” Communications of the ACM , vol. 59, no. 5, pp. 50–57, 2016. [3] Y. He, R. Guo, Y. Xing, X. Che, K. Sun, Z. Liu, K. Xu, and Q. Li, “Cross container attacks: The bewildered {eBPF } on clouds,” in 32nd USENIX Security Symposium (USENIX Security 23) , 2023, pp. 5971–5988. [4] Y. Sun, D. Safford, M. Zohar, D. Pendarakis, Z. Gu, and T. Jaeger, “Security namespace: making linux security frameworks available to containers,” in 27th USENIX Security Symposium (USENIX Security 18) ,2018, pp. 1423–1439. [5] ARMO, “Cis amazon elastic kubernetes service (eks) benchmark: Minimize the admission of containers with capabilities assigned,” https://hub.armosec.io/docs/c-0220, 2026, accessed: Apr. 16, 2026. [6] A. Rahman, S. I. Shamim, D. B. Bose, and R. Pandita, “Security misconfigurations in open source kubernetes manifests: An empirical study,” ACM Transactions on Software Engineering and Methodology ,vol. 32, no. 4, pp. 1–36, 2023. [7] N. Yang, W. Shen, J. Li, X. Liu, X. Guo, and J. Ma, “Take over the whole cluster: Attacking kubernetes via excessive permissions of third-party applications,” in Proceedings of the 2023 ACM SIGSAC Conference on Computer and Communications Security , 2023, pp. 3048–3062. [8] E. Malul, Y. Meidan, D. Mimran, Y. Elovici, and A. Shabtai, “Genkubesec: Llm-based kubernetes misconfiguration detection, localization, reasoning, and remediation,” arXiv preprint arXiv:2405.19954 , 2024. [9] S. Ghavamnia, T. Palit, A. Benameur, and M. Polychronakis, “Confine: Automated system call policy generation for container attack surface reduction,” in 23rd International Symposium on Research in Attacks, Intrusions and Defenses (RAID 2020) , 2020, pp. 443–458. [10] M. M. Hasan, S. Ghavamnia, and M. Polychronakis, “Decap: Deprivileg-ing programs by reducing their capabilities,” in Proceedings of the 25th international symposium on research in attacks, intrusions and defenses ,2022, pp. 395–408. [11] M. Sun, Z. Song, X. Ren, D. Wu, and K. Zhang, “Lica: A fine-grained and path-sensitive linux capability analysis framework,” in Proceedings of the 25th International Symposium on Research in Attacks, Intrusions and Defenses , 2022, pp. 364–379. [12] A. Moghaddas Borhan, H. Kermabon-Bobinnec, L. Wang, Y. Jarraya, and S. Majumdar, “Capman: Detecting and mitigating linux capability abuses at runtime to secure privileged containers,” in European Symposium on Research in Computer Security . Springer, 2025, pp. 402–422. [13] T. Th¨ um, “A bdd for linux? the knowledge compilation challenge for variability,” in Proceedings of the 24th ACM Conference on Systems and Software Product Line: Volume A-Volume A , 2020, pp. 1–6. [14] C. Cesarano and R. Natella, “Kubefence: Security hardening of the kubernetes attack surface,” in 2025 55th Annual IEEE/IFIP International Conference on Dependable Systems and Networks (DSN) . IEEE, 2025, pp. 497–510. [15] O. S. Cohen, E. Malul, Y. Meidan, D. Mimran, Y. Elovici, and A. Shabtai, “Kubeguard: Llm-assisted kubernetes hardening via configuration files and runtime logs analysis,” arXiv preprint arXiv:2509.04191 , 2025. [16] M. Kerrisk, “capabilities(7) — linux manual page,” https://man7.org/lin ux/man-pages/man7/capabilities.7.html, 2026, accessed: Apr. 16, 2026. [17] The Kubernetes Authors, “Configure a security context for a pod or container,” https://kubernetes.io/docs/tasks/configure-pod-container/secur ity-context/, 2026, accessed: Apr. 16, 2026. [18] ——, “Container runtimes,” https://kubernetes.io/docs/setup/productio n-environment/container-runtimes/, 2026, accessed: Apr. 16, 2026. [19] O. Cohen, “Cve-2020-14386: Linux kernel: af packet.c vulnerability,” https://seclists.org/oss-sec/2020/q3/146, 2020, accessed: Apr. 16, 2026. [20] A. Konovalov, “Cve-2017-6074: Linux kernel: Dccp double-free vul-nerability (local root),” https://seclists.org/oss-sec/2017/q1/471, 2017, accessed: Apr. 16, 2026. [21] A. Guerrero, “Cve-2022-0185: Linux kernel slab out-of-bounds write: exploit and writeup,” https://seclists.org/oss-sec/2022/q1/83, 2022, accessed: Apr. 16, 2026. [22] S. I. Shamim, H. Hu, and A. Rahman, “On prescription or off prescription? an empirical study of community-prescribed security configurations for kubernetes,” 2025 IEEE/ACM 47th International Conference on Software Engineering (ICSE) , pp. 2432–2444, 2025. [Online]. Available: https://api.semanticscholar.org/CorpusID:277962572 [23] The Kubernetes Authors, “User namespaces,” 2026, https://kubernetes.i o/docs/concepts/workloads/pods/user-namespaces/. [24] X. Lin, L. Lei, Y. Wang, J. Jing, K. Sun, and Q. Zhou, “A measurement study on linux container security: Attacks and countermeasures,” in 
+
+Proceedings of the 34th annual computer security applications conference ,2018, pp. 418–429. [25] E. Kalliamvakou, G. Gousios, K. Blincoe, L. Singer, D. M. German, and D. Damian, “An in-depth study of the promises and perils of mining github,” Empirical Software Engineering , vol. 21, no. 5, pp. 2035–2071, 2016. [26] N. Munaiah, S. Kroh, C. Cabrey, and M. Nagappan, “Curating github for engineered software projects,” Empirical Software Engineering , vol. 22, no. 6, pp. 3219–3253, 2017. [27] J. Coelho and M. T. Valente, “Why modern open source projects fail,” in 
+
+Proceedings of the 2017 11th Joint meeting on foundations of software engineering , 2017, pp. 186–196. [28] The Helm Authors, “The chart template developer’s guide,” 2026, https: //helm.sh/docs/chart template guide/. [29] The Kubernetes Authors, “Declarative management of kubernetes objects using kustomize,” 2026, https://kubernetes.io/docs/tasks/manage-kuberne tes-objects/kustomization/. [30] L. Fei-Fei, R. Fergus, and P. Perona, “One-shot learning of object cate-gories,” IEEE transactions on pattern analysis and machine intelligence ,vol. 28, no. 4, pp. 594–611, 2006. [31] Y. Wang, Q. Yao, J. T. Kwok, and L. M. Ni, “Generalizing from a few examples: A survey on few-shot learning,” ACM computing surveys (csur) , vol. 53, no. 3, pp. 1–34, 2020. [32] AWS Labs, “ar-go-tools,” [Online]. Available: https://github.com/awsla bs/ar-go-tools. [33] OpenAI, “GPT-4o mini: Advancing Cost-Efficient Intelligence,” https: //openai.com/index/gpt-4o-mini-advancing-cost-efficient-intelligence/, 2024, accessed: Apr. 16, 2026. [34] AWS, “Amazon VPC CNI for Kubernetes,” [Online]. Available: https: //github.com/aws/amazon-vpc-cni-k8s. [35] Deckhouse, “Deckhouse,” [Online]. Available: https://github.com/deckh ouse/deckhouse. [36] AWS, “EKS Anywhere,” [Online]. Available: https://github.com/aws/eks -anywhere. [37] Stefan Prodan, “Podinfo,” [Online]. Available: https://github.com/stefanp rodan/podinfo. [38] laaksomavrick, “twitter-go,” [Online]. Available: https://github.com/laaks omavrick/twitter-go. [39] Braden Rayhorn, “ced,” [Online]. Available: https://github.com/bradenr ayhorn/ced. [40] Intel, “gardener-extension-cri-resmgr,” [Online]. Available: https://github .com/intel/gardener-extension-cri-resmgr. [41] ——, “Intel-ECI-ExCat-K8s,” [Online]. Available: https://github.com/int el/Intel-ECI-ExCat-K8s. [42] Kubernetes Retired, “Minibroker,” [Online]. Available: https://github.c om/kubernetes-retired/minibroker. [43] Microsoft, “Poolprovider for Kubernetes,” [Online]. Available: https: //github.com/microsoft/poolprovider-for-k8s. [44] J. Dean, D. Grove, and C. Chambers, “Optimization of object-oriented programs using static class hierarchy analysis,” in European conference on object-oriented programming . Springer, 1995, pp. 77–101. [45] D. F. Bacon and P. F. Sweeney, “Fast static analysis of c++ virtual function calls,” in Proceedings of the 11th ACM SIGPLAN conference on Object-oriented programming, systems, languages, and applications ,1996, pp. 324–341. [46] B. Steensgaard, “Points-to analysis in almost linear time,” in Proceedings of the 23rd ACM SIGPLAN-SIGACT symposium on Principles of programming languages , 1996, pp. 32–41. [47] T. Reps, “Program analysis via graph reachability,” Information and Software Technology , vol. 40, no. 11-12, pp. 701–726, 1998.

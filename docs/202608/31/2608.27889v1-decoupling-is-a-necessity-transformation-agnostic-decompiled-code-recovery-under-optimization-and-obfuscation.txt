@@ -1,0 +1,845 @@
+Title: Decoupling is a Necessity: Transformation-Agnostic Decompiled Code Recovery under Optimization and Obfuscation
+
+URL Source: https://arxiv.org/pdf/2608.27889v1
+
+Published Time: Mon, 31 Aug 2026 00:28:40 GMT
+
+Number of Pages: 11
+
+Markdown Content:
+# Decoupling is a Necessity: Transformation-Agnostic Decompiled Code Recovery under Optimization and Obfuscation 
+
+## Zhiping Zhou 
+
+Tianjin University Tianjin, China zhou_zhiping@tju.edu.cn 
+
+## Xiaohong Li 
+
+Tianjin University Tianjin, China xiaohongli@tju.edu.cn 
+
+## Ruitao Feng ∗
+
+Southern Cross University Lismore, Australia ruitao.feng@scu.edu.au 
+
+## Yao Zhang ∗
+
+Tianjin University Tianjin, China zzyy@tju.edu.cn 
+
+## Yuekang Li 
+
+University of New South Wales Sydney, Australia yuekang.li@unsw.edu.au 
+
+## Wenbu Feng 
+
+Tianjin University Tianjin, China ianx@tju.edu.cn 
+
+Abstract 
+
+Reverse engineering is essential for software security analysis and vulnerability detection. Decompilation, the process of lifting bi-naries to high-level pseudocode, is central to this task. However, production binaries are hostile environments: aggressive compiler optimizations and adversarial obfuscation jointly mangle control structures, obscure variable intents, and disguise high-level pro-gram logic. Consequently, existing LLM-based decompilation tools frequently suffer from structural collapse and semantic hallucina-tions. We present ReSource , the first multi-phase LLM framework designed for transformation-agnostic source recovery. To tackle these intertwined distortions, ReSource conceptualizes the binary-to-source discrepancies into three orthogonal tiers, namely lexical, syntactic, and semantic, and decouples the recovery process accord-ingly. First, to ground the LLM and prevent logic drift, it retrieves empirical priors from a curated Semantic Distortion Database. Sec-ond, to resolve control-flow flattening, it integrates a lightweight predictor to reconstruct the source-level structural skeleton. Finally, a contextual lexical deduction stage refines identifiers to restore hu-man readability. Evaluated on a massive benchmark of over 80,000 decompiled–source function pairs across three optimization levels and four obfuscation techniques, ReSource achieves an 83% Top-5 source retrieval accuracy and an average similarity score of 0.66. By maintaining robust semantic identifiability where state-of-the-art baselines ( DeGPT , LLM4Decompile , and FidelityGPT ) severely over-fit or degrade, ReSource provides a scalable and reliable foundation for downstream security analysis. 
+
+CCS Concepts 
+
+• Security and privacy → Software reverse engineering .
+
+Keywords 
+
+Reverse Engineering, Decompilation, Compiler Optimizations, Code Obfuscation, Large Language Models 
+
+1 Introduction 
+
+Reverse engineering [15] is the cornerstone of software security analysis, enabling critical downstream tasks like patch diffing [24, 28], binary similarity analysis [8, 12], and vulnerability discovery. 
+
+> ∗Joint corresponding authors.
+
+Because analyzing low-level assembly or graphs [5, 9, 13, 26] strug-gles to support source-level reasoning, analysts heavily rely on decompilers (e.g., IDA Pro [6], Ghidra [4]) to lift binaries into C-like pseudocode. Recently, the structural similarity between this pseu-docode and natural programming languages has prompted a surge in adopting Large Language Models (LLMs) to bridge the seman-tic gap between machine-generated artifacts and human-readable source code. Current LLM-assisted decompilation generally follows two tra-jectories. The first is direct translation, such as fine-tuning mod-els on massive assembly-to-C datasets [19]. The second is post-processing, commonly defined in this domain as source recovery ,which involves taking raw decompiler pseudocode and restoring its original structural and semantic intent to produce readable, high-fidelity source representations [7, 30]. Despite these advances, existing frameworks operate under a critical flaw: they primarily target benign, lightly optimized code (e.g., O1 or O2). In reality, production binaries are hostile environ-ments, heavily transformed by aggressive compiler optimizations (e.g., O3) and adversarial obfuscation (e.g., Control-Flow Flatten-ing). Because current LLM approaches rely heavily on superficial sequence-to-sequence pattern matching, they severely overfit to benign transformation distributions. When confronted with the intertwined chaos of optimization and obfuscation, these models suffer catastrophic structural collapse and hallucinate incorrect logic, yielding code that is semantically hazardous for downstream security tasks [27]. To bridge this critical gap and enable faithful recovery from heavily optimized and obfuscated binaries, we identify four core challenges that must be systematically addressed: 
+
+C1: Unified recovery across diverse transformations. Since the exact combination of optimizations and obfuscations is typically unknown during analysis, recovery methods must avoid overfitting to specific patterns and instead handle heterogeneous distortions through a unified formulation. 
+
+C2: Preserving semantic fidelity against opaque artifacts. 
+
+Aggressive transformations replace human-readable logic with opaque artifacts. Confronted with these alien patterns, vanilla LLMs lose their reasoning context and frequently hallucinate incorrect business logic. 
+
+> 1arXiv:2608.27889v1 [cs.SE] 28 Aug 2026 Zhou et al.
+
+C3: Structural collapse from control-flow distortion. Adver-sarial transformations like control-flow flattening completely oblit-erate program hierarchies, dismantling readable loops and branches into artificial state machines. Standard sequence-to-sequence LLMs struggle to naturally “un-flatten” this structural chaos. 
+
+C4: Limitations of superficial evaluation. Traditional metrics (e.g., BLEU) reward superficial token overlap but are blind to func-tional equivalence under structural divergence. Robust assessment must directly measure semantic identifiability to ensure real-world utility. To tackle these challenges, we reframe decompilation: faithful recovery is not a monolithic sequence-to-sequence mapping, but a multi-dimensional reconstruction problem requiring explicit struc-tural and empirical priors. Guided by this principle, we present 
+
+ReSource , the first multi-phase LLM framework for transformation-agnostic source recovery. To achieve unified recovery (addressing C1), ReSource decouples the process across lexical, syntactic, and semantic tiers. First, it queries a novel Semantic Distortion Data-base to retrieve empirical priors, resolving opaque artifacts and mitigating hallucinations (addressing C2). Second, a lightweight control-flow predictor reconstructs the source-level architectural skeleton to reverse structural collapse (addressing C3). Finally, lexi-cal finalization refines identifiers to restore human readability. We evaluate ReSource on a massive benchmark of over 80,000 function pairs across three optimization levels and four obfuscation schemes. To directly validate semantic identifiability and overcome the limits of shallow evaluation (addressing C4), we introduce a rigorous retrieval-based methodology. Experimental results show that ReSource consistently outperforms state-of-the-art baselines (DeGPT , FidelityGPT , LLM4Decompile ), achieving an 83% average Top-5 retrieval accuracy and maintaining remarkable stability even under severe control-flow obfuscation. 
+
+Contributions. This paper makes the following key contribu-tions: 
+
+• We propose ReSource , the first multi-stage LLM framework for transformation-agnostic source recovery against the joint threats of aggressive optimization and adversarial obfuscation. 
+
+• We design a synergistic architecture that decouples semantic guidance (via a data-driven Semantic Distortion Database) from structural repair (via a skeleton predictor), effectively neutraliz-ing LLM hallucinations and structural collapse. 
+
+• We construct a comprehensive benchmark of 80,000+ binary-source pairs and introduce a rigorous retrieval-based evaluation methodology to accurately assess global semantic identifiability. 
+
+2 Background & Motivation 
+
+We first review the inherent limitations of current decompilation and LLM-based recovery techniques (§2.1). We then dissect a real-world obfuscation scenario (§2.2) to expose the core challenges that motivate the design of ReSource .
+
+2.1 Background 
+
+Decompilation under Aggressive Transformations. Modern compilers employ optimizations [10] and obfuscations [18] that fundamentally restructure binaries, creating a severe “semantic gap” [11, 25]. Transformations like control-flow flattening discard high-level abstractions, leaving decompilers to produce fragmented pseudocode with mangled logic. This loss of structural and lexical fidelity severely hinders downstream security tasks. 
+
+Limitations of LLM-based Recovery. While LLMs [29] ex-cel at code summarization, they struggle to generalize across di-verse compiler-induced distortions [19, 22, 23]. Purely sequence-to-sequence approaches fail to restore deep structural logic or pro-vide interpretable links back to source semantics under aggressive transformations. This necessitates a hybrid approach that explicitly grounds LLM reasoning with semantic and structural priors. 
+
+2.2 Motivation 
+
+We illustrate the inherent limitations of pure sequence-to-sequence LLMs through a real-world obfuscation scenario. Figure 1 presents (a) the original source code, alongside (b) its decompiled counterpart after Control-Flow Flattening (CFF), and (c) a failed direct-recovery attempt by a vanilla LLM. 
+
+Challenge 1: Multi-Level Discrepancies. As illustrated in Fig-ure 1(b), adversarial transformations like CFF introduce massive vi-sual and logical divergence between the source and the decompiled code. To decouple the recovery process from specific obfuscators, we abstract these massive discrepancies into three unified tiers: 
+
+• Lexical: Human-readable cues evaporate. The ISSPACE macro is forcefully inlined into cryptic bitwise operations (sch_istable[a1[n-1]]&0x40), and literals are replaced by ASCII values (44). 
+
+• Syntactic: High-level constructs are rewritten. The source’s clean, sequential for loops are entirely flattened into a mono-lithic switch-case block nested within a 14-level deep while(1) 
+
+loop. 
+
+• Semantic: The driving force of the logic diverges from orig-inal intent. Data-driven control flow is hijacked by an artifi-cial state machine driven by opaque assignments (e.g., v17 =-137747442 ). 
+
+Challenge 2: Hallucinations from Missing Semantic Guid-ance. When confronted with opaque decompiler artifacts and stripped identifiers, pure sequence-to-sequence LLMs lack the contextual pri-ors necessary to infer original intent. Without meaningful guidance, the model resorts to unreliable guesswork. As shown in Figure 1(c), this lack of context causes the LLM to hallucinate incorrect business logic: it invents a non-existent feature to strip leading whitespaces, incorrectly skips characters instead of replacing them, and misses crucial boundary guards. Preventing this requires injecting concrete source-level suggestions to explicitly ground generation. 
+
+Challenge 3: Structural Recovery Limitations. Figure 1(b) illustrates how CFF obliterates conventional control-flow structure. Mapping sequences token-by-token without global structural pri-ors, conventional LLMs fail to “un-flatten” such disordered code. When tasked to directly deobfuscate (Figure 1(c)), the LLM is over-whelmed by structural chaos. It abandons the original architecture, severely restructuring the algorithm into a monolithic, buggy pass. To address this, ReSource integrates a prediction module that ex-plicitly infers the source-level control skeleton before generation. 
+
+Challenge 4: Limitations of Shallow Evaluation. Aggres-sive transformations render traditional metrics like BLEU or token overlap [3, 16] insufficient. They fail to capture functional equiv-alence under structural divergence and may incorrectly reward 
+
+> 2
+
+Decoupling is a Necessity: Transformation-Agnostic Decompiled Code Recovery under Optimization and Obfuscation (a) Original C Source Code  (b) CFF-Obfuscated Decompilation  (c) LLM Direct Output 
+
+char *
+
+remove_whitespace_and_extra_commas( 
+
+char *options )
+
+{
+
+char *str ; size_t  i, len ;
+
+if (options == NULL) return NULL; 
+
+① Strip trailing whitespace and commas 
+
+for  (len  = strlen(options); 
+
+len  > 0;  len --) 
+
+{
+
+if (! ISSPACE (options[ len -1]) 
+
+&& options[ len -1] !=  ',' )
+
+break; 
+
+options[ len -1] = '\0' ;
+
+}
+
+② Replace whitespace with comma 
+
+for  (i = 0; 
+
+options[ i] != '\0';  i++) 
+
+if (ISSPACE (options[ i])) 
+
+options[ i] = ',' ;
+
+③ Collapse consecutive commas 
+
+for  (str =options; *str !='\0';  str ++) 
+
+if (* str ==',' 
+
+&& (*(str+1)==',' 
+
+||  str==options )) 
+
+{
+
+char *next  = str  + 1; 
+
+while  (* next ==',')  next ++; 
+
+len  = strlen( next ); 
+
+if (str  != options)  str ++; 
+
+memmove (str , next , len ); 
+
+}
+
+return (strlen(options) != 0) 
+
+? options : NULL; 
+
+}
+
+const char *__fastcall 
+
+remove_whitespace_and_extra_commas( 
+
+const char *a1 ) // options → a1 
+
+{
+
+int  v17  = -137747442 ;
+
+while (1) { // 14-level nested while 
+
+while (1) { while (1) { ... 
+
+① Strip trailing — decomposed into opaque-keyed cases 
+
+case  -137747442 : // ENTRY 
+
+v17=!a1? -196689368 :759068542 ;
+
+case  759068542 : // strlen → ① init 
+
+n = strlen(a1); 
+
+case  1481302115 : //  ISSPACE  → table lookup 
+
+v17=( sch_istable[a1[n-1]]&0x40 )
+
+?-909183980 :-1990864791 ;
+
+case  -909183980 : // a1[n-1]='\0' 
+
+a1[n-1] = 0; 
+
+② Replace whitespace — ',' replaced by literal 44 
+
+case  -1850202163 :
+
+v17=( sch_istable[a1[v20]]&0x40 )
+
+?89308116 :1879672816 ;
+
+case  89308116 : // options[i]= ',' 
+
+a1[v20] = 44 ;
+
+③ Collapse commas — execution order concealed 
+
+case  395924275 : // strlen(next) 
+
+n = strlen(v18); 
+
+v17=(dest!=a1)? -452218957 :559494380 ;
+
+case  559494380 : // memmove 
+
+memmove(dest, v18, n);  dest[n]=0; 
+
+case  -196689368 :
+
+v22 = 0LL; 
+
+EXIT: return v22; 
+
+}} 
+
+const char *
+
+remove_whitespace_and_extra_commas( 
+
+const char *str) 
+
+{
+
+size_t len = strlen(str); 
+
+if (len == 0) return "";  // should return NULL 
+
+① Strip trailing — structurally correct 
+
+char *result = (char *)str; 
+
+while (len > 0 && 
+
+(isspace(str[len-1]) || str[len-1]==',')) 
+
+((char*)str)[--len] = '\0'; 
+
+if (len == 0) return NULL; 
+
+②③  Single-pass scan — wrong algorithm 
+
+char *src = (char *)str; 
+
+char *dst = (char *)str; 
+
+while (*src && isspace(*src)) src++; 
+
+// skips  leading ws, not in original 
+
+while (*src) {
+
+if (isspace(*src)) {
+
+src++;  // should assign ',', not skip 
+
+continue; 
+
+}
+
+if (*src == ',') {
+
+*dst++ = ',';  src++; 
+
+while (*src && isspace(*src)) src++; 
+
+continue; 
+
+}
+
+*dst++ = *src++; 
+
+}
+
+*dst = '\0'; 
+
+// leading comma not removed 
+
+//  (str==options guard missing) 
+
+while (dst > result 
+
+&& (*(dst-1)==',' || isspace(*(dst-1)))) 
+
+*(--dst) = '\0'; 
+
+return (*result != '\0') ? result : NULL; 
+
+}
+
+Annotation:  Lexical (identifiers, macros, literals)  Syntactic (loop structure, control flow)  Semantic (execution order, logic)  Incorrect code in naive repair 
+
+Figure 1: Motivating Example 
+
+hallucinated code. To address this, we move beyond shallow textual similarity and adopt a retrieval-based evaluation (i.e., identifying the exact source from a massive corpus). This robust proxy for se-mantic fidelity reflects the code’s true utility in real-world security tasks. 
+
+Bridging the Gap with ReSource . Driven by these four chal-lenges, we design ReSource , a unified pipeline bridging the binary-to-source gap through three targeted stages: (1) Semantic Guidance 
+
+(§3.2): retrieving context-aware suggestions to resolve multi-level ambiguities; (2) Structural Repair (§3.3): predicting the original control-flow skeleton to fix flattening; and (3) Lexical Finalization 
+
+(§3.4): refining identifiers for human-readable clarity. 
+
+3 Methodology 3.1 Overview 
+
+Figure 2 illustrates the architecture and progressive workflow of 
+
+ReSource . To systematically bridge the multi-dimensional discrep-ancies introduced by hostile transformations, ReSource decouples the decompilation process into three synergistic phases: 
+
+Phase 1: Guided Semantic Recovery (§3.2). ReSource retrieves context-aware suggestions from a curated Semantic Distortion Data-base. These suggestions serve as empirical priors, constraining the LLM’s reasoning toward the original developer intent and prevent-ing logical hallucinations. 
+
+Phase 2: Structure-Oriented Repair (§3.3). To reverse struc-tural collapse (e.g., control-flow flattening), ReSource predicts a source-level control skeleton. This structural prior guides the LLM to synthesize code with coherent loops and branches. 
+
+3Zhou et al. Retrieve guidance  Predict control flow sequence 
+
+Phase 1: Guided Semantic Recovery ( Sec 3.2)  Phase 2: Structure-Oriented Repair ( Sec 3.3)  Phase 3: Lexical and Stylistic Finalization ( Sec 3.4)          
+
+> Decompiled code
+> Semantic distortion database
+> Semantic suggestions
+> Decompiled code
+> Control flow prediction model
+> Control flow sequence LLM LLM LLM
+> Fixed decompiled code
+> __int64 __fastcall WriteTHUMBNAILImage(...)
+> {
+> int v3; // Guidance: ["Check semantics to determine if redundant"]
+> ...
+> while ( 1 ) // Guidance: ["Check semantics to determine if redundant"]
+> {
+> ...
+> {v33 = StringToLong(v39); // Guidance: ['Add error checking for StringToLong
+> conversion']
+> ...
+> if ( *(_QWORD *)(v41 + 13376) ) // Guidance: [“ Validate node equivalence
+> semantics ”]
+> ...
+> case 1514732921:
+> goto LABEL_123;
+> case 1617418419:
+> ...
+> v30 = 1091645348;
+> break
+> }
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> 9
+> 10
+> 11
+> 12
+> 13
+> 14
+> 15
+> 16
+> 17
+> 18
+> predict control flow: {if (==)if (!=)for (!=){if ( ==){}if (){}}for (<)}
+> __int64 __fastcall WriteTHUMBNAILImage(...)
+> {
+> unsigned int ret_code;
+> __int64 exif_profile = GetImageProfile(a2, "exif");
+> if (!exif_profile) {
+> ThrowMagickException(a3, "coders/thumbnail.c", "WriteTHUMBNAILImage", 184LL, 450LL,
+> "ImageDoesNotHaveAThumbnail", "`%s'", (const char*)(a2 + 1016));
+> return 0;
+> }
+> const char* jpeg_offset = GetImageProperty(a2, "exif:JPEGInterchangeFormat", a3);
+> ...
+> if (!thumbnail_img) return 0;
+> ...
+> CloseBlob(a2);
+> return ret_code;
+> }
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> 9
+> 10
+> 11
+> 12
+> 13
+> 14
+> 15
+> 16
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> 9
+> 10
+> 11
+> 12
+> 13
+> 14
+> 15
+> 16
+> 17
+> 18
+> MagickBooleanType WriteTHUMBNAILImage(ImageInfo *info, Image *image, ExceptionInfo *exception)
+> {
+> const StringInfo *exif_profile = GetImageProfile(image,"exif");
+> const char *jpeg_offset,*jpeg_length;
+> ssize_t offset,length;
+> Image *thumbnail_image;
+> ...
+> if (exif_profile == (const StringInfo *) NULL) {
+> ...
+> jpeg_offset=GetImageProperty(image,"exif:JPEGInterchangeFormat",
+> exception);
+> ...
+> if (thumbnail_image == (Image *) NULL)
+> return(MagickFalse);
+> thumbnail_image->type=(thumbnail_image->alpha_trait != UndefinedTrait ? TrueColorType : TrueColorMatteType);
+> CopyMagickString(thumbnail_image->filename,image->filename, MaxTextExtent);
+> ...
+> return(status);
+> }
+
+a) Decompiled code with guidance 
+
+b) Decompiled code with CFS 
+
+c) ReSource 
+
+final output 
+
+Figure 2: Overview of ReSource 
+
+Phase 3: Lexical Finalization (§3.4). The final stage refines variable identifiers and formatting to ensure human-readability and contextual consistency. Each phase builds upon the previous, progressively injecting se-mantic, structural, and lexical constraints to achieve transformation-agnostic source recovery. 
+
+3.2 Guided Semantic Recovery via Distortion Pattern Retrieval 
+
+Aggressive transformations replace human-readable logic with alien, compiler-induced artifacts (e.g., inlined macros, opaque bit-wise math, or redundant state checks). When vanilla LLMs en-counter these unfamiliar patterns, they lack the context to infer the original intent and frequently resort to semantic hallucina-tions. To break this cycle of guesswork, we shift the paradigm from unconstrained generation to retrieval-augmented deduction. We introduce the Semantic Distortion Database , a data-driven knowledge base that maps common decompiler artifacts to their ground-truth source-level intents. 
+
+Core Insight: Leveraging the “Seen” to Decode the “Un-seen”. Our approach is driven by a fundamental observation: while compilers and obfuscators generate seemingly infinite structural variations, the underlying semantic mappings between source id-ioms and resulting artifacts are highly recurrent across large code-bases. Consequently, if an unseen decompiled snippet shares a similar semantic profile with seen historical artifacts, they almost certainly trace back to the same developer intent. By abstracting these reusable distortion patterns from a massive corpus of aligned code pairs, ReSource retrieves concrete, historical recovery sugges-tions to hint the LLM. This effectively transforms the LLM’s task from a blind translation into an informed repair process, using empirical priors to explicitly ground the recovery of unseen code. 
+
+3.2.1 Constructing the Semantic Distortion Database. Figure 3 de-picts the three-stage pipeline for constructing the database: taxon-omy initialization, code alignment, and signature construction. 
+
+Step 1: Distortion Taxonomy Initialization. Understanding the nature of binary-to-source discrepancies is critical. Unlike prior work that manually defines fidelity categories based on expert intu-ition [2, 30], we adopt a data-driven approach. We prompt an LLM to identify and summarize actual semantic differences observed across massive aligned function pairs. After manual refinement and consolidation, we establish a compact yet expressive taxonomy of common semantic distortions: 
+
+• Semantic Return: Premature returns or incorrect return values. 
+
+• Error Safety: Missing or transformed exception-handling logic. 
+
+• Condition Check: Inverted, oversimplified, or altered condi-tional predicates. 
+
+• Control Flow Transformation: Flattened or irregular branch and loop structures. 
+
+• State Management: Divergent initialization or mutation of state variables. 
+
+• Optimization Redundancy: Redundant computations intro-duced by compilers. 
+
+• Function Call: Dropped return values, modified parameters, or reordered side effects. 
+
+• Memory Usage: Altered allocation, dereferencing, or memory access patterns. This taxonomy underpins the database structure, organizing dis-tortion patterns into semantically coherent categories for efficient retrieval. 
+
+Step 2: Line-Level Code Alignment. For each function in our corpus, we utilize LLM-assisted matching to align decompiled lines with their corresponding source-level counterparts. This yields a structured mapping comprising the decompiled_code_line (with its 
+
+4Decoupling is a Necessity: Transformation-Agnostic Decompiled Code Recovery under Optimization and Obfuscation Question:  Please help me align the following code pair, focusing only on                
+
+> semantic differences ...
+> Question: Please help me align the following code pair. I have defined the following semantic distortion types ...
+> Question: Please help me generate guidance in the following format based on the semantics of the code lines...
+> Decompiled code
+> Source code
+> Decompiled code
+> Source code
+> Semantic distortion types
+> Aligned code lines
+> Source code Guidance Semantic distortion database LLM LLM LLM
+> Step 1: i nitialization Step 2: alignment of code lines Step 3: database construction
+> DSS
+
+Figure 3: Construction Workflow of the Semantic Distortion Database 
+
+line number), the matched source_code_line (or null for compiler-induced artifacts), and the assigned distortion_type. These aligned examples form the ground truth pairs for inference-time retrieval. 
+
+Step 3: Guidance Generation and Semantic Signature Con-struction. To support scalable recovery, we prompt an LLM to sum-marize the intended semantics of each source_code_line into nat-ural language guidance. These guidance sentences serve as human-aligned recovery targets. However, relying solely on raw lexical similarity (e.g., embedding distance of decompiled text) is insufficient for accurate retrieval. Decompiled code is notoriously stripped of contextual cues: for instance, the isolated statement v1 = 0; could signify the assign-ment of a numeric zero, a null pointer, a boolean false, an ASCII string terminator, or a purely redundant operation. Its true meaning depends entirely on its surrounding context. To resolve such ambiguity, we construct a Decompilation Se-mantic Signature (DSS) for each distorted line. The DSS encodes semantics across four orthogonal dimensions: 
+
+• Syntax Features: Abstract code shape and AST-derived con-structs. 
+
+• Variable Dependencies: Referencing context and data-flow usage. 
+
+• Control Flow: Relative nesting and control context within the function. 
+
+• Contextual Role: High-level behavioral role, such as condition guarding or computation. Collectively, these components form a compact semantic sketch that enables fine-grained comparison across structurally diverse code snippets. The DSS serves as the indexing key for retrieving guidance during inference, ensuring that suggestions are matched contextually rather than just lexically. 
+
+3.2.2 Semantic Suggestion Retrieval via Distortion-Aware Semantic Matching. During inference, ReSource retrieves context-aware se-mantic suggestions by matching distorted decompiled lines against annotated entries in the Semantic Distortion Database (Phase 1 of Figure 2). To balance retrieval efficiency and semantic precision without exceeding the LLM’s context limits, we design a multi-stage retrieval and allocation strategy: 
+
+Stage 1: Coarse Lexical Filtering. Each unannotated decom-piled line is first embedded using a pretrained dense encoder. To efficiently narrow the massive search space, we perform a top-𝑘 
+
+nearest-neighbor search within the FAISS index. Candidates with a cosine similarity falling below a predefined baseline threshold are immediately discarded. This step acts as a rapid filter, isolating a diverse subset of lexically relevant matches for deeper analysis. 
+
+Stage 2: Distortion-Aware Fine Matching. Different trans-formations shatter distinct code aspects. For instance, control-flow flattening severely alters the structural layout, whereas standard optimization modifies local data dependencies. Consequently, re-lying on a uniform similarity metric is fundamentally insufficient. Instead, for a given target line 𝑙 and a retrieved candidate 𝑐 , we pre-dict the dominant distortion type of 𝑙 . Based on this type, we assign a specific weight vector 𝑤 . The final Dynamic Semantic Score (DSS) is computed by linearly aggregating the four dimensions of the previously defined Decompilation Semantic Signature (i.e., syntax features, variable dependencies, control flow, and contextual role), denoted as sim 𝑖 (𝑙, 𝑐 ) for 𝑖 ∈ { 1, 2, 3, 4}:DSS (𝑙, 𝑐 ) =
+
+> 4
+
+∑︁ 
+
+> 𝑖 =1
+
+𝑤 𝑖 · sim 𝑖 (𝑙, 𝑐 ). (1) This distortion-aware weighting ensures, for example, that control-flow similarity is heavily prioritized for obfuscated lines, whereas syntax-level similarity is favored for lightly optimized lines. 
+
+Stage 3: Context-Bounded Annotation. Considering the lim-ited input token budget of LLMs and the risk of “context poison-ing” from irrelevant hints, we enforce strict allocation bounds. First, a candidate is only accepted if its DSS strictly exceeds a high-confidence quality threshold. Second, to maintain a balanced prompt, we impose a hard cap on the number of injected comments per distortion type (e.g., retaining at most two suggestions). The highest-scoring candidates that satisfy these dual constraints are ultimately appended to the target lines as inline semantic guidance. By executing this pipeline, ReSource successfully mitigates severe obfuscation by precisely injecting previously observed semantic patterns. 
+
+3.3 Structure-Oriented Repair via Control Flow Prediction 
+
+Compiler optimization and obfuscation, such as loop unrolling, con-ditional merging, and control-flow flattening (CFF), often introduce severe structural distortions in decompiled outputs. Flattened con-trol flow eliminates conventional nesting, merges disjoint branches, and replaces structured constructs with opaque state-machine logic. Consequently, directly recovering the original source structure is extremely challenging, as the hierarchical organization of loops, conditionals, and returns is no longer explicitly observable. 
+
+> 5Zhou et al.
+
+In real-world closed-source analysis, the exact combination of these transformations is essentially a black box. Instead of attempt-ing to reconstruct complete structured code end-to-end, which often causes vanilla LLMs to suffer from severe context dispersion, we explicitly decouple structural reasoning from semantic generation. We introduce a control-flow prediction module that learns to infer the source-level control skeleton from distorted decompiled inputs. The key intuition is that, even when the surface syntax is flattened, subtle lexical and data-flow cues remain (e.g., recurring comparison operators, jump patterns, or state variables) that implicitly encode the original logic layout. By training on paired decompiled–source functions across diverse optimization and obfuscation transfor-mations, the model learns to decode these cues into a compact, canonical sequence summarizing the original control flow. 
+
+Prediction Objective. Given a decompiled function that has been distorted by compiler optimization or code obfuscation, the module predicts a compact, linearized control-flow sequence that summarizes its source-level control skeleton. The output is a se-quence of control keywords and structural tokens (e.g., if (cond) ,
+
+else , for (...) , {, }) stripped of all semantic business logic, ex-plicitly representing the pure hierarchical topology of the original source code. 
+
+Source of Supervision. The model is trained using decom-piled code generated from both compiler optimization (O1–O3) and obfuscation schemes (e.g., CFF, BCF, SUB, SPLIT). Each training sample is paired with its corresponding ground-truth control flow sequence extracted from the original source function, enabling the model to learn transformation-invariant structural cues. 
+
+Integration into the Recovery Pipeline. During inference, the predicted control-flow sequence is prepended to the LLM prompt in a standardized template. This scaffold acts as an immutable struc-tural prior. It serves as a rigid guiding constraint that forces the LLM to synthesize the semantically grounded blocks strictly within the correct architectural layout. As illustrated in Figure 2(b), the prediction provides an explicit control skeleton that compensates for flattened or reordered control flow in the decompiled input. 
+
+Generalization Across Distortions. Unlike rule-based recon-struction or heuristic graph recovery, our approach learns transfor-mation invariant structural correlations directly from data. Once trained, the predictor can infer plausible source-level skeletons for unseen obfuscation schemes or optimization patterns, offering a robust, architecture-agnostic prior for downstream LLM recovery. This synergy between symbolic structure prediction and generative refinement bridges the gap between disordered low-level control and interpretable high-level logic, substantially improving struc-tural and semantic fidelity in the final output. 
+
+3.4 Lexical, Stylistic, and Semantic Finalization 
+
+After guided semantic recovery and structure-oriented repair, Re-Source performs a finalization stage that transforms intermediate outputs into source-like, human-readable code. While prior work such as FidelityGPT [30] employs fidelity-oriented prompting for basic semantic preservation, ReSource elevates this process into a prior-constrained joint deduction . We design prompts that explicitly anchor the LLM to the semantic and structural priors established in our earlier phases, guiding it to refine identifiers, types, low-level artifacts, and stylistic conventions while strictly preserving the recovered program logic. The finalization phase addresses four complementary dimen-sions: 
+
+• Lexical Finalization: Recover meaningful variable and param-eter names based on context and usage; recover accurate type annotations and symbolic macro references where applicable. 
+
+• Syntactic Cleanup: Eliminate redundant or synthetic constructs such as dead branches, empty control paths, or synthetic labels; reduce unnecessary nesting and simplify expressions. 
+
+• Semantic Clarification: Normalize magic constants, recover idiomatic error handling patterns, and clean up compiler-injected stubs or low-level operations irrelevant to the original logic. 
+
+• Stylistic Harmonization: Reformat indentation, modularize code layout, and ensure stylistic consistency—thereby aligning the final output with human-like readability and maintainability. Technically, this stage leverages prompt-guided joint refinement. Rather than applying isolated post-processing heuristics or relying on unconstrained LLM guesswork, the model is explicitly instructed to reason over lexical, syntactic, and semantic cues simultaneously. By seamlessly combining the injected priors from previous recovery phases (i.e., the semantic suggestions and the control-flow skeleton) with our fidelity-oriented prompt templates, ReSource produces outputs that are structurally coherent, semantically aligned, and visually readable. This finalization phase completes the end-to-end recovery work-flow, ensuring that all three dimensions, lexical, syntactic, and semantic, are jointly refined. Through this approach, the recovered code achieves higher fidelity to the original source in both structure and semantic intent, substantially improving human readability and source-level alignment for downstream analysis. 
+
+4 Evaluation 
+
+This section evaluates ReSource from complementary perspectives. 
+
+• RQ1: How closely does the recovered code resemble the original source code? 
+
+• RQ2: How accurately can the original functions be retrieved from the recovered code? 
+
+• RQ3: How do different recovery stages contribute to seman-tic restoration under compiler optimizations and obfuscations? (Ablation study) 
+
+4.1 Experiment Setup 
+
+Dataset. We evaluate ReSource on a diverse corpus of real-world C/C++ programs from established binary analysis benchmarks [14] (e.g., binutils, coreutils, openssl, ImageMagick). Binaries (x86_64) are decompiled using IDA Pro 7.5. By extracting functions com-piled under three optimization levels (O1–O3) and four obfuscations (BCF, CFF, SPLIT, SUB) provided in the benchmark, we curated over 80,000 decompiled-source function pairs. From this, the Semantic Distortion Database was populated using 1,400 transformed func-tions (yielding 25,000+ suggestions). Our Test Set comprises 700 strictly isolated functions, meticulously excluded from all model training and database construction stages to prevent data leakage. 
+
+> 6Decoupling is a Necessity: Transformation-Agnostic Decompiled Code Recovery under Optimization and Obfuscation
+
+Implementation Details. ReSource is implemented using Hug-ging Face Transformers and Tree-sitter for AST parsing. For struc-tural prediction, we fine-tune CodeT5-base; its encoder-decoder architecture naturally suits the translation of flattened tokens into hierarchical control skeletons. For semantic retrieval, we select GraphCodeBERT-base. Its explicit pre-training on data-flow graphs aligns with our Decompilation Semantic Signature (DSS), captur-ing deep variable dependencies under severe distortion better than standard AST encoders. Empirically optimized retrieval parameters include a FAISS pool size of 𝑘 = 10, a DSS threshold of 𝜏 = 0.5, and a cap of 2 suggestions per distortion type, balancing semantic recall with the prevention of context poisoning. All generative tasks use the DeepSeek-Reasoner API [1] at a tem-perature of 0.5. To ensure fair baseline comparisons, the maximum prompt length is bounded to 8,192 tokens, and baseline prompt lengths are padded or truncated to align tightly with ReSource ’s inputs. 
+
+4.2 Metrics 
+
+We evaluate the effectiveness of ReSource using two complementary paradigms: multi-level code similarity and retrieval-based semantic identifiability. 
+
+Code Similarity Metrics. We quantify how closely the recov-ered function aligns with the original source across five normal-ized dimensions: (1) Interface Similarity : Levenshtein distance of function names, return types, and parameters; (2) Structural Sim-ilarity : Edit distance between Tree-sitter parsed Abstract Syntax Trees (ASTs); (3) Control Flow Similarity : Sequence alignment of extracted control-flow tokens; (4) Halstead Similarity [20]: Variance in cognitive complexity volume; and (5) Token Edit Sim-ilarity : Normalized edit distance over lexical streams. Note on Metric Orthogonality: While AST and CFG similarities may ap-pear conceptually overlapping, they capture fundamentally distinct signals under obfuscation. For instance, CFF completely dismantles the AST hierarchy, rendering AST similarity near zero, yet pre-serving the sequence of isolated control tokens (CFG similarity) remains a robust measure of skeleton recovery. Exact mathematical formulations for all metrics are detailed in [17]. 
+
+Retrieval-Based Function Detection. Aggressive transfor-mations render traditional token-overlap metrics (e.g., BLEU [16]) insufficient, as they severely penalize structurally divergent but functionally equivalent code. Therefore, rather than demanding exact textual equivalence, we evaluate recovery quality from the perspective of semantic identifiability. We assess whether a recov-ered function preserves sufficient semantic signals to successfully retrieve its ground-truth source from a massive candidate corpus containing 10,853 distinct source functions. We embed both recov-ered and source functions using GraphCodeBERT, which leverages data-flow edge modeling to capture deeper semantics beyond lexi-cal overlap. To prevent trivial identifier leakage, all function names are normalized to FUNC and comments are stripped prior to embed-ding. We report the Top-𝑘 (𝑘 = 1, 3, 5) retrieval accuracy, providing a robust proxy for the code’s utility in downstream security tasks like vulnerability matching. 
+
+4.3 Baselines 
+
+To contextualize our results, we compare ReSource with several baselines and ablation variants: 
+
+• DeGPT [7]: A state-of-the-art decompilation optimization frame-work that uses the DeepSeek-R1 LLM API. It focuses on variable renaming, code structure simplification, and comment genera-tion. We exclude comment generation in our comparison. 
+
+• FidelityGPT [30]: A framework for decompilation repair, utilizing the DeepSeek-R1 LLM API. We exclude comment generation and compare the corrected output generated during its correction phase. 
+
+• LLM4Decompile [19]: Refers to the LLM4Decompile series, trained on both source and assembly code with support for O1–O3 opti-mization levels. 
+
+• ReSource w/o GDS : Disable semantic distortion suggestion and only rely on control-flow and lexical finalization. 
+
+• ReSource w/o CFS : Remove control-flow-guided structure recovery and retain only semantic recovery and finalization. 
+
+• ReSource w/o G+C : Retain only the finalization stage and remove both semantic and structural suggestion. These baselines allow us to evaluate the individual contributions of each stage and benchmark ReSource against current state-of-the-art approaches. 
+
+4.4 RQ1: Code Similarity After Recovery 
+
+Table 1 presents the multi-dimensional code similarity results. Re-Source consistently achieves the highest overall similarity (average 0.66), outperforming FidelityGPT (0.62), LLM4Decompile (0.61), and 
+
+DeGPT (0.58) across all transformation types. Notably, ReSource ’s performance remains remarkably stable even under heavy compiler optimization (O3) and adversarial obfuscation (e.g., CFF), which severely degrade existing approaches. 
+
+Baseline Overfitting and Partial Repair. A closer inspection reveals stark differences in how methods handle adversarial versus benign transformations. As highlighted in Table 1, LLM4Decompile 
+
+manages the highest average similarity under pure optimizations (Opt-AVG: 0.67), heavily dominating surface-level Interface Similar-ity. This demonstrates that its large-scale fine-tuning successfully memorizes standard compiler patterns. However, its performance catastrophically collapses under obfuscation (Obf-AVG: 0.58), ex-posing severe overfitting to benign transformations. Meanwhile, although FidelityGPT ’s consistency-checking heuristics allow it to maintain competitive Control Flow Similarity under certain obfusca-tions, it fundamentally fails to resolve holistic structural distortions, lagging significantly in Structural and Token Edit metrics under severe settings like O3 and CFF. 
+
+ReSource ’s Transformation-Agnostic Robustness. In stark contrast, ReSource demonstrates true transformation-agnostic ro-bustness. While it does not overfit to the memorized formatting of O1/O2, it maintains an impressive and stable Obf-AVG of 0.67. It consistently captures the highest Structural, Halstead, and Token Editing similarities across O3 and all obfuscation settings. These dis-tinct gains prove that ReSource ’s combination of structural skeleton prediction and semantic guidance successfully recovers complex, high-level logic that fine-tuned baselines completely miss. Rather than performing superficial lexical patches, ReSource ’s multi-stage 
+
+> 7Zhou et al.
+
+recovery produces representations that genuinely reflect the origi-nal source architecture, securing the highest overall average simi-larity (0.66). 
+
+Answer to RQ1: Benefiting from its unified, decoupled framework, ReSource achieves the most stable and robust recovery across the entire spectrum of transformations. While baseline models may peak under specific benign op-timizations, ReSource actively resists overfitting and main-tains high fidelity even under severe structural destruction, securing the highest overall performance. 
+
+Insight 1.1: Obfuscation introduces deeper semantic distortion than optimization. Our data shows that while standard optimizations preserve basic logical flow, adver-sarial obfuscations shatter the control skeleton, causing a catastrophic drop in baseline performance. 
+
+Insight 1.2: Optimization-only fine-tuning severely overfits. Models relying strictly on compilation corpora (e.g., LLM4Decompile ) memorize superficial token arrange-ments but completely fail to learn transformation-agnostic semantics, severely limiting their real-world generalization. 
+
+4.5 RQ2: Function Retrieval Accuracy 
+
+Table 2 details the Top-𝑘 (𝑘 = 1, 3, 5) retrieval accuracy. ReSource 
+
+achieves a remarkable average Top-5 accuracy of 83%, demonstrat-ing a clear semantic advantage over FidelityGPT (77%), DeGPT (65%), and LLM4Decompile (61%). This confirms that ReSource successfully restores representations that align with the developer’s original intent, even under aggressive transformations. 
+
+Baseline Vulnerabilities vs. ReSource ’s Robustness. A closer analysis reveals the limitations of relying solely on end-to-end fine-tuning. LLM4Decompile manages a competitive Top-1 retrieval under pure optimizations (Opt-AVG: 62%), even outperforming Re-Source under O2. However, this localized peak exposes its reliance on memorizing benign artifacts; once subjected to structural ob-fuscation, its Top-1 accuracy catastrophically collapses (Obf-AVG: 43%). Similarly, while FidelityGPT achieves a marginally higher Top-5 accuracy under localized substitution (Sub: 85%), it degrades sharply under complex control-flow shifts like Split. In stark con-trast, ReSource maintains resilient identifiability, achieving a Top-1 Opt-AVG of 67% and an even more impressive Obf-AVG of 70%. 
+
+The Disconnect Between Similarity and Fidelity. Under O1 optimization, LLM4Decompile achieves a deceptively high average token similarity (0.69, slightly edging out ReSource ’s 0.66 in RQ1), yet its actual retrieval accuracy is strictly lower than ReSource ’s. This proves that high token overlap often stems from formatting or superficial syntax matching, whereas retrieval accuracy rigorously evaluates global semantic consistency. 
+
+Answer to RQ2: ReSource yields substantially higher re-trieval accuracy than all baselines, achieving an impressive 83% average Top-5 accuracy. This demonstrates its superior capability to restore genuine semantic fidelity that aligns with the developer’s original intent. 
+
+Insight 2.1: Lexical similarity does not imply semantic identifiability. High token overlap often masks severe semantic inconsistencies. Our findings confirm that source-level retrieval is a far more rigorous and accurate proxy for evaluating decompilation success than shallow metrics like BLEU or edit distance. 
+
+4.6 RQ3: Effect of Each Phase (Ablation) 
+
+To understand the individual contributions of our multi-stage archi-tecture, Table 3 presents an ablation study isolating semantic sug-gestion ( ReSource w/o CFS ), structural prediction ( ReSource w/o GDS ), and the baseline lexical finalization ( ReSource w/o G+C ). 
+
+Orthogonal Strengths. The results reveal that the semantic and structural modules target distinct, non-overlapping dimensions of the binary-to-source gap. Specifically, ReSource w/o GDS (which strictly adds structural prediction) exhibits its most pronounced gains under heavy control-flow obfuscation, achieving an impres-sive 86% Top-5 accuracy under CFF. This proves its necessity for un-flattening distorted logic. However, its performance drops no-ticeably under heavy optimization (O3 Top-5: 70%), where struc-tural hierarchy is preserved but semantic cues are aggressively stripped. Conversely, ReSource w/o CFS (which provides database-driven semantic guidance) demonstrates dominant stability across O3 optimizations (Top-5: 79%), effectively restoring high-level in-tent. Unsurprisingly, the fully ablated variant ReSource w/o G+C —relying solely on vanilla LLM-driven lexical refinement—exhibits the poorest global performance (Top-5 AVG: 76%), confirming that superficial token patching cannot resolve deep semantic shifts. 
+
+Synergistic Full Pipeline. The complete ReSource pipeline achieves the optimal balance. As established in RQ2, the full Re-Source architecture achieves an overall Top-5 average of 83%, strictly outperforming the best isolated variants here (which plateau at 81%). This synergy confirms that semantic suggestion and structural pre-diction are highly complementary rather than redundant: Phase 2 reconstructs the architectural skeleton, while Phase 1 injects the semantic flesh. Case studies demonstrating how these stages collaborate are available in our replication package [17]. 
+
+Answer to RQ3: The complete ReSource pipeline (83% Top-5 AVG) significantly outperforms its isolated variants (max 81%). Removing either the semantic database or the struc-tural predictor causes a notable drop in accuracy, confirm-ing that surface-level generation alone ( ReSource w/o G+C at 76%) is fundamentally insufficient. 
+
+Insight 3.1: Semantic and structural recovery are or-thogonal yet synergistic. While each phase targets dis-tinct aspects of the semantic gap (e.g., structural prediction uniquely resolves control-flow flattening, while semantic guidance restores stripped intent under O3), their combina-tion is strictly necessary for robust source recovery. 
+
+> 8
+
+Decoupling is a Necessity: Transformation-Agnostic Decompiled Code Recovery under Optimization and Obfuscation 
+
+Table 1: Similarity metrics across optimization and obfuscation. The table is grouped to highlight performance degradation under obfuscation. Best results are in bold, second-best are underlined. 
+
+Metric Approach Optimization Obfuscation Overall O1 O2 O3 Opt-AVG BCF CFF Split Sub Obf-AVG AVG 
+
+Interface 
+
+DeGPT 0.64 0.64 0.64 0.64 0.62 0.64 0.64 0.65 0.64 0.64 
+
+FidelityGPT 0.69 0.69 0.68 0.69 0.68 0.70 0.68 0.69 0.69 0.69 
+
+LLM4Decompile 0.78 0.77 0.78 0.78 0.77 0.77 0.77 0.78 0.77 0.78 
+
+ReSource 0.69 0.71 0.72 0.71 0.70 0.71 0.71 0.74 0.72 0.71 Structural 
+
+DeGPT 0.50 0.48 0.44 0.47 0.49 0.44 0.51 0.52 0.49 0.48 
+
+FidelityGPT 0.52 0.51 0.46 0.50 0.54 0.49 0.54 0.57 0.54 0.52 
+
+LLM4Decompile 0.60 0.59 0.53 0.57 0.48 0.42 0.48 0.58 0.49 0.52 
+
+ReSource 0.55 0.54 0.55 0.55 0.57 0.53 0.56 0.58 0.56 0.55 
+
+Control Flow 
+
+DeGPT 0.73 0.72 0.69 0.71 0.74 0.59 0.75 0.79 0.72 0.70 
+
+FidelityGPT 0.72 0.70 0.65 0.69 0.77 0.67 0.77 0.79 0.75 0.72 
+
+LLM4Decompile 0.72 0.72 0.65 0.70 0.51 0.39 0.48 0.69 0.52 0.58 
+
+ReSource 0.74 0.70 0.70 0.71 0.76 0.67 0.72 0.76 0.73 0.72 
+
+Halstead 
+
+DeGPT 0.71 0.68 0.61 0.67 0.69 0.55 0.73 0.75 0.68 0.66 
+
+FidelityGPT 0.71 0.69 0.60 0.67 0.71 0.64 0.71 0.77 0.71 0.69 
+
+LLM4Decompile 0.79 0.79 0.69 0.76 0.65 0.55 0.64 0.75 0.65 0.69 
+
+ReSource 0.77 0.76 0.76 0.76 0.76 0.69 0.77 0.80 0.76 0.75 
+
+Token Editing 
+
+DeGPT 0.45 0.44 0.41 0.43 0.45 0.37 0.47 0.48 0.44 0.43 
+
+FidelityGPT 0.50 0.50 0.44 0.48 0.53 0.46 0.52 0.55 0.52 0.50 
+
+LLM4Decompile 0.57 0.55 0.49 0.54 0.48 0.39 0.49 0.57 0.48 0.49 
+
+ReSource 0.55 0.54 0.54 0.54 0.57 0.53 0.57 0.59 0.57 0.55 
+
+Overall AVG 
+
+DeGPT 0.61 0.59 0.56 0.59 0.60 0.52 0.62 0.64 0.60 0.58 
+
+FidelityGPT 0.63 0.62 0.57 0.61 0.64 0.59 0.64 0.67 0.64 0.62 
+
+LLM4Decompile 0.69 0.69 0.63 0.67 0.58 0.51 0.57 0.67 0.58 0.61 
+
+ReSource 0.66 0.65 0.65 0.65 0.67 0.63 0.67 0.69 0.67 0.66 
+
+Table 2: Function retrieval accuracy across optimization and obfuscation. The table is grouped to highlight performance degradation under obfuscation. Best results are in bold, second-best are underlined. 
+
+Metric Approach Optimization Obfuscation Overall O1 O2 O3 Opt-AVG BCF CFF Split Sub Obf-AVG AVG 
+
+Top-1 (%) 
+
+DeGPT 57 52 41 50 53 30 57 61 50 50 
+
+FidelityGPT 62 60 54 59 65 60 59 72 64 62 
+
+LLM4Decompile 69 66 51 62 38 27 44 62 43 51 
+
+ReSource 70 64 66 67 68 62 76 73 70 68 
+
+Top-3 (%) 
+
+DeGPT 64 67 50 60 67 44 66 68 61 61 
+
+FidelityGPT 79 69 67 72 74 72 70 78 74 73 
+
+LLM4Decompile 78 77 60 72 47 30 48 71 49 59 
+
+ReSource 79 73 81 78 80 78 84 82 81 80 
+
+Top-5 (%) 
+
+DeGPT 72 68 57 66 71 46 69 71 64 65 
+
+FidelityGPT 80 74 70 75 78 76 73 85 78 77 
+
+LLM4Decompile 79 80 63 74 48 34 49 72 51 61 
+
+ReSource 82 79 83 81 83 84 85 84 84 83 
+
+Table 3: Ablation study: Function retrieval accuracy across optimization and obfuscation. Best results among the isolated variants are highlighted in bold, and second-best are underlined. 
+
+Metric Approach Optimization Obfuscation Overall O1 O2 O3 Opt-AVG BCF CFF Split Sub Obf-AVG AVG 
+
+Top-1 (%) 
+
+ReSource w/o CFS 68 67 66 67 66 71 68 71 69 68 
+
+ReSource w/o GDS 71 68 58 66 67 74 67 74 71 68 
+
+ReSource w/o G+C 64 61 56 60 68 52 71 68 65 63 Top-3 (%) 
+
+ReSource w/o CFS 76 76 74 75 77 78 81 80 79 77 
+
+ReSource w/o GDS 82 81 69 77 77 81 77 78 78 78 
+
+ReSource w/o G+C 75 70 64 70 80 61 80 78 75 73 Top-5 (%) 
+
+ReSource w/o CFS 79 78 79 79 79 81 85 83 82 81 
+
+ReSource w/o GDS 85 82 70 79 81 86 82 84 83 81 
+
+ReSource w/o G+C 77 75 68 73 81 67 81 81 78 76 
+
+5 Discussion and Limitations 5.1 Discussion and Implications 
+
+Beyond Surface-Level Similarity. Our empirical results high-light a consistent discrepancy between token-level similarity met-rics (e.g., BLEU) and actual semantic recovery (retrieval accuracy). Under aggressive obfuscation, sequence-to-sequence models may produce visually plausible code that fundamentally fails to preserve the original logic. By explicitly decoupling semantic and structural constraints, ReSource demonstrates that robust decompilation re-quires guiding the LLM with empirical priors, rather than relying solely on lexical pattern matching. 
+
+Facilitating Source-Level Security Analysis. A practical im-plication of ReSource is its potential to ease the burden of binary analysis. By lifting obfuscated binaries into readable, high-fidelity 
+
+9Zhou et al. 
+
+source representations, ReSource helps bridge the gap between hos-tile binary environments and the mature ecosystem of source-level static analysis tools (e.g., CodeQL, Fortify). This allows security analysts to inspect logic and vulnerabilities in a more intuitive domain. 
+
+The Value of Modular Recovery. The ablation study (§4.6) suggests that semantic hallucinations and structural collapse are distinct failure modes that benefit from targeted treatments. The synergistic performance of ReSource ’s pipeline indicates that mod-ular, neuro-symbolic architectures—where neural generation is constrained by symbolic structural skeletons—offer a promising direction for future reverse engineering frameworks. 
+
+5.2 Limitations and Future Work 
+
+While ReSource improves the robustness of source code recovery, several limitations remain to be addressed in future work: 
+
+Defining Success via Semantic Fidelity instead of Execu-tion. Verifying formal functional equivalence (e.g., via unit testing or symbolic execution) for isolated functions is often an ill-posed problem due to the absence of global context (e.g., missing header definitions, global variables, or external function prototypes). Con-sequently, ReSource prioritizes semantic fidelity by ensuring that the recovered code preserves the original logic and security-critical properties as a proxy for correctness. 
+
+Scope of Semantic Database and Generalization. While the Semantic Distortion Database provides a principled way to reason about optimizations, its current coverage is primarily centered on transformation patterns from mainstream compilers (e.g., GCC, Clang) and common obfuscators. Its performance on highly cus-tomized or proprietary obfuscation schemes remains untested. As a data-driven framework, ReSource ’s generalization capability is inherently tied to the diversity of its underlying database. 
+
+Interprocedural Context and Global State. Currently, Re-Source operates at the function level. Since complete program con-text is often unavailable during standalone function recovery, the framework might struggle with functions whose semantics are deeply coupled with external state or complex cross-function data flows. Extending ReSource toward interprocedural reasoning and global type inference is a key future direction. 
+
+6 Related Work 
+
+From Binary Analysis to Decompiled Understanding. Early research on binary similarity and recovery focused on low-level representations such as instruction sequences, control-flow graphs, and intermediate representations (IR). Learning-based approaches and graph neural networks were used to extract transformation-invariant embeddings for robust binary understanding. For exam-ple, ImOpt [9] normalizes instruction patterns to reduce compiler-induced redundancy; GTrans [26] models hierarchical structures in control-flow graphs to mitigate obfuscation-induced reshaping; VulHawk [13] transfers binary embeddings across architectures via microcode lifting; and UniASM [5] unifies binary embeddings to achieve resilience across both optimization and obfuscation. Al-though effective for structural matching, these methods remain con-strained by their low-level focus, lacking access to types, variables, and logical intent, and thus cannot recover readable, source-like representations. 
+
+From Decompiled Code to Type and Identifier Recovery. 
+
+The advent of modern decompilers (e.g., Ghidra [4], IDA Pro [6]) shifted the focus toward decompiled pseudocode, offering a struc-tured foundation for LLMs to reason over higher-level abstractions. Consequently, tools like ReSym [22] and TypeForge [21] integrate LLMs with static analysis to successfully infer stripped identifiers and reconstruct composite types. These works significantly im-prove surface readability, laying essential groundwork for more comprehensive semantic restoration. 
+
+LLM-Based Decompilation and Code Refinement. Recent advancements apply LLMs directly to end-to-end decompilation or post-processing. For instance, LLM4Decompile [19] fine-tunes models on assembly-to-C datasets to recover source code across standard optimizations (O1–O3). Concurrently, general-purpose frameworks like DeGPT [7] and FidelityGPT [30] employ prompt-guided strategies for variable renaming and structural simplifica-tion, achieving substantial gains in lexical and syntactic quality. Despite these significant advancements, preserving deep seman-tic fidelity and structural resilience under aggressive, adversarial obfuscation remains an open and complex challenge in the field. 
+
+7 Conclusion 
+
+We presented ReSource , a multi-phase LLM framework designed to bridge the severe semantic and structural gaps introduced by aggres-sive optimization and adversarial obfuscation. By fundamentally decoupling the recovery process, ReSource neutralizes the semantic hallucinations and structural collapse that plague monolithic, end-to-end LLM approaches. Specifically, the synergistic integration of empirical priors (via the Semantic Distortion Database) and struc-tural skeletons (via the control-flow predictor) enables ReSource to achieve true transformation-agnostic robustness. Extensive evaluations on a massive benchmark spanning diverse optimization levels and obfuscation schemes demonstrate that Re-Source attains an average source-level similarity of 0.66 and an 83% Top-5 retrieval accuracy. Ultimately, ReSource demonstrates that explicitly decoupling structural and semantic constraints signifi-cantly improves decompilation fidelity, offering a promising step toward reliable source-level security analysis. 
+
+8 Data Availability Statement 
+
+The core artifacts, which include the full implementation of Re-Source , the curated decompiled-source dataset, and the Semantic Distortion Database, are permanently archived on Zenodo via the following DOI: https://doi.org/10.5281/zenodo.19212869. For convenient browsing, additional supplementary materials such as detailed prompt templates, complete technical details, extra experimental studies, and qualitative case studies are hosted on our project website [17]. 
+
+References     
+
+> [1] deepseek. 2025. deepseek. https://www.deepseek.com/. Accessed: 2026-1-10. [2] Luke Dramko, Jeremy Lacomis, Edward J Schwartz, Bogdan Vasilescu, and Claire Le Goues. 2024. A taxonomy of c decompiler fidelity issues. In 33th USENIX Security Symposium (USENIX Security 24) .[3] Mingyang Geng, Shangwen Wang, Dezun Dong, Haotian Wang, Ge Li, Zhi Jin, Xiaoguang Mao, and Xiangke Liao. 2024. Large language models are few-shot 10
+
+Decoupling is a Necessity: Transformation-Agnostic Decompiled Code Recovery under Optimization and Obfuscation 
+
+summarizers: Multi-intent comment generation via in-context learning. In Pro-ceedings of the 46th IEEE/ACM International Conference on Software Engineering .1–13. [4] Ghidra. 2025. Ghidra. https://ghidra-sre.org/. Accessed: 2026-1-10. [5] Yeming Gu, Hui Shu, Fei Kang, and Fan Hu. 2025. Uniasm: Binary code similarity detection without fine-tuning. Neurocomputing 630 (2025), 129646. [6] Hex-Rays. 2025. Hex-Rays. https://hex-rays.com. Accessed: 2026-1-10. [7] Peiwei Hu, Ruigang Liang, and Kai Chen. 2024. DeGPT: Optimizing Decompiler Output with LLM. In Proceedings 2024 Network and Distributed System Security Symposium (2024). https://api. semanticscholar. org/CorpusID , Vol. 267622140. [8] Yikun Hu, Yuanyuan Zhang, Juanru Li, and Dawu Gu. 2017. Binary code clone detection across architectures and compiling configurations. In 2017 IEEE/ACM 25th International Conference on Program Comprehension (ICPC) . IEEE, 88–98. [9] Jianguo Jiang, Gengwang Li, Min Yu, Gang Li, Chao Liu, Zhiqiang Lv, Bin Lv, and Weiqing Huang. 2020. Similarity of binaries across optimization levels and obfuscation. In European Symposium on Research in Computer Security . Springer, 295–315. [10] Mahmut Kandemir, Narayanan Vijaykrishnan, Mary Jane Irwin, and Wu Ye. 2000. Influence of compiler optimizations on system power. In Proceedings of the 37th Annual Design Automation Conference . 304–307. [11] Zhibo Liu and Shuai Wang. 2020. How far we have come: Testing decompi-lation correctness of C decompilers. In Proceedings of the 29th ACM SIGSOFT International Symposium on Software Testing and Analysis . 475–487. [12] Lannan Luo, Jiang Ming, Dinghao Wu, Peng Liu, and Sencun Zhu. 2017. Semantics-based obfuscation-resilient binary code similarity comparison with applications to software and algorithm plagiarism detection. IEEE Transactions on Software Engineering 43, 12 (2017), 1157–1177. [13] Zhenhao Luo, Pengfei Wang, Baosheng Wang, Yong Tang, Wei Xie, Xu Zhou, Danjun Liu, and Kai Lu. 2023. VulHawk: Cross-architecture vulnerability detec-tion with entropy-based binary code search.. In NDSS .[14] Andrea Marcelli, Mariano Graziano, Xabier Ugarte-Pedrero, Yanick Fratantonio, Mohamad Mansouri, and Davide Balzarotti. 2022. How machine learning is solv-ing the binary function similarity problem. In 31st USENIX Security Symposium (USENIX Security 22) . 2099–2116. [15] Hausi A Müller, Jens H Jahnke, Dennis B Smith, Margaret-Anne Storey, Scott R Tilley, and Kenny Wong. 2000. Reverse engineering: a roadmap. In Proceedings of the Conference on the Future of Software Engineering . 47–60. [16] Kishore Papineni, Salim Roukos, Todd Ward, and Wei-Jing Zhu. 2002. Bleu: a method for automatic evaluation of machine translation. In Proceedings of the 40th annual meeting of the Association for Computational Linguistics . 311–318. [17] ReSource. [n. d.]. ReSource Home. https://sites.google.com/view/ resource4binary. Accessed: 2026-1-10. [18] Moritz Schloegel, Tim Blazytko, Moritz Contag, Cornelius Aschermann, Julius Basler, Thorsten Holz, and Ali Abbasi. 2022. Loki: Hardening code obfuscation against automated attacks. In 31st USENIX Security Symposium (USENIX Security 22) . 3055–3073. [19] Hanzhuo Tan, Qi Luo, Jing Li, and Yuqun Zhang. 2024. LLM4Decompile: De-compiling Binary Code with Large Language Models. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing . 3473–3487. [20] Chandrasegar Thirumalai, RR Shridharshan, and L Ranjith Reynold. 2017. An assessment of halstead and COCOMO model for effort estimation. In 2017 Inno-vations in Power and Advanced Computing Technologies (i-PACT) . IEEE, 1–4. [21] Yanzhong Wang, Ruigang Liang, Yilin Li, Peiwei Hu, Kai Chen, and Bolun Zhang. 2025. TypeForge: Synthesizing and Selecting Best-Fit Composite Data Types for Stripped Binaries. In 2025 IEEE Symposium on Security and Privacy (SP) . IEEE, 1–18. [22] Danning Xie, Zhuo Zhang, Nan Jiang, Xiangzhe Xu, Lin Tan, and Xiangyu Zhang. 2024. Resym: Harnessing llms to recover variable and data structure symbols from stripped binaries. In Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security . 4554–4568. [23] Xiangzhe Xu, Zhuo Zhang, Zian Su, Ziyang Huang, Shiwei Feng, Yapeng Ye, Nan Jiang, Danning Xie, Siyuan Cheng, Lin Tan, et al. 2025. Unleashing the Power of Generative Model in Recovering Variable Names from Stripped Binary. In 
+
+Proceedings of the Network and Distributed System Security Symposium (NDSS) .[24] Zhengzi Xu, Bihuan Chen, Mahinthan Chandramohan, Yang Liu, and Fu Song. 2017. Spain: security patch analysis for binaries towards understanding the pain and pills. In 2017 IEEE/ACM 39th International Conference on Software Engineering (ICSE) . IEEE, 462–472. [25] Khaled Yakdan, Sebastian Eschweiler, Elmar Gerhards-Padilla, and Matthew Smith. 2015. No More Gotos: Decompilation Using Pattern-Independent Control-Flow Structuring and Semantic-Preserving Transformations.. In NDSS .[26] Yun Zhang, Yuling Liu, Ge Cheng, and Bo Ou. 2024. GTrans: Graph Transformer-Based Obfuscation-resilient Binary Code Similarity Detection. In Proc. NDSS Symp. 
+
+[27] Yuanliang Zhang, Yifan Xie, Shanshan Lit, Ke Liu, Chong Wang, Zhouyang Jia, Xiangbing Huang, Jie Song, Chaopeng Luo, Zhizheng Zheng, et al. 2025. Unseen horizons: Unveiling the real capability of llm code generation beyond the familiar. In 2025 IEEE/ACM 47th International Conference on Software Engineering (ICSE) .IEEE, 604–615. [28] Lei Zhao, Yuncong Zhu, Jiang Ming, Yichen Zhang, Haotian Zhang, and Heng Yin. 2020. Patchscope: Memory object centric patch diffing. In Proceedings of the 2020 ACM SIGSAC Conference on Computer and Communications Security .149–165. [29] Wayne Xin Zhao, Kun Zhou, Junyi Li, Tianyi Tang, Xiaolei Wang, Yupeng Hou, Yingqian Min, Beichen Zhang, Junjie Zhang, Zican Dong, et al. 2023. A survey of large language models. arXiv preprint arXiv:2303.18223 1, 2 (2023). [30] Zhiping Zhou, Xiaohong Li, Ruitao Feng, Yao Zhang, Yuekang Li, Wenbu Feng, Yunqian Wang, and Yuqing Li. 2026. FidelityGPT: Correcting Decompilation Distortions with Retrieval Augmented Generation. In Proceedings of the Network and Distributed System Security Symposium (NDSS) .11

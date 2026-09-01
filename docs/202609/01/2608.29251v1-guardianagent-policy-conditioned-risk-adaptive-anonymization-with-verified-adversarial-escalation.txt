@@ -1,0 +1,780 @@
+Title: GuardianAgent: Policy-Conditioned Risk-Adaptive Anonymization with Verified Adversarial Escalation
+
+URL Source: https://arxiv.org/pdf/2608.29251v1
+
+Published Time: Tue, 01 Sep 2026 00:43:36 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# GuardianAgent: Policy-Conditioned Risk-Adaptive Anonymization with Verified Adversarial Escalation 
+
+Ruiyi Yang 1 Gayathri Lihinikaduarachchi 1 Rahat Masood 1
+
+Flora D. Salim 1 Salil S. Kanhere 11School of Computer Science and Engineering, UNSW Sydney, Australia 
+
+{ruiyi.yang, g.lihinikadu_arachchillage}@student.unsw.edu.au {rahat.masood, flora.salim, salil.kanhere}@unsw.edu.au 
+
+Abstract 
+
+Privacy protection for live web traffic requires more than detecting private spans. Agent-based privacy protection systems must deter-mine whether an outgoing action complies with the destination site’s privacy policy, then apply only the level of rewriting or sani-tisation justified by the residual disclosure risk. We present GuardianAgent , a policy-conditioned anonymization framework that couples structured risk assessment with veri-fied adaptive rewriting. GuardianAgent com-putes risk through AMRSF (Adaptive Multi-factor Risk Scoring Formula), an explicit con-troller that combines policy-violation likeli-hood with data sensitivity, recipient transmis-sion, purpose legitimacy, contextual basis, and policy transparency, rather than relying on an LLM to assign risk directly. This risk score determines both the allow/transform/deny de-cision and the initial anonymization level. For efficiency, GuardianAgent uses an evidential fast path for low-uncertainty policy matches and invokes an LLM slow path only for un-certain cases. For rewriting, it applies a five-level hierarchy driven by a verified adver-sarial guesser : guesses trigger escalation only when supported by the original text, prevent-ing hallucinated attacker confidence from caus-ing unnecessary over-anonymization. Experi-ments across three benchmarks spanning legal text (TAB), Reddit posts (SynthPAI), and multi-format synthetic PII records (PII-Masking-300k) show that GuardianAgent achieves the strongest privacy–utility trade-off among pub-lished baselines and is the only method to reach 
+
+≥ 0.90 privacy in all three domains, remain-ing robust under a backbone switch. Action-context stress tests further show that the same outgoing text receives different decisions and anonymization strengths under different re-cipients, purposes, action bases, and policy-transparency conditions. 1 
+
+> 1Code and evaluation harness at https://anonymous. 4open.science/r/guardianAgent/ .
+
+1 Introduction 
+
+Modern web applications routinely expose fine-grained personal signals through form fields, paste events, outbound requests, clipboard content, and chatbot interactions. A browser-based privacy agent should therefore intervene before an action leaves the browser: it must determine whether the action is consistent with the destination site’s pri-vacy policy, and when needed, rewrite the out-going content to reduce privacy leakage (Zhou et al., 2025; Staab et al., 2025; Chen et al., 2023b; Mireshghallah et al., 2023). This setting brings to-gether two NLP problems that are usually studied in isolation: policy matching , which grounds an observed action in a heterogeneous privacy policy, and text anonymization , which rewrites content so that sensitive attributes cannot be inferred. Existing work leaves three gaps. First, policy-understanding systems classify, retrieve, or sum-marize privacy-policy statements (Harkous et al., 2018; Ahmad et al., 2021; Srinath et al., 2021a; Tang et al., 2023; Sun et al., 2025), and recent LLM-based interfaces make policies easier to query and assess (Chen et al., 2025; Freiberger et al., 2026). However, these systems do not provide an oper-ational risk signal that links live action context to the required strength of anonymization. The same text may be acceptable with light rewriting when sent to a first-party service for core function-ality, but require stronger rewriting or blocking when sent to an advertising network for profiling. Second, recent LLM-based anonymizers often in-voke a large model for every browser event (Staab et al., 2025; Shao et al., 2025), making them poorly suited for low-latency browser-resident mediation. Third, adversarial anonymizers commonly escalate rewriting whenever an auxiliary attacker reports high confidence. Such confidence, however, may reflect hallucinated priors rather than genuine resid-ual leakage. For example, given [PERSON] going arXiv:2608.29251v1 [cs.AI] 29 Aug 2026 to [LOCATION] this afternoon , an attacker may confidently guess “coffee shop” although the orig-inal was “school with Bob”, causing unnecessary over-anonymization. This paper presents GuardianAgent , a policy-conditioned privacy agent that couples structured risk assessment with verified adaptive anonymiza-tion. GuardianAgent computes risk through AMRSF, an explicit controller that combines policy-violation likelihood with data sensitivity, re-cipient transmission, purpose legitimacy, contex-tual basis, and policy transparency. The resulting score jointly determines the allow/transform/deny decision and the initial anonymization level, ensur-ing that rewriting strength is controlled by action context rather than by an LLM-assigned risk judg-ment alone. To reduce latency, GuardianAgent uses an evidential fast path for low-uncertainty policy matches and routes only uncertain cases to an LLM slow path. The anonymizer then applies a five-level rewrite hierarchy and escalates only when a veri-fied adversarial guesser identifies residual leakage that is actually supported by the original text. Our main contributions are: • Policy-conditioned risk-adaptive anonymization : we introduce a structured risk score that jointly governs action-level decisions and anonymization strength. Action-context stress tests show that the same outgoing text receives different decisions and initial anonymization levels depending on recipient, purpose, action-basis, and policy transparency. • Verified adversarial anonymization : we pro-pose a hierarchical anonymizer that escalates rewriting only when adversarial guesses are supported by the original text, preventing hal-lucinated confidence from triggering unneces-sary semantic distortion. • Cross-domain empirical validation : experi-ments on legal text (TAB), Reddit posts (Syn-thPAI), and multi-format PII records (PII-Masking-300k) show that GuardianAgent con-sistently improves the privacy–utility trade-off over published baselines, is the only method to reach ≥ 0.90 privacy across all three do-mains, and maintains its gains under a back-bone switch. 
+
+2 Related Work 
+
+Privacy-policy grounding. Prior work has devel-oped methods for extracting structured statements from privacy policies to enable downstream sys-tems to reason about data practices. Polisis (Hark-ous et al., 2018) trained classifiers on the OPP-115 schema (Wilson et al., 2016); PrivaSeer (Srinath et al., 2021a) built a corpus-scale search infras-tructure for privacy policies; PrivBERT (Srinath et al., 2021b) and PolicyGPT (Tang et al., 2023) studied domain-adaptive and LLM-based policy understanding; and Ahmad et al. (2021) framed policy analysis as joint intent classification and slot filling. These systems make privacy policies more machine-interpretable, but they primarily support descriptive analysis: they do not directly ground a live browser action in the relevant policy evidence, nor do they determine whether the outgoing content should be allowed, rewritten, or blocked. 
+
+Privacy-risk frameworks. Quantitative privacy-risk modelling draws on regulatory tiering and con-textual theories, including NIST SP 800-122 (Mc-Callister, 2010) and GDPR special categories (Reg-ulation, 2016), FAIR-style likelihood–impact prod-ucts (Cronk and Shapiro, 2021), and contextual integrity (Nissenbaum, 2009; Mireshghallah et al., 2023). Recent LLM-based systems further sup-port privacy-policy assessment and risk comprehen-sion (Sun et al., 2025; Xie et al., 2025), while agent-oriented work studies privacy risks in interactive LLM systems (Ngong et al., 2025). These works are mainly used for explanation, auditing, or evalu-ation; GuardianAgent instead uses risk factors as a runtime controller linking policy evidence and ac-tion context to mediation decisions and anonymiza-tion strength. 
+
+LLM-based text anonymization. Recent anonymization methods increasingly rewrite content rather than only tagging sensitive spans. Staab et al. ’s adversarial anonymizer (Staab et al., 2025) iteratively rewrites text until a simulated attacker cannot infer attributes; AgentStealth (Shao et al., 2025) distils this adversarial loop with reinforcement learning; HaS (Chen et al., 2023b) sanitizes prompts before third-party LLM calls; CONFAIDE (Mireshghallah et al., 2023) applies contextual-integrity prompts; and Rescriber (Zhou et al., 2025) uses a small LLM for on-device chat privacy. Related work also studies entity-tagging approaches (Mancera et al., 2025), clinical-text anonymization (Pissarra et al., 2024), differential privacy for prompts (Duan et al., 2023), and private-attribute randomization (Frikha et al., 2025). These methods improve privacy protection beyond span detection, but adversarial rewriting loops often treat attacker confidence as direct evidence of residual leakage. This can trigger unnecessary rewriting when a guess is plausible under world knowledge but not actually supported by the original text. 
+
+Dual-system inference and uncertainty gating. 
+
+Routing only hard cases to an expensive model is a well-established efficiency strategy. Frugal-GPT (Chen et al., 2023a) cascades LLMs to reduce inference cost; BranchyNet (Teerapittayanon et al., 2016) adds early exits for neural networks; and fast/slow hybrid architectures draw on the broader dual-system view of decision-making (Kahneman, 2011). Evidential deep learning (Sensoy et al., 2018) provides a principled mechanism to estimate epistemic uncertainty and decide when to esca-late. In privacy mediation, however, uncertainty gating cannot be only cost-driven: fast-path deci-sions must remain grounded in policy evidence, and uncertain cases must be escalated conservatively, as errors may expose sensitive information. 
+
+Positioning. GuardianAgent connects these lines of work by formulating live privacy mediation as policy-conditioned risk-adaptive anonymization. A structured risk controller links policy evidence and action context to both action-level decisions and anonymization strength, while verified adversarial feedback ensures that rewriting escalates only in re-sponse to residual leakage supported by the original text rather than hallucinated attacker confidence. 
+
+3 Method 
+
+3.1 Overview 
+
+A web action is represented as 
+
+a = ( d, Da, Ra, Pa, b a, x a) ∈ A ,
+
+where d is the destination domain, Da the data categories (e.g., email, location, health, financial, or free-text content), Ra the re-cipients, Pa the declared purposes, ba ∈{user-initiated , default , background } the action ba-sis, and xa ∈ Σ∗ the outgoing text. Here, 
+
+user-initiated denotes an explicit user action such as submitting a form or pasting text, default 
+
+denotes routine processing needed for the re-quested service, and background denotes passive or script-triggered transmission without an im-mediate user action. Privacy policies are seg-mented into atomic statements S, each annotated with structured fields such as data category, re-cipient, purpose, legal basis, retention, and user-rights disclosures. A retriever T OP k selects the 
+
+k most relevant policy statements as evidence 
+
+E = TOP k(a, S).The matcher then emits an ac-tion decision and risk score, (y, R ) = M (a, E),
+
+Y = {allow , transform , deny }, and GuardianA-gent implements 
+
+Φ( a, S) = A a, y, R  ∈ Y × Σ∗. (1) If y = transform , the anonymizer A uses the transform-band position of R to select an initial rewrite level and then uses verified adversarial feed-back to decide whether further escalation is needed. GuardianAgent separates two controls: AMRSF determines the starting strength from action con-text, while the verified guesser adjusts that strength only when residual leakage is surface-supported. The overall framework is introduced in Figure 1. 
+
+3.2 Efficient Policy Matching 
+
+The policy matcher estimates the likelihood that an outgoing action conflicts with the retrieved pol-icy evidence. The likelihood L is then used as a learned input to the downstream risk controller 
+
+R. To estimate L under the latency constraints of live web traffic, GuardianAgent uses a shared ev-idence retriever followed by a two-path matcher. Pre-segmented policies s ∈ S come with structured fields—data categories, actions, purposes, recipi-ents, legal basis, rights, and retention—together with the original free-text snippet. The evidence set E = TOP k(a, S) is retrieved using a hybrid score combining structured field overlap with lightweight lexical matching SCORE (a, s ) = α ˜S(a, s ) + (1 − α) ˜ K(a, s ), (2) where ˜S is the normalized structured score, ˜K is a normalized BM25Lite score, α = 0 .6, and k = 8 .The fast path applies an evidential classifier to the action–evidence pair and outputs both the risky-class mass and epistemic uncertainty u. When 
+
+u < τ u, (3) the risky-class mass is used as L. Otherwise, an LLM reasoning path estimates L from the same Figure 1: Framework of GuardianAgent. Policy matching estimates the violation likelihood L, and AMRSF converts it into an action-conditioned risk score R. The score has two effects: it determines the action decision       
+
+> y∈ { allow ,transform ,deny }, and, for transformed actions, its normalized transform-band position zselects the initial anonymization level ℓ0(z). The hierarchical anonymizer then escalates when leakage is detected.
+
+action and evidence. Importantly, the LLM esti-mates only L: it does not directly determine the final risk score, action decision, or anonymization level. The encoder, retrieval weights, prompts, and online fast-path update are specified in Appendix A and Appendix B. 
+
+3.3 Policy-Conditioned Risk Estimator 
+
+The risk estimator converts the policy-violation likelihood L into an operational decision by ac-counting for the sensitivity and transmission con-text of the outgoing action. Given action a, re-trieved evidence E, and the likelihood L estimated by the matcher, AMRSF computes the action-conditioned risk score 
+
+R(a, E) = clamp [0 ,1] 
+
+ L · Seff · MT
+
+, (4) where 
+
+Seff = min  1, S d · Mtr · Mp · Mb
+
+. (5) Here Sd is base data sensitivity; Mtr , Mp, and Mb
+
+adjust severity according to recipient transmission, purpose legitimacy, and action basis; and MT ac-counts for policy transparency. Thus, unlike an LLM-assigned scalar risk judgment, R explicitly separates violation likelihood from the contextual severity of the outgoing action. These fixed factors are grounded in regulatory and empirical privacy-risk studies (McCallister, 2010; Regulation, 2016; Nissenbaum, 2009; Milne and Culnan, 2004; Ack-erman et al., 1999; Bhatia and Breaux, 2018). Full numerical factors are reported in Tables 6–9 of Appendix C. Let t(a) ∈ {crit , high , mod , low } denote the highest data-sensitivity tier in Da, with allow ceil-ing τ ta and deny floor τ td. Then action decision 
+
+y =
+
+
+
+allow R < τ t(a) 
+
+> a
+
+,
+
+transform τ t(a) 
+
+> a
+
+≤ R < τ t(a) 
+
+> d
+
+,
+
+deny R ≥ τ t(a) 
+
+> d
+
+.
+
+(6) Sensitive tiers use a wider transform region so that uncertain high-risk actions are rewritten rather than released unchanged. Threshold values are reported in Table 10 of Appendix C. 
+
+3.4 Risk-Adaptive Hierarchical Anonymizer 
+
+The hierarchical anonymizer controls how strongly transformed content is rewritten, using risk to select a starting strength and verified feedback to deter-mine whether further escalation is needed. When 
+
+y = transform , GuardianAgent rewrites the out-going text xa using a five-level risk-adaptive hier-archy: L1 partial masking, L2 aggressive masking, L3 entity-tag replacement, L4 minimal-edit LLM rewriting, and L5 semantic LLM rewriting. The ini-tial level is determined by its normalized position within the transform band: 
+
+z(a) = clip [0 ,1] 
+
+R − τ t(a)
+
+> a
+
+τ t(a) 
+
+> d
+
+− τ t(a)
+
+> a
+
+!
+
+, (7) and select the initial anonymization level by z:Figure 2: Example of the five-level anonymization hierarchy on a contextually sensitive paragraph. From L1 to L5, more entities and contextual cues are anonymized, making the text less specific while preserving overall meaning. 
+
+ℓ0(z) = 
+
+
+
+1 z < 0.25 ,
+
+2 0.25 ≤ z < 0.50 ,
+
+3 0.50 ≤ z < 0.75 ,
+
+4 z ≥ 0.75 .
+
+(8) Thus, transformed actions near the allow ceiling start with lighter rewriting, while those near the deny floor start from stronger levels. L1 partial masking, L2 aggressive masking, L3 entity-tag re-placement, L4 minimal-edit LLM rewriting, and L5 semantic LLM rewriting. L1–L3 follow rule- and tag-based anonymization, L4 follows the minimal-edit paradigm, and L5 follows semantic iterative rewriting. Figure 2 illustrates how the hierarchy progressively removes specific entities and contex-tual cues while preserving the overall communica-tive intent. Lower levels preserve more of the orig-inal surface form and contextual detail, whereas higher levels are reserved for cases where weaker rewrites leave residual leakage. 
+
+3.5 Verified Adversarial Escalation 
+
+Prior adversarial anonymizers use an auxiliary at-tacker to identify residual personal information and guide further rewriting (Staab et al., 2025; Shao et al., 2025). However, an attacker may assign high confidence to a plausible guess that is unsup-ported by the original text, causing unnecessary es-calation and utility loss. GuardianAgent therefore verifies attacker guesses before allowing them to trigger stronger rewriting. Given anonymized text 
+
+xℓ, the attacker returns guesses with confidences 
+
+G(xℓ) = {(g, c g)}. The verifier compares each guess against the original text x0, which remains local to the anonymizer and is never exposed to the attacker. Let W(s) denote the set of content words in s with length greater than two. A guess is admitted only if it is explicitly contained in x0 or shares a content word with it:          
+
+> V(g, x 0) = 1[g⊆x0]∨1[W(g)∩ W (x0)̸=∅].(9)
+
+The verified confidence is the maximum confi-dence among verified guesses: 
+
+ˆc(xℓ, x 0) = max {cg : ( g, c g ) ∈ G (xℓ), V(g, x 0) = 1 }.
+
+(10) 
+
+If no guess is verified, ˆc = 0 . Starting from the initial level ℓ0(z), GuardianAgent anonymizes at level ℓ, queries the attacker, and escalates to ℓ + 1 
+
+only if ˆc ≥ τg. The loop terminates when ˆc < τ g,when ℓ = 5 , or after T = 5 rounds. Verification filters hallucinated or prior-driven guesses while preserving escalation signals for leakage that is supported by the original text. Equation 9 is ex-plicitly lexical: it does not recognize a correct con-textual inference that is surface-disjoint from x0.We therefore treat it as an anti-hallucination and escalation-cost control rather than as the system’s contextual-inference defence; higher-risk flows in-stead start at L4 through R and receive seman-tic rewriting without waiting for the verifier. The pseudocode, lexical verification guarantee, and the expected-cost analysis are in Appendix D. 
+
+4 Evaluation 
+
+The evaluation addresses four questions: (Q1) Does GuardianAgent improve the privacy–utility trade-off? (Q2) Does action-conditioned risk control both mediation decisions and anonymization strength? (Q3) Does verified hierarchical anonymization out-perform fixed rewriting strategies? (Q4) Are the risk controller and intuitive+reasoning path cali-brated and efficient? Unless otherwise stated, all main results use the final GuardianAgent variant with the full L1–L5 hierarchy. Calibration results, additional confidence intervals, rewrite strategy comparison, seed variance, and robustness checks are reported in Appendix E, F and G. 
+
+4.1 Setup Benchmarks. Our evaluation combines anonymization, policy-matching, and risk-calibration data. For anonymization, we use three benchmarks TAB (Pilán et al., 2022), which contain legal texts from ECHR judgements; 
+
+SynthPAI (Yukhymenko et al., 2024), which contains Reddit-style posts with personal attributes; and PII-Masking-300k (Ai4Privacy, 2024), which contains XML, JSON, tabular, and free-form synthetic documents annotated with explicit PII categories. For policy matching, we use 
+
+OPP-115 (Wilson et al., 2016). For AMRSF calibration, we use an expert-rated action-scenario set and the public corpus from Staab. 
+
+Backbone and baselines. The main LLM back-bone is Llama-3.2-3B-Instruct (Grattafiori et al., 2024); System 2, L4 rewriting, and the ad-versarial guesser use the same backbone to ensure a controlled comparison across compo-nents. We compare against baselines span-ning adversarial rewriting, prompt protection, contextual-integrity prompting, on-device rewrit-ing, differential privacy, private-attribute ran-domization, clinical anonymization, and tag-based anonymization: Staab (Staab et al., 2025), AgentStealth (Shao et al., 2025), HaS (Chen et al., 2023b), CONFAIDE (Mireshghallah et al., 2023), Rescriber (Zhou et al., 2025), DP-Prompt (Duan et al., 2023), IncogniText (Frikha et al., 2025), Pissarra et al. (Pissarra et al., 2024), and PBa-LLM (Mancera et al., 2025). 
+
+Metrics. Privacy is one minus the fraction of ground-truth sensitive spans retained in the output. 
+
+Utility is token-Jaccard on TAB and PII-Masking-                                                                                                                                                       
+
+> TAB (legal, n= 811 )SynthPAI (Reddit, n= 200 )PII-Masking-300k ( n= 500 )Method Priv ↑Util ↑Guess ↓Lat. Priv ↑Util ↑Guess ↓Lat. Priv ↑Util ↑Guess ↓Lat.
+> Iterative / multi-pass LLM rewriters
+> A. Ours (full, L1–L5) .945 .010 .696 .008 .283 .019 5052 181 .944 .007 .888 .006 .295 .009 9949 467 .901 .011 .488 .008 .213 .010 7453 299
+> B. Staab’25 .695 .013 .564 .017 .335 .019 25152 239 .975 †
+> .005 .257 .018 .098 .014 45418 5663 .850 .010 .384 .021 .275 .020 24975 96
+> C. AgentStealth’25 .689 .012 .789 .007 .579 .044 16928 563 .864 .009 .700 .005 .260 .009 15485 467 .680 .008 .634 .015 .508 .015 19414 394
+> D. HaS’23 .926 .005 .669 .009 .336 .032 5328 594 .811 .026 .841 .005 .477 .020 12892 755 .809 .010 .586 .011 .322 .015 8384 285
+> E. IncogniText’25 .178 .023 .765 .011 .538 .025 8341 325 .553 .019 .855 .013 .281 .023 10092 413 .315 .011 .701 .003 .624 .018 9819 202
+> Single-shot LLM rewriters
+> F. CONFAIDE’24 .913 .005 .638 .008 .307 .027 679 97 .842 .013 .810 .010 .254 .015 2955 309 .776 .009 .533 .004 .331 .012 2449 182
+> G. Pissarra’24 .903 .010 .701 .005 .257 .030 789 127 .815 .002 .873 .003 .395 .006 2943 293 .864 .010 .548 .008 .256 .013 2846 157
+> H. Rescriber’25 .719 .022 .605 .031 .393 .022 3774 398 .819 .012 .432 .020 .182 .012 3241 345 .892 .009 .282 .008 .178 .013 2752 76
+> I. DP-Prompt’23 .375 .029 .478 .015 .662 .019 837 146 .486 .019 .539 .032 .319 .017 3371 429 .524 .025 .527 .008 .505 .012 3611 97
+> Tag-based baselines
+> J. Presidio .703 .015 .783 .008 .216 .023 14 1.659 .005 .944 .001 .375 .015 28 1.511 .019 .750 .011 .489 .022 24 1
+> K. PBa-LLM’25 .455 .033 .809 .009 .465 .019 81 13 .635 .002 .956 .000 .396 .008 170 33 .184 .013 .906 .005 .674 .013 91 1
+
+Table 1: Main comparison across TAB, SynthPAI, and PII-Masking-300k. All three corpora report 4-seed mean std 
+
+(42–45). Latency is mean ms per sample. Best and second-best are marked within each method block and dataset. 
+
+> †
+
+Staab’s high SynthPAI privacy is inflated by empty or placeholder outputs, which also explains its low utility. 0.50 0.55 0.60 0.65 0.70 0.75 0.80                  
+
+> Utility
+> 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0
+> Privacy  Staab AgentStealth HaS IncogniText CONFAIDE Pissarra Rescriber DP-Prompt Presidio PBa-LLM
+> Ours
+> TAB
+> 0.3 0.4 0.5 0.6 0.7 0.8 0.9
+> Utility
+> 0.5 0.6 0.7 0.8 0.9 1.0
+> Staab AgentStealth HaS IncogniText CONFAIDE Pissarra Rescriber DP-Prompt Presidio PBa-LLM
+> Ours
+> SynthPAI
+> 0.3 0.4 0.5 0.6 0.7 0.8 0.9
+> Utility
+> 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9
+> Staab AgentStealth HaS IncogniText CONFAIDE Pissarra Rescriber DP-Prompt Presidio PBa-LLM
+> Ours
+> PII-Masking-300k
+> Privacy Utility Pareto Frontiers better
+> Ours Baseline Pareto frontier Baseline Pareto points Other baselines
+
+Figure 3: Privacy–utility Pareto frontiers across the three benchmarks. Baseline methods define each frontier, with GuardianAgent plotted separately. GuardianAgent lies above or beyond the baseline frontier on all three datasets, indicating a stronger cross-domain privacy–utility trade-off. 
+
+300k, and BERTScore F1 on SynthPAI. Guess is the maximum verified adversarial-guesser confi-dence on the output, and latency is the wall-clock time per sample. 
+
+4.2 Main Comparison 
+
+Table 1 compares GuardianAgent with published baselines across TAB, SynthPAI, and PII-Masking-300k. GuardianAgent delivers the most consistent, privacy–utility trade-off across domains. Figure 3 reinforces this result: GuardianAgent lies above or beyond the baseline privacy–utility frontier on all three datasets, and is the only method above 0.90 
+
+privacy on all domains and has the smallest cross-domain spread. This consistency suggests that verified, risk-adaptive escalation reduces domain-specific failure modes, especially when moving across legal prose, Reddit-style personal attributes, and structured PII records. Table 2 evaluates the decision side of the con-troller by scoring the same 200 PII-Masking texts under four action contexts with L = 0 .7 fixed. As recipient, purpose, action basis, and policy trans-parency become riskier, mean risk increases and decision distribution shifts from allow through 
+
+transform to deny . This shows that AMRSF con-ditions mediation decisions on action context rather than on text content alone. 
+
+4.3 Transform-Band Risk-to-Level Control 
+
+To isolate anonymization strength, the same 200 PII-Masking texts are evaluated under four con-texts constrained to the transform band. For each action, z denotes the normalized position of R be-tween the allow ceiling and deny floor (Eq. 7), and 
+
+ℓ0(z) is selected by quartile (Eq. 8). Table 3 shows that anonymization strength fol-lows the action-conditioned band position. As z
+
+increases, the dominant starting level shifts from L1 to L4 and ℓ0(z) rises monotonically. Veri-fied adversarial escalation preserves this ordering, with the mean final level rising from 2.37 to 4.42. Thus, among actions selected for transformation, GuardianAgent does not use a fixed rewriting pol-icy: AMRSF sets the starting strength from the action context, and verified feedback escalates only when residual leakage remains. 
+
+4.4 Ablation 
+
+Table 5 decomposes the contributions of the main components. NER alone is strong on TAB, where many sensitive spans are explicit legal entities, but 
+
+Context R Allow Trans. Deny ℓcf 
+
+Clow (first-party / functionality / paste / full) .119 .017 100 .0 0.0 0.0 2.02 1.31 
+
+Cmed (provider / analytics / default / partial) .413 .057 0.5 98 .0 1.5 2.10 1.29 
+
+Chigh (advertising / profiling / background / vague) .909 .016 0.0 0.5 99 .5 4.33 0.50 
+
+Cext (data broker / advertising / background / missing) .909 .011 0.0 0.0 100 .0 4.34 0.49 
+
+Table 2: Action-conditioned decision control on 200 PII-Masking samples with the same texts and fixed L =0.7. Riskier action contexts shift decisions from allow to transform and deny . ¯ℓcf is a counterfactual final anonymization level computed by routing all samples through the anonymizer; at deployment time, allow samples are released unchanged, while deny samples are blocked. Context Recipient Purpose Basis R z Trans. % ℓ0(z) L1 L2 L3 L4 ℓfinal 
+
+Tmild first-party Personalization default .340 .050 .252 .179 99 .0 1.48 65 22 13 0 2.37 
+
+Tmoderate service-provider Personalization default .457 .066 .538 .208 89 .0 2.52 1 64 16 18 2.93 
+
+Tstrong service-provider Marketing default .557 .082 .744 .170 81 .5 3.33 1 0 64 35 3.64 
+
+Tnear-deny advertising Marketing default .704 .053 .980 .080 13 .0 3.98 0 0 0 99 4.42 
+
+Table 3: Transform-band risk-to-level control on 200 PII-Masking samples with fixed L = 0 .7. As normalized band position z increases, the dominant starting level shifts from L1 to L4, the mean initial level ℓ0(z) rises monotonically, and the final level after verified escalation also increases. Trans. % is the fraction of samples remaining within the 
+
+transform region. 
+
+TAB SynthPAI PII-Mask Cap Priv Util Guess Priv Util Guess Priv Util Guess 
+
+ℓmax =3 .924 .709 .356 .913 .897 .329 .869 .533 .247 
+
+ℓmax =4 .933 .706 .325 .912 .905 .316 .849 .539 .283 
+
+ℓmax =5 .945 .011 .696 .009 .296 .944 .007 .888 .006 .299 .901 .011 .488 .008 .213 .010 
+
+Table 4: Level-progression ablation with maximum level ℓmax ∈ { 3, 4, 5}. L3 uses only rule-based masking/tagging, L4 adds minimal-edit rewriting, and L5 adds the semantic safety-net. 
+
+Variant Priv ↑ Util ↑ ms 
+
+SynthPAI 
+
+A. NER only .483 .003 .944 .001 23 B. + guesser .569 .007 .938 .001 729 C. + LLM rewrite .910 .011 .899 .003 2518 
+
+D. + L1–L5 adaptive .944 .007 .888 .006 9949 
+
+TAB 
+
+A. NER only .848 .022 .735 .009 11 B. + guesser .895 .013 .718 .007 2731 C. + LLM rewrite .915 .018 .725 .010 831 
+
+D. + L1–L5 adaptive .945 .011 .696 .009 5052 
+
+PII-Masking-300k 
+
+A. NER only .389 .014 .813 .009 14 B. + LLM rewrite .853 .007 .546 .008 4084 
+
+C. + L1–L5 adaptive .901 .011 .488 .008 7453 
+
+Table 5: Component ablation on SynthPAI, TAB, and PII-Masking-300k (mean std across 4 seeds; n = 200 for SynthPAI/TAB and n = 500 for PII-Masking). Variants are cumulative: NER only, plus adversarial feedback, plus single-level LLM rewriting, and the full verified L1–L5 adaptive stack. 
+
+it is less effective on SynthPAI, where personal at-tributes are more implicit and contextual. Adding adversarial feedback and LLM rewriting improves privacy, while the full L1–L5 adaptive stack achieves the best privacy across both datasets at a moderate utility cost. Additional comparisons be-tween semantic-only and minimal-edit-only rewrit-ing are reported in Table 13 (Appendix G). Table 4 isolates the role of the anonymization hierarchy. L1–L3 remove many explicit spans, especially in legal prose and structured records. L4 adds high-utility minimal edits, while L5 is most useful when weaker rewrites leave contextual leakage. The re-sults on PII-Masking-300k shows why a fixed max-imum level can be brittle: minimal edits may pre-serve too much structure, whereas the semantic safety-net recovers privacy in harder cases. Quali-tative side-by-side rewrites are in Appendix H. 
+
+4.5 Calibration, Efficiency, and Robustness 
+
+AMRSF is evaluated on an expert-rated scenario set and a larger Staab-derived calibration corpus. The score aligns well with annotated risk in both settings, while the larger corpus provides a more stable estimate because the expert-rated set is small. The evidential fast path is evaluated on OPP-115 policy-action pairs and escalates only a small frac-tion of events to the LLM, supporting its role as an efficiency mechanism for live traffic mediation. Full calibration statistics, confidence intervals, and System 1 metrics are reported in Appendix E. Robustness checks support the two adaptive mechanisms. Disabling verification leads to more level upgrades without improving privacy, while reducing utility and increasing latency, confirm-ing that raw attacker confidence often reflects un-supported guesses. By switching backbone from Llama-3.2-3B to Qwen3-8B, GuardianAgent re-mains the strongest privacy–utility method on test benchmarks. Additional paired-bootstrap tests, seed variance, attacker-replacement experiments, parsing-failure analysis, backbone-portability de-tails, and online fast-path self-improvement results are in Appendix G. 
+
+5 Conclusion 
+
+This paper presented GuardianAgent, a policy-conditioned framework for risk-adaptive anonymization of live web traffic. Rather than relying on an LLM to directly assign privacy risk, GuardianAgent uses AMRSF to combine policy evidence and action context, determining both the allow/transform/deny decision and the initial anonymization level. A verified adversarial guesser then escalates rewriting only when attacker guesses are supported by the original text. Across legal text, Reddit-style personal attributes, and multi-format PII records, GuardianAgent improved the privacy–utility trade-off over published baselines, remained robust under a backbone switch, and adapted its rewriting strength across different action contexts. 
+
+Limitations 
+
+The evaluation is limited to English and uses public or synthetic corpora; real browser traces, clinical and dialogue data, and multilingual settings require further study. AMRSF should also be viewed as a mediation controller rather than a legal compli-ance engine. Deployments should therefore prior-itize local processing, disclose any cloud escala-tion, allow user override, and communicate that anonymization reduces but does not eliminate the re-identification risk. 
+
+Ethical considerations 
+
+This work collects no new personal data and in-volves no human subjects. Experiments use pub-licly released or synthetic benchmark datasets and an open-weight backbone or publicly accessible model APIs; no private browser traces are used. GuardianAgent is intended to reduce unintended disclosure, not to guarantee anonymity or legal compliance. Any deployment should disclose rewriting and cloud escalation, preserve user con-trol over mediation decisions, and communicate residual re-identification and utility-loss risks. 
+
+Acknowledgments 
+
+The authors thank the UNSW-UTS Trustworthy Digital Society for supporting this research. Also, this research used the NVIDIA H100 cluster pro-vided by SHARON AI. 
+
+References 
+
+Mark S Ackerman, Lorrie Faith Cranor, and Joseph Rea-gle. 1999. Privacy in e-commerce: examining user scenarios and privacy preferences. In Proceedings of the 1st ACM Conference on Electronic Commerce ,pages 1–8. Wasi Ahmad, Jianfeng Chi, Tu Le, Thomas Norton, Yuan Tian, and Kai-Wei Chang. 2021. Intent clas-sification and slot filling for privacy policies. In 
+
+Proceedings of the 59th Annual Meeting of the Asso-ciation for Computational Linguistics and the 11th International Joint Conference on Natural Language Processing (Volume 1: Long Papers) , pages 4402– 4417. Ai4Privacy. 2024. pii-masking-300k (revision 86db63b). Jaspreet Bhatia and Travis D Breaux. 2018. Empirical measurement of perceived privacy risk. ACM Trans-actions on Computer-Human Interaction (TOCHI) ,25(6):1–47. Chaoran Chen, Daodao Zhou, Yanfang Ye, Toby Jia-jun Li, and Yaxing Yao. 2025. Clear: Towards contex-tual llm-empowered privacy policy analysis and risk generation for large language model applications. In 
+
+Proceedings of the 30th International Conference on Intelligent User Interfaces , pages 277–297. Lingjiao Chen, Matei Zaharia, and James Zou. 2023a. Frugalgpt: How to use large language models while reducing cost and improving performance. arXiv preprint arXiv:2305.05176 .Yu Chen, Tingxin Li, Huiming Liu, and Yang Yu. 2023b. Hide and seek (has): A lightweight frame-work for prompt privacy protection. arXiv preprint arXiv:2309.03057 .R Jason Cronk and Stuart S Shapiro. 2021. Quantita-tive privacy risk analysis. In 2021 IEEE European symposium on security and privacy workshops (Eu-roS&pW) , pages 340–350. IEEE. Haonan Duan, Adam Dziedzic, Nicolas Papernot, and Franziska Boenisch. 2023. Flocks of stochastic par-rots: Differentially private prompt learning for large language models. Advances in Neural Information Processing Systems , 36:76852–76871. Vincent Freiberger, Arthur Fleig, and Erik Buchmann. 2026. Helping johnny make sense of privacy policies with llms. In Proceedings of the 2026 CHI Confer-ence on Human Factors in Computing Systems , pages 1–21. Ahmed Frikha, Nassim Walha, Krishna Kanth Nakka, Ricardo Mendes, Xue Jiang, and Xuebing Zhou. 2025. Incognitext: Privacy-enhancing conditional text anonymization via llm-based private attribute ran-domization. In Proceedings of the 14th International Joint Conference on Natural Language Processing and the 4th Conference of the Asia-Pacific Chapter of the Association for Computational Linguistics , pages 2490–2501. Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schel-ten, Alex Vaughan, Amy Yang, Angela Fan, Anirudh Goyal, Anthony Hartshorn, Aobo Yang, Archi Mi-tra, Archie Sravankumar, Artem Korenev, Arthur Hinsvark, and 542 others. 2024. The llama 3 herd of models. Preprint , arXiv:2407.21783. Hamza Harkous, Kassem Fawaz, Rémi Lebret, Florian Schaub, Kang G Shin, and Karl Aberer. 2018. Polisis: Automated analysis and presentation of privacy poli-cies using deep learning. In 27th USENIX Security Symposium (USENIX Security 18) , pages 531–548. Daniel Kahneman. 2011. Fast and slow thinking. Allen Lane and Penguin Books, New York , 2. Gonzalo Mancera, Aythami Morales, Julian Fierrez, Ruben Tolosana, Alejandro Peña, Miguel Lopez-Duran, Francisco Jurado, and Alvaro Ortigosa. 2025. Pba-llm: Privacy-and bias-aware nlp using named-entity recognition (ner). In International Conference on Document Analysis and Recognition , pages 3–20. Springer. Erika McCallister. 2010. Guide to protecting the confi-dentiality of personally identifiable information . Di-ane Publishing. George R Milne and Mary J Culnan. 2004. Strategies for reducing online privacy risks: Why consumers read (or don’t read) online privacy notices. Journal of interactive marketing , 18(3):15–29. Niloofar Mireshghallah, Hyunwoo Kim, Xuhui Zhou, Yulia Tsvetkov, Maarten Sap, Reza Shokri, and Yejin Choi. 2023. Can llms keep a secret? testing pri-vacy implications of language models via contextual integrity theory. arXiv preprint arXiv:2310.17884 .Ivoline C Ngong, Swanand Ravindra Kadhe, Hao Wang, Keerthiram Murugesan, Justin D Weisz, Amit Dhurandhar, and Karthikeyan Natesan Ramamurthy. 2025. Protecting users from themselves: Safeguard-ing contextual privacy in interactions with conver-sational agents. In Findings of the Association for Computational Linguistics: ACL 2025 , pages 26196– 26220. Helen Nissenbaum. 2009. Privacy in context: Technol-ogy, policy, and the integrity of social life. In Privacy in context . Stanford University Press. Ildikó Pilán, Pierre Lison, Lilja Øvrelid, Anthi Pa-padopoulou, David Sánchez, and Montserrat Batet. 2022. The text anonymization benchmark (tab): A dedicated corpus and evaluation framework for text anonymization. Computational Linguistics ,48(4):1053–1101. David Pissarra, Isabel Curioso, João Alveira, Duarte Pereira, Bruno Ribeiro, Tomás Souper, Vasco Gomes, André Carreiro, and Vitor Rolla. 2024. Unlocking the potential of large language models for clinical text anonymization: A comparative study. In Pro-ceedings of the Fifth Workshop on Privacy in Natural Language Processing , pages 74–84. Protection Regulation. 2016. Regulation (eu) 2016/679 of the european parliament and of the council. Regu-lation (eu) , 679(2016):10–3. Nils Reimers and Iryna Gurevych. 2019. Sentence-bert: Sentence embeddings using siamese bert-networks. In Proceedings of the 2019 conference on empirical methods in natural language processing and the 9th international joint conference on natural language processing (EMNLP-IJCNLP) , pages 3982–3992. Murat Sensoy, Lance Kaplan, and Melih Kandemir. 2018. Evidential deep learning to quantify classi-fication uncertainty. Advances in neural information processing systems , 31. Chenyang Shao, Tianxing Li, Chenhao Pu, Fengli Xu, and Yong Li. 2025. Agentstealth: Reinforcing large language model for anonymizing user-generated text. 
+
+arXiv preprint arXiv:2506.22508 .Mukund Srinath, Soundarya Nurani Sundareswara, C Lee Giles, and Shomir Wilson. 2021a. Privaseer: A privacy policy search engine. In International confer-ence on web engineering , pages 286–301. Springer. Mukund Srinath, Shomir Wilson, and C Lee Giles. 2021b. Privacy at scale: Introducing the privaseer corpus of web privacy policies. In Proceedings of the 59th Annual Meeting of the Association for Compu-tational Linguistics and the 11th International Joint Conference on Natural Language Processing (Vol-ume 1: Long Papers) , pages 6829–6839. Robin Staab, Mark Vero, Mislav Balunovic, and Mar-tin Vechev. 2025. Language models are advanced anonymizers. In The Thirteenth International Con-ference on Learning Representations .Bolun Sun, Yifan Zhou, and Haiyun Jiang. 2025. Empowering users in digital privacy management through interactive llm-based agents. In Interna-tional Conference on Learning Representations , vol-ume 2025, pages 76740–76760. Chenhao Tang, Zhengliang Liu, Chong Ma, Zihao Wu, Yiwei Li, Wei Liu, Dajiang Zhu, Quanzheng Li, Xi-ang Li, Tianming Liu, and Lei Fan. 2023. Policygpt: Automated analysis of privacy policies with large language models. Preprint , arXiv:2309.10238. Surat Teerapittayanon, Bradley McDanel, and Hsiang-Tsung Kung. 2016. Branchynet: Fast inference via early exiting from deep neural networks. In 2016 23rd international conference on pattern recognition (ICPR) , pages 2464–2469. IEEE. Shomir Wilson, Florian Schaub, Aswarth Abhilash Dara, Frederick Liu, Sushain Cherivirala, Pedro Giovanni Leon, Mads Schaarup Andersen, Sebas-tian Zimmeck, Kanthashree Mysore Sathyendra, N. Cameron Russell, Thomas B. Norton, Eduard Hovy, Joel Reidenberg, and Norman Sadeh. 2016. The creation and analysis of a website privacy policy corpus. In Proceedings of the 54th Annual Meet-ing of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 1330–1340, Berlin, Germany. Association for Computational Linguistics. Qinge Xie, Karthik Ramakrishnan, and Frank Li. 2025. Evaluating privacy policies under modern privacy laws at scale: An {LLM-Based } automated approach. In 34th USENIX Security Symposium (USENIX Secu-rity 25) , pages 5797–5816. Hanna Yukhymenko, Robin Staab, Mark Vero, and Mar-tin Vechev. 2024. A synthetic dataset for personal attribute inference. Advances in Neural Information Processing Systems , 37:120735–120779. Jijie Zhou, Eryue Xu, Yaoyao Wu, and Tianshi Li. 2025. Rescriber: Smaller-llm-powered user-led data min-imization for llm-based chatbots. In Proceedings of the 2025 CHI Conference on Human Factors in Computing Systems , pages 1–28. 
+
+A System 1 Architecture and Retrieval Hyperparameters 
+
+System 1 encoder and EDL classifier (refer-enced from §3.2). Behaviour and policy en-coders ϕb, ϕ p : A ∪ S → Rd are either a d = 42 
+
+multi-hot variant over OPP-115 categories or a 
+
+d = 384 frozen sentence-transformer (Reimers and Gurevych, 2019). Writing b = ϕb(a) and p = ϕp(s),the interaction feature map is 
+
+ψ(a, s) =  b ; p ; b⊙p ; |b−p|  ∈ R4d. (11) A two-layer MLP with ReLU and dropout, fθ :
+
+R4d → RK with K = 2 , yields logits that we con-vert to Dirichlet parameters following EDL (Sensoy et al., 2018): α = softplus (fθ(ψ))+ 1, S = P 
+
+> k
+
+αk.Class probabilities are pk = αk/S and epistemic uncertainty is u = K/S . The likelihood used in Eq. 4 is L = α2/S .
+
+Retrieval scoring (referenced from §3.2). The structured score over fields 
+
+F = {data , act , purp , recip } is S(a, s ) = X 
+
+> f∈F
+
+wf ρf + FLAGS (s), (12) with weights (0 .35 , 0.35 , 0.20 , 0.10) , ρf =min(1 , |af ∩ sf |/ max(1 , |af |)) , and F LAGS (s)
+
+adding small bonuses for disclosed user rights, trans-EEA transfer, and retention. BM25Lite uses 
+
+k1 = 1 .5, b = 0 .75 over the tokenized snippet, with on-the-fly IDF (no global inverted index per-domain). 
+
+B Prompts 
+
+System 2 decider (system prompt).                   
+
+> Given an outgoing action and retrieved policy evidence, estimate the likelihood that the action conflicts with the policy. Return STRICT JSON: {violation_likelihood: [0..1], rationale, evidence_ids}. Do not decide whether the action should be allowed, transformed, or denied.
+
+Adversarial guesser (system prompt).                        
+
+> You are an adversarial privacy auditor. Given anonymized text, try to reconstruct or guess the redacted information. For each guess, provide: field, guess, confidence (0.0–1.0), reasoning. Return JSON: {“guesses”: [...], “max_confidence”: 0.0–1.0}.
+
+L4 minimal-edit rewriter.             
+
+> Rewrite the following sentence so that the listed sensitive fields cannot be recovered, while preserving the communicative intent. Do not insert [TAGS]; produce natural text. Sensitive fields: {fields}. Input: “{text}”.
+
+L5 semantic rewriter.         
+
+> Rewrite the text to preserve the communicative intent while removing identifying details and contextual cues. Full paraphrasing is allowed.
+
+C Full AMRSF Factor Tables 
+
+Table 6 gives the full per-category data weights used to compute Sd in Eq. 5. Table 7 gives the per-recipient transmission risk Mtr and Table 8 the per-purpose legitimacy Mp. Table 9 lists the six-signal credits used by the transparency multiplier 
+
+MT .
+
+Average final level (ablation). On TAB, the veri-fied loop (D) reduces the mean final anonymization level from 3.48 (C) to 2.85 (D). On SynthPAI, it rises slightly from 2.79 to 3.48 as the verifier cor-rectly triggers upgrades on borderline inputs. 
+
+D Formal Analysis 
+
+Proposition 1 (No missed lexically-supported guesses) . Assume a guess g identifies an attribute of x0 only if it either appears as a substring of x0
+
+or shares at least one content word ( > 2 charac-ters) with x0. Then C(x0) ⊆ V (x0), and conse-quently the verified confidence ˆc in Eq. 10 satisfies 
+
+ˆc ≥ max g∈C (x0) cg.Category Wt. Source                                     
+
+> Credentials 1.00 NIST 800-122 Financial 0.95 Milne’04 Health, Biometric, Genetic 0.95 GDPR Art. 9 SSN 0.90 NIST 800-122 Location (precise) 0.85 Milne’04 Location (unspec.) 0.75 default Phone 0.70 Ackerman’99 Content 0.65 Bhatia’18 PostalAddress 0.65 Ackerman’99 Contact 0.60 default Email 0.55 Ackerman’99 SearchHistory 0.50 Milne’04 BrowsingHistory 0.45 Milne’04 IPAddress, DeviceID 0.40 NIST Location (coarse) 0.35 Milne’04 AppUsage 0.25 low Cookies 0.20 low Language 0.10 low
+
+Table 6: Full data-sensitivity weights DW( c). Some rows group categories assigned the same weight.         
+
+> Recipient Mtr
+> first-party only 0.20
+> service provider (Art. 28) 0.40
+> analytics / government 0.50
+> social-media platform 0.60
+> unknown third party 0.70
+> advertising network 0.80
+> data broker 0.90
+
+Table 7: Transmission risk str by recipient type. 
+
+Proof. If g ∈ C (x0) matches by substring, the first disjunct of Eq. 9 fires; if by shared content word, the second disjunct fires. In either case V(g, x 0) = 1 , so g ∈ V . Taking max over the superset bounds max g∈C cg from above. □
+
+Proposition 2 (Bounded expected cost of the gate) .
+
+Let C1, C 2 be the per-event costs of System 1 and System 2 and pe = Pr[ u ≥ τu] the escalation probability. Then the expected matcher cost is 
+
+E[C] = C1 + peC2. With the values measured on OPP-115 ( pe = 0 .035 ) and C2/C 1 ≈ 10 4,
+
+E[C]/C 2 ≈ pe, a 28 .6× reduction over an always-LLM pipeline. Proof. System 1 runs unconditionally; Eq. 3 makes System 2 run exactly when u ≥ τu, a Bernoulli event of rate pe. Linearity of expecta-tion gives the result. □
+
+Proposition 3 (Loop termination) . Algorithm 1 halts in at most T rounds and invokes at most one anonymizer call plus one guesser call per round, so its worst-case LLM cost is T · (Canon + Cguess )—a constant independent of x0.Proof. Each iteration either breaks (on ˆc < τ g        
+
+> Purpose Mp
+> functionality, security, auth. 0.15
+> personalization, research 0.35
+> analytics 0.45
+> marketing 0.65
+> profiling (Art. 22) 0.75
+> advertising 0.80
+> undisclosed 0.65
+
+Table 8: Purpose legitimacy sp.             
+
+> Signal Credit
+> substantial text ( ≥50 chars) −0.10
+> covers the action’s data category −0.15
+> covers the action’s declared purpose −0.10
+> states a legal basis (GDPR Art. 6) −0.08
+> discloses user rights −0.05
+> specifies retention −0.02
+> MT= max  0.8,1.3 + Pcredits 
+
+Table 9: Transparency multiplier MT signal credits. 
+
+or ℓ = ℓmax ) or increments ℓ. Since ℓ ≤ ℓmax = 5 
+
+and the explicit cap T = 5 is enforced, termination follows. □
+
+E Calibration Details 
+
+Table 11 compares the full AMRSF controller against three single-factor ablations, a NIST Likelihood ×Impact baseline, and a learned binary classifier on the expert-rated scenarios and the Staab public corpus. Table 12 reports the System 1 evidential fast-path classifier on the OPP-115 held-out test pairs. 
+
+F Rewrite-strategy comparison 
+
+Table 13 contrasts two single-strategy variants of D (semantic-only rewriting and minimal-edit-only rewriting) with the full adaptive L1–L5 stack used by GuardianAgent, isolating the effect of mixing rewrite strategies under the verified-guesser loop. 
+
+G Robustness Detail Tables 
+
+Table 14 reports an A/B test that turns the verifier on or off in the adaptive loop, isolating its contribu-tion to the privacy/utility trade-off and to escalation cost. Table 15 reports four-seed variance for the five strongest baselines plus GuardianAgent, so the per-method spread can be read off directly. Table 16 swaps the LLM backbone between Llama-3.2-3B and Llama-3.1-8B to check that Data tier Allow ceiling τ ta Deny floor τ td        
+
+> Critical 0.10 0.55
+> High 0.25 0.65
+> Moderate 0.35 0.75
+> Low 0.45 0.80
+
+Table 10: Tier-specific thresholds for the action decision in Eq. 6. Tiers are assigned to data categories as: Criti-cal (Credentials, Health, Biometric, Genetic, Financial, SSN), High (precise Location, Phone, Content), Moder-ate (Email, Contact, SearchHistory, BrowsingHistory), 
+
+Low (Cookies, AppUsage, DeviceID, Language). The 
+
+transform region width τ td − τ ta is widest for sensitive tiers, biasing borderline actions on sensitive data toward rewriting rather than passing through unchanged.                                                                         
+
+> Algorithm 1:Verified adaptive anonymization (V ERIFIED ADAPT )
+> Require: original text x0; risk R; data tier t(a); thresholds
+> (τta, τ td); guesser G; verifier V; τg=0 .6;ℓmax =5 ;T=5
+> 1: z←clip [0 ,1]
+> R−τt(a)
+> a
+> τt(a)
+> d−τt(a)
+> a
+> 
+> 2: ℓ←ℓ0(z)
+> 3: for t= 1 , . . . , T do
+> 4: xℓ←Anonymize (x0, ℓ )
+> 5: if ℓ=ℓmax then break
+> 6: end if
+> 7: Gℓ← G (xℓ)
+> 8: GV← { (g, c g)∈ G ℓ:V(g, x 0) = 1 }
+> 9: ˆc←0if GV=∅, else max (g,c g)∈G Vcg
+> 10: if ˆc≥τgthen ℓ←ℓ+ 1
+> 11: else break
+> 12: end if
+> 13: end for
+> 14: return xℓ, ℓ
+
+Figure 4: Verified adaptive anonymization. The initial level is selected from the transform-band position z,and the verifier admits only guesses supported by the original text. 
+
+GuardianAgent’s ranking is not an artifact of one model size. Table 17 buckets GuardianAgent’s outputs into four error classes to characterize where the system fails when it fails. After Holm–Bonferroni correc-tion at family-wise α = 0 .05 , 30 /40 pairwise tests on TAB and 28 /40 on SynthPAI remain significant. Table 18 repeats the main comparison with Qwen3-8B as the LLM backbone for every method, providing a cross-model-family check that Ours’s privacy ranking is not Llama-specific. Table 19 tracks the System 1 fast path as it is online-bootstrapped from System 2 teacher labels on an OPP-115 event stream, showing how quickly the slow-path escalation rate drops as fast-path ac-curacy climbs.                                      
+
+> Method ρrMAE Macro-F1
+> Expert-rated scenarios ( n= 500 )
+> AMRSF (full) 0.982 0.947 0.119 0.812
+> AMRSF −Mb0.965 0.940 0.136 0.683
+> AMRSF −MT0.985 0.956 0.134 0.738
+> AMRSF −purpose 0.976 0.947 0.135 0.738
+> NIST L ×I0.964 0.949 0.108 0.756
+> Binary classifier 0.729 0.683 0.338 0.435
+> Staab public corpus ( n= 525 )
+> AMRSF (full) 0.914 0.866 0.268 –
+
+Table 11: Risk-score calibration on the expert-rated sce-nario set and Staab public corpus. The larger Staab cor-pus provides a more stable estimate because the expert-rated set is small.              
+
+> Metric Value
+> Test pairs (OPP-115) 6,392
+> Accuracy 0.928
+> Precision 1.000
+> Recall 0.857
+> F10.923
+> Expected Calibration Error 0.048
+> Brier score 0.058
+> Escalation rate ( u≥0.25 )3.47%
+> p95 latency (fast path) 0.25 ms
+
+Table 12: System 1 evidential classifier on OPP-115. 
+
+H Qualitative Case Studies 
+
+Two verbatim examples illustrate flagship-D be-haviour relative to baselines. On the TAB sen-tence “On 13 September 1988 the Erzincan Martial Law Court acquitted the applicants of the charges against them” : GuardianAgent (L4) emits “On a date in 1988 the court acquitted the applicants of the charges against them” , swapping the spe-cific date and court identity while keeping the le-gal speech-act intact. Staab rewrites to two sen-tences with redundant information ( “On a certain month, a martial law court acquitted . . . In a cer-tain jurisdiction, a court acquitted . . . ” ), duplicat-ing the act; HaS returns “On [DATE] [YEAR] the 
+
+[PLACE] Martial Law Court acquitted the appli-cants . . . ” , leaving the court category intact with a tag-heavy output that hurts fluency. On a SynthPAI post where a software engineer describes their Mas-ters in Computer Science and their salary in Zurich, GuardianAgent rewrites to generic remarks about graduate studies and work while Staab preserves the Zurich reference by hallucinating “a European city”—a regional clue that still narrows the author. TAB SynthPAI D variant Priv Util Priv Util D (semantic only) .974 .628 .942 .847         
+
+> D (min-edit only) .866 .740 .892 .892
+> D (L1–L5 adaptive) .945 .011 .696 .009 .944 .007 .888 .006
+
+Table 13: Rewrite-strategy comparison for variant D. The adaptive L1–L5 row reports mean std across 4 seeds at n = 200 ; the two pilot rows are single-seed.                     
+
+> Metric V ON V OFF ∆
+> Final level 3.52 3.96 −0.44
+> Upgrade rate 0.52 0.80 −0.28
+> Privacy 0.975 0.975 ±0
+> Utility 0.850 0.834 +0 .016
+> Latency (ms) 6713 7350 −637
+> Unnecessary upgrades 32 .0% [20 .8,45 .8]
+
+Table 14: Verification A/B on SynthPAI ( n = 50 , Wilson CIs). OFF reproduces the raw-confidence behaviour of Staab/HaS/AgentStealth. 
+
+Risk-control context definitions 
+
+Table 22 lists the four action contexts used in §4.3. Each context is a tuple (recipient, purpose, action basis, policy transparency); these feed directly into the AMRSF multipliers Mtr , Mp, Mb, and MT
+
+defined in Method §3.3. The likelihood L is held fixed at 0.7 across all contexts so that any variation in R is attributable to context, not to the LLM. 
+
+Per-context mean final level (transform-band) 
+
+Table 20 reports the mean final level after the verified-guesser adaptive loop, for samples in the transform region of each band context (Llama-3.2-3B, n = 200 ). 
+
+Risk-control qualitative cases (TAB, SynthPAI, PII-Masking) 
+
+Table 23 showcases 3 examples for anonymization in TAB, SynyhPAI and PII-Masking-30k as well as risk score with decisions. 
+
+I LLM Evaluation Protocol 
+
+We pre-registered a three-rater by fifty-sample by eight-method evaluation study (1200 ratings) on SynthPAI subsamples, rating each (original, anonymized) pair on three 1–5 Likert dimensions: 
+
+Privacy (inferability of personal attributes), Util-ity (meaning preservation), and Fluency (natural-ness). Methods are shuffled and anonymized on the rater’s worksheet; raters work independently.                          
+
+> TAB SynthPAI Method Priv Util Priv Util
+> D. GuardianAgent .941 .024 .695 .012 .962 .015 .879 .034
+> G. HaS .925 .017 .668 .020 .797 .015 .845 .009
+> F. CONFAIDE .899 .024 .641 .009 .843 .026 .830 .020
+> K. Pissarra .881 .026 .712 .019 .790 .055 .875 .023
+> I. Staab’25 .667 .052 .586 .048 .986 †
+> .018 .272 .042
+
+Table 15: Four-seed variance ( n = 50 per seed, mean with std as subscript, 5-level flagship). †Staab’s Synth-PAI privacy still reflects 22% empty outputs. Guardian-Agent is rank-1 privacy among methods with well-formed outputs at every seed.              
+
+> Llama-3.2-3B Llama-3.1-8B Method Priv Util Priv Util GuardianAgent (full) 0.975 0.855 1.000 0.863
+> Staab 0.975 0.225 0.950 0.700
+
+Table 16: Backbone sensitivity (SynthPAI, n = 50 ). Privacy ranking preserved; Staab utility climbs at 8Bbut GuardianAgent already saturates at 3B. 
+
+We report inter-annotator agreement via Krippen-dorff’s α (target ≥ 0.68 ) and test pairwise signifi-cance with a paired bootstrap ( n=1000 resamples, 
+
+p< 0.05 ). The eight configurations comprise three GuardianAgent variants and five baseline meth-ods: Staab, Presidio, HaS, AgentStealth, and DP-Prompt. 
+
+LLM-rater simulation. As a proxy for the hu-man study, we instantiate the same protocol with three Claude models acting as raters: Claude Opus 4.7, Claude Sonnet 4.6, and Claude Haiku 4.5. Each rater sees the (original, anonymized) pair and returns a strict-JSON Likert triple under a fixed system prompt. The privacy rubric explic-itly penalizes destructive over-rewriting — a high Privacy score requires both that identifying de-tails are removed and that the text remains usable; placeholder-only or content-free outputs are treated as destruction, not anonymization. Table 21 reports per-method consensus means (3-rater average) and paired-bootstrap p-values vs. GuardianAgent. To isolate rewriting style from the adaptive controller, GuardianAgent is evaluated under L1-L5 adaptive, L4 fixed and L5 fixed anonymization. Krippen-dorff’s α across the three Claude raters meets the pre-registered target of 0.68 on all three dimensions (privacy 0.68 , utility 0.74 , fluency 0.75 ), indicating substantial inter-rater agreement. Class SynthPAI TAB             
+
+> CLEAN _SUCCESS 65 .5% [58 .7,71 .7] 54 .5% [47 .6,61 .3]
+> CASCADE (L4 ×3)16 .5% 22 .0%
+> PII _RETAINED 3.5% 0.5%
+> PARSE _FAIL 1.0% 0.0%
+
+Table 17: Error analysis (Wilson 95% CIs on the main class). Dominant failure mode is hard PII-dense sam-ples, not broken outputs. 
+
+J Computation resources 
+
+The primary LLM backbone is Llama-3.2-3B-Instruct (3.2B parameters), served via vLLM on a single NVIDIA H100 NVL ( 95 GB). Cross-model checks use Llama-3.1-8B-Instruct (8B) and Qwen3-8B (8B). Claude raters for the sim-ulated human evaluation are Anthropic Claude Opus 4.7 , Sonnet 4.6 , and Haiku 4.5 .Compute budget (this paper): 2 NVIDIA H100 NVL + API 
+
+K Use of AI Assistants 
+
+We used a conversational AI assistant to (a) aid in writing and editing manuscript — specifically grammar polish and table layout; no scientific claim in this paper was generated by an AI assis-tant. TAB SynthPAI Method Priv Util Priv Util 
+
+A. GuardianAgent 0.976 0.628 0.927 0.943 
+
+B. Staab’25 0.882 0.549 0.920 0.818 
+
+D. HaS’23 0.879 0.728 0.724 0.938 
+
+E. CONFAIDE’24 0.408 0.848 0.464 0.966 
+
+F. Pissarra’24 0.855 0.707 0.593 0.962 
+
+Table 18: Qwen3-8B backbone cross-check ( n! =!200 ). GuardianAgent is rank-1 privacy on both corpora; CON-FAIDE collapses. The five most private methods are shown. 
+
+Iter. Events S1 acc Escalation 
+
+0 0 0.920 3.75% 
+
+1 500 0.970 2.00% 
+
+2 1000 0.993 0.25% 
+
+3 1500 0.998 0.25% 
+
+4 2000 1.000 0.25 %
+
+Table 19: Online bootstrapping of System 1 from Sys-tem 2 teacher labels over a 2000 -event OPP-115 stream; held-out 400 -event test set. 24 teacher labels suffice to reduce escalation by 93% relative while pushing accu-racy to perfect. 
+
+Context ℓ0 ℓfinal ∆ℓTmild 1.48 2.37 +0 .89 
+
+Tmoderate 2.52 2.93 +0 .41 
+
+Tstrong 3.33 3.64 +0 .31 
+
+Tnear-deny 3.98 4.42 +0 .44 
+
+Table 20: Per-context mean final anonymization level af-ter adaptive escalation. The verified guesser can escalate to L5 even from a low starting level when residual leak-age remains, so ℓfinal ! ≥!ℓ0(z). The largest ∆ℓ occurs at Tmild , where the controller starts at L1 but escalation lifts the average toward L2–L3 on samples with residual surface-supported leakage. 
+
+Method Priv ↑ Util ↑ Fluency ↑
+
+D. Ours (L1–L5 adaptive) 3.95 .78 4.16 .87 4.20 .82 
+
+D. Ours (L4 fixed) 3.74 .94 3.91 .81 4.22 .83 
+
+D. Ours (L5 fixed) 4.12 .73 3.54 † 
+
+> .88
+
+4.19 .72 
+
+E. Presidio 3.17 † 
+
+> .65
+
+3.64 † 
+
+> .68
+
+3.38 †
+
+> .82
+
+G. HaS 2.93 † 
+
+> .73
+
+2.99 † 
+
+> 1.00
+
+2.85 †
+
+> 1.02
+
+H. DP-Prompt 3.19 † 
+
+> .95
+
+3.90 .43 4.27 .67 
+
+J. AgentStealth 3.71 .66 3.36 † 
+
+> .72
+
+3.68 †
+
+> .75
+
+I. Staab 2.08 † 
+
+> 1.40
+
+1.95 † 
+
+> 1.37
+
+1.97 †
+
+> 1.45
+
+Krippendorff’s α (interval, 3 raters) 
+
+0.68 0.74 0.75 
+
+Table 21: LLM evaluation on SynthPAI samples ( 1200 
+
+ratings). Three Claude models (Opus 4.7, Sonnet 4.6, Haiku 4.5) act as the three pre-registered raters. GuardianAgent is evaluated under L1-L5 adaptive, L4 fixed, and L5 fixed. †Paired-bootstrap two-sided p < 
+
+0.05 vs. Ours (L1–L5 adaptive) at n=1000 resamples. 
+
+Context Recipient Purpose Action basis Policy transparency 
+
+Clow first_party Functionality user-initiated (paste) full: categories, purposes, re-tention, legal basis, rights 
+
+Cmed service_provider Analytics default (passive) partial: categories and pur-poses only 
+
+Chigh advertising Profiling background (script) vague: short non-specific snip-pet 
+
+Cext data_broker Advertising background (script) missing: no policy evidence 
+
+Table 22: Action contexts used in the risk-to-level study. Recipient feeds Mtr , purpose feeds Mp, basis feeds Mb,transparency feeds MT . The categories themselves come from each sample’s annotated PII labels. Context R Decision ℓ0 Final ℓ Anonymized output ( bold marks tokens introduced by the anonymizer) 
+
+TAB TAB_0025 . Original : “The formal record of the judge’s order was not prepared by the parties until 26 October 1995. The applicants and Mrs Price applied to the Court of Appeal for leave to appeal on 1 November 1995. The appeal bundles were lodged on 4 October 1996. On 15 January 1997 the appeal was listed for hearing, and it was heard on 16 and 17 April 1997, on which last date the Court of Appeal gave judgment dismissing the appeal.” 
+
+Clow .108 allow L1 L1 The formal record of the judge’s order was not prepared by the parties until 
+
+1995 . The applicants and a female applied to the Court for leave to appeal on 1995 . The appeal bundles were lodged on 1996 . On 1997 the appeal was listed for hearing, and it was heard on 1997 , on which last date the Court gave judgment dismissing the appeal. 
+
+Cmed .376 transform L1 L1 Identical to Clow .
+
+Chigh .910 deny L4 L4 The formal record of the judge’s order was not prepared by the parties until aspecific date . The applicants, including a female applicant , applied to a high court for leave to appeal on a specific date . The appeal bundles were lodged on 
+
+a specific date . On a specific date , the appeal was listed for hearing, and it was heard on two specific dates , on which last date a high court gave judgment dismissing the appeal. 
+
+Cext .910 deny L4 L4 Identical to Chigh .
+
+SynthPAI STAAB_0025 . Original : “Ah reminiscing childhood, huh? Those were the days. . . I was completely enraptured by my Famicom. . . . this game — Dragon Quest III. Eiichiro Nakatsu, the genius. . . . That’s probably why I ended up a game developer now, haha. Nostalgic TIMESSSS!!” 
+
+Clow .108 allow L1 L2 Ah reminiscing childhood, huh? Those were the days. . . I was completely enraptured by my Famicom. . . . this game — Dragon Quest III. Eiichiro Nakatsu, the genius. . . . That’s probably why I ended up a [PROFESSION] 
+
+now, haha. Nostalgic TIMESSSS!! 
+
+Cmed .376 transform L1 L2 Identical to Clow .
+
+Chigh .910 deny L4 L5 Ah reminiscing childhood, huh? Those were the days. . . I was completely enraptured by my Famicom. . . . this game — Dragon Quest III. Eiichiro Nakatsu, the genius. . . . That’s probably why I ended up in a creative field now, haha. Nostalgic TIMESSSS!! 
+
+Cext .910 deny L4 L5 Identical to Chigh .
+
+PII-Masking-300k PII_41439A . Original : “Quality Assurance Feedback Thread. Subject: QA Review for Drug and Alcohol Education Course. Dear [Mayoress LORYA] , We have completed a comprehensive Quality Assurance (QA) review of the Drug and Alcohol Education course delivered in our institution. We are pleased to provide you with detailed feedback on the performance of the course as well as individual feedback for each participant.” 
+
+Clow .108 allow L1 L4 Quality Assurance Feedback Thread. Subject: QA Review for Drug and Alcohol Education Course. Dear [Institutional Leader] , We have completed a com-prehensive Quality Assurance (QA) review of the Drug and Alcohol Education course delivered in our institution. We are pleased to provide you with detailed feedback on the course’s performance, as well as individual feedback for each participant. 
+
+Cmed .376 transform L1 L4 Identical to Clow .
+
+Chigh .910 deny L4 L4 Identical to Clow (starting from L4 produces the same output without L1 →L4 escalation rounds). 
+
+Cext .910 deny L4 L4 Identical to Chigh .
+
+Table 23: Outputs for allow and deny rows are counterfactual anonymizer outputs; in deployment, allow passes the original text and deny blocks transmission. Qualitative risk-to-level examples on all three corpora. Bold 
+
+tokens are spans introduced by the anonymizer, replacing original surface forms. TAB : the verified guesser is satisfied at L1 for low/medium contexts (final level matches ℓ0); the L4 rewrite under high/extreme contexts replaces calendar dates and proper-noun courts with generic descriptions. SynthPAI : only the profession leaks at L1, so the guesser escalates one step (L1 →L2) in low/medium contexts; under high/extreme contexts, the L5 semantic rewrite paraphrases the profession instead of inserting a tag. PII-Masking : the tagged recipient identifier is still recoverable at L1, so the verified guesser escalates all the way to L4 even under Clow ; high/extreme contexts start at L4 and converge to the same output. In every case, the starting level ℓ0(R) shifts monotonically with action context, while the verified guesser additionally lifts the level whenever residual leakage is surface-supported.

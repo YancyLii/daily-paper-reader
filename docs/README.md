@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-31</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-01</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 19 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 15 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>7</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>12</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>9</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-31 19:53:39 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-01 19:37:09 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共生成 19 篇推荐（精读 7 篇，速读 12 篇）</p>
-<p>精读：《ROPE: Routed Origin Policy Enforcement against Indirect Prompt Injection》（9.0/10）, 《Nemotron 3.5 Content Safety Moderator: A Compact Multimodal, Multilingual, and Reasoning Enabled Content Safety Moderator》（9.0/10）</p>
-<p>速读：《A Single Suffix to Break Them All: Basin-Aware Jailbreaks for Merged Model Families》（8.0/10）, 《Circuit Discovery Helps Detect LLM Jailbreaking: A Mechanistic Interpretability Study》（8.0/10）, 《LongGuard: Mechanistic Analysis and Training-Free Mitigation of Long-Context Failure in Safety Guardrails》（8.0/10）</p>
+<p>今日共生成 15 篇推荐（精读 6 篇，速读 9 篇）</p>
+<p>精读：《Reachability-Based Capability Confinement for LLM Agents under Indirect Prompt Injection》（9.0/10）, 《ALTSTEER: Selective Safety Steering for Moving Beyond Hard Refusals to Constructive Alternatives》（9.0/10）</p>
+<p>速读：《GraftyVul: Synthesising Insecure Programs Through Real-World Vulnerability Grafting》（7.0/10）, 《Cross-Session Decomposition Attacks: Scaling Risk and Intent-Aligned Retrieval Defense》（7.0/10）, 《LongPIBench: A Long-Context Benchmark for Prompt Injection》（7.0/10）</p>
 <p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
   </div>
 </section>
@@ -74,12 +74,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">7 篇</strong>
+    <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ROPE: Routed Origin Policy Enforcement against Indirect Prompt Injection">ROPE: Routed Origin Policy Enforcement against Indirect Prompt Injection</span></li><li><span class="dpr-home-dashboard-paper-title" title="Nemotron 3.5 Content Safety Moderator: A Compact Multimodal, Multilingual, and Reasoning Enabled Content Safety Moderator">Nemotron 3.5 Content Safety Moderator: A Compact Multimodal, Multilingual, and Reasoning Enabled Content Safety Moderator</span></li><li><span class="dpr-home-dashboard-paper-title" title="If Agents Were Angels, No Governance Would Be Necessary: Out-of-Band Policy Enforcement at a Trusted Tool Boundary">If Agents Were Angels, No Governance Would Be Necessary: Out-of-Band Policy Enforcement at a Trusted Tool Boundary</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Reachability-Based Capability Confinement for LLM Agents under Indirect Prompt Injection">Reachability-Based Capability Confinement for LLM Agents under Indirect Prompt Injection</span></li><li><span class="dpr-home-dashboard-paper-title" title="ALTSTEER: Selective Safety Steering for Moving Beyond Hard Refusals to Constructive Alternatives">ALTSTEER: Selective Safety Steering for Moving Beyond Hard Refusals to Constructive Alternatives</span></li><li><span class="dpr-home-dashboard-paper-title" title="REINS: Refusal-Enhanced Inhibitory Steering with Sparse Autoencoder Features">REINS: Refusal-Enhanced Inhibitory Steering with Sparse Autoencoder Features</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>6</strong></span><span class="dpr-home-dashboard-tag">vuldet <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>4</strong></span><span class="dpr-home-dashboard-tag">vuldet <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,12 +87,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">12 篇</strong>
+    <strong class="dpr-home-dashboard-count">9 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="A Single Suffix to Break Them All: Basin-Aware Jailbreaks for Merged Model Families">A Single Suffix to Break Them All: Basin-Aware Jailbreaks for Merged Model Families</span></li><li><span class="dpr-home-dashboard-paper-title" title="Circuit Discovery Helps Detect LLM Jailbreaking: A Mechanistic Interpretability Study">Circuit Discovery Helps Detect LLM Jailbreaking: A Mechanistic Interpretability Study</span></li><li><span class="dpr-home-dashboard-paper-title" title="LongGuard: Mechanistic Analysis and Training-Free Mitigation of Long-Context Failure in Safety Guardrails">LongGuard: Mechanistic Analysis and Training-Free Mitigation of Long-Context Failure in Safety Guardrails</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="GraftyVul: Synthesising Insecure Programs Through Real-World Vulnerability Grafting">GraftyVul: Synthesising Insecure Programs Through Real-World Vulnerability Grafting</span></li><li><span class="dpr-home-dashboard-paper-title" title="Cross-Session Decomposition Attacks: Scaling Risk and Intent-Aligned Retrieval Defense">Cross-Session Decomposition Attacks: Scaling Risk and Intent-Aligned Retrieval Defense</span></li><li><span class="dpr-home-dashboard-paper-title" title="LongPIBench: A Long-Context Benchmark for Prompt Injection">LongPIBench: A Long-Context Benchmark for Prompt Injection</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>8</strong></span><span class="dpr-home-dashboard-tag">vuldet <strong>4</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>7</strong></span><span class="dpr-home-dashboard-tag">vuldet <strong>2</strong></span></div>
 </section>
 </div>
 

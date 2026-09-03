@@ -1,0 +1,1722 @@
+Towards One-for-All Robustness
+Across a Continuum of Threat Levels
+Zhichao Hou
+Xiaorui Liu ∗
+North Carolina State University
+zhou4@ncsu.edu, xliu96@ncsu.edu
+Abstract
+Adversarially robust models often overfit to a specific attack budget, necessitating
+multiple specialized models for diverse and dynamic adversarial environments, a
+strategy that becomes fundamentally intractable as the threat space grows. This
+raises an open challenge: can we achieve strong robustness across a continuum of
+threat levels within a single model? We propose the Threat Conditional Network
+(TCN), grounded in a representation factorization framework that decomposes
+representation learning into a threat-invariant shared backbone and a lightweight
+threat-conditional adaptor. TCN conditions a single model on the perturbation
+level via Fourier-based embeddings and channel-wise affine modulation, and is
+trained against a distribution over perturbation budgets, enabling flexible and
+seamless adaptation across an infinite continuum of threat levels during inference.
+Extensive experiments on CIFAR-10, CIFAR-100, and Tiny-ImageNet show that
+TCN matches or surpasses a full ensemble of budget-specialized models with a
+single set of parameters, generalizes to unseen perturbation budgets, and transfers
+robustly under mismatched threat conditions, with only 4.6% parameter overhead.
+These contributions chart a promising path toward adaptive and generalizable
+robustness in dynamic and diverse threat environments.
+1
+Introduction
+Modern machine learning systems are increasingly deployed in diverse and dynamic environments,
+yet prevailing training paradigms assume a static data distribution, which rarely holds in practice. This
+fundamental mismatch between training and deployment conditions leads to substantial performance
+degradation when the underlying distribution shifts at test time (Koh et al., 2021; Li et al., 2023). This
+phenomenon is particularly pronounced in adversarial robustness. In practice, different deployment
+environments correspond to different threat types or levels. Models trained under a specific threat
+exhibit strong specialization: each model performs well in its training seen threat but degrades
+significantly under mismatched conditions (Kang et al., 2019; Tramer & Boneh, 2019).
+To address this, numerous endeavors have been proposed, including redesigning the training objective
+to achieve a better accuracy-robustness trade-off (Zhang et al., 2019; Wang et al., 2019), scaling
+model capacity (Rice et al., 2020), exposing models to multiple threat types during training (Tramer
+& Boneh, 2019; Maini et al., 2020; Laidlaw et al., 2020), and ensemble-based methods (Pang et al.,
+2019; Strauss et al., 2017; Cheng et al., 2021). However, performance gains across diverse threats
+remain limited across all these approaches, as the inherent conflict among different threat objectives
+fundamentally constrains generalization.
+Therefore, the conventional method to train and maintain a collection of specialized models becomes
+necessary when real-world systems demand optimal performance across diverse threat conditions.
+While managing a small number of models may be feasible, this approach becomes fundamentally
+∗Corresponding author.
+Preprint.
+arXiv:2609.02440v1  [cs.LG]  2 Sep 2026
+
+
+intractable as the threat space grows increasingly large or even extends to a continuous spectrum,
+as illustrated in Section 2. This raises a fundamental open challenge: Can we achieve strong and
+consistent robustness across a continuum of threat levels within a single model?
+To this end, we propose a novel representation factorization framework that explicitly decomposes
+the embedding mapping into a threat-invariant shared component and a lightweight threat-conditional
+component. Building on this principle, we design the Threat Conditional Network (TCN), a single
+unified model that achieves smooth and consistent adaptation across a continuous spectrum of threat
+levels without the overhead of maintaining multiple specialized models. Our contributions are sum-
+marized as follows. First, we conduct a systematic preliminary study on adversarial defenses across
+various threat settings, revealing the inherent inconsistency and scalability limitations of existing
+approaches (Section 2). Second, starting from a representation learning perspective, we reveal the un-
+derlying limitations of existing methods and propose a novel representation factorization framework.
+Building on this, we introduce a unified threat-conditional network (TCN) that enables a single model
+to adapt and generalize robustly across a continuum of perturbation budgets (Section 3). Finally, we
+present extensive experiments to demonstrate that TCN achieves strong one-for-all robustness and
+across-threat transferability. Additional ablation studies further validate the working mechanism and
+practical advantages of our design (Section 4). Together, these contributions chart a promising path
+toward adaptive and generalizable robustness in dynamic and diverse threat environments.
+2
+Challenges in Scaling Adversarial Defenses Across Threat Levels
+Most adversarial defenses are tightly coupled to a specific, predefined threat, leading to significant
+performance degradation when evaluated against out-of-scope attacks Numerous efforts have been de-
+voted to improving generalization across threat levels, yet each line of work faces notable limitations:
+(1) One direction focuses on redesigning the training objective. Methods such as TRADES (Zhang
+et al., 2019) and MART (Wang et al., 2019) introduce new training loss formulations to balance
+accuracy and robustness, yet yield marginal improvement in generalization across threat budgets. As
+shown in Gowal et al. (2020), vanilla adversarial training (AT) can achieve comparable trade-offs
+simply by adjusting the training perturbation radius. (2) Scaling model capacity is another promising
+direction. Larger models have been shown to improve robustness across budgets (Rice et al., 2020),
+but performance tends to saturate as model width increases, and the growing computational cost
+makes this approach impractical for resource-constrained settings. (3) Another direction exposes the
+model to multiple threat types during training (Tramer & Boneh, 2019; Maini et al., 2020; Cai et al.,
+2018), enabling it to handle heterogeneous attacks simultaneously. However, the inherent tension
+among diverse threat objectives inevitably leads to performance trade-offs across attack types. (4)
+Ensemble-based methods (Pang et al., 2019; Strauss et al., 2017; Cheng et al., 2021) have also been
+explored to improve cross-budget generalization. However, the performance gains remain limited,
+and these methods require training a collection of models simultaneously, which does not scale well
+in practice.
+Figure 1: Diagonal dominance pattern under a finite (left)
+and continuous (right) threat space.
+In real-world scenarios,
+however,
+models are often deployed under di-
+verse and unpredictable threat levels,
+ideally requiring a dedicated model
+optimized for each specific regime.
+Due to the inherent performance con-
+flict across budgets in all existing de-
+fenses, the conventional solution re-
+mains training and maintaining a sep-
+arate collection of models. To better
+illustrate the necessity and limitations
+of this conventional approach, we con-
+duct the following preliminary study.
+We train PGD-AT models under each
+budget in {ϵ0, ϵ1, ϵ2, ϵ3, ϵ4} = { 0
+255,
+1
+255,
+2
+255,
+4
+255,
+8
+255}, where each model is trained at a single
+budget and evaluated across all budgets. As shown in Figure 1 (Left), a clear diagonal dominance
+pattern emerges: within each test budget (column), the highest accuracy is nearly always achieved by
+the model trained at the matching perturbation level. This confirms that: (1) robustness learned at one
+budget generalizes poorly to others; (2) stronger adversarial training sacrifices clean accuracy and
+low-budget robustness; and (3) weaker training fails to defend against stronger attacks.
+2
+
+
+Consequently, while the conventional remedy of training one model per threat level is effective in
+isolation, it introduces fundamental scalability limitations: training cost scales linearly with the
+number of threat levels, quickly becoming prohibitive in large-scale systems. Although maintaining
+a finite set of models may be manageable for a small number of discrete budgets, the problem
+becomes fundamentally intractable as the threat space grows increasingly fine-grained or extends
+to a continuous spectrum (Figure 1 Right). This motivates the need for a single model capable of
+adapting and generalizing robustly across all threat levels.
+3
+Threat Conditional Representation Learning
+In this section, we start from a representation learning perspective to analyze the inherent conflict in
+conventional training method. Building upon this, we propose a novel threat conditional network,
+along with a distributional adversarial training strategy, to address the open challenge above.
+3.1
+Representation Factorization
+Figure 2: Threat-conditional embedding structure across threat levels. The topological arrangement
+of embedding remains consistent across all levels.
+As demonstrated in Section 2, defending against a continuous spectrum of threat levels with a single
+model is highly non-trivial. From a representation learning perspective, features learned under
+different threat levels are inherently conflicting: stronger adversarial training enforces smoother,
+more invariant representations at the cost of fine-grained discriminability, while weaker training
+preserves discriminability but lacks robustness. Although existing methods such as multi-threat
+training or ensemble methods offer partial relief, the underlying representation conflict persists,
+forcing the learned features to settle at a compromised intermediate level, which inevitably trades off
+performance across threat levels.
+The conventional solution is to maintain a collection of specialized models, each tailored to a specific
+threat level. However, this quickly becomes intractable as the threat space grows, requiring either
+a discrete set of parameters {θi}N
+i=1, or even an infinite family {θ(ϵ)}ϵ∈R+, imposing substantial
+memory and computational overhead. We hypothesize that such large model collections entail
+significant redundancy: as illustrated in Figure 2, representations across threat levels share a common
+topological structure, differing only through level-specific adjustments. This observation motivates
+a more principled factorization. Let Fθ : X →Rd denote the backbone embedding mapping
+with parameter θ. Rather than learning a separate Fθ(ϵ) for each ϵ, we propose to decompose the
+threat-level dependency as: Fθ(ϵ) ≈Tϵ ◦Fθ, where Fθ is a shared backbone and Tϵ : Rd →Rd is a
+lightweight threat-conditional operator that adapts the shared representation to threat level ϵ. Under
+this factorization, the full family {Fθ(ϵ)}ϵ∈R+ is replaced by a single backbone Fθ paired with a
+threat-conditional adaptor Tϵ (a lightweight network that takes ϵ as input), reducing the parameter
+overhead from O(N|F|) to O(|F|+|T |), where |·| denotes the number of parameters and |T | ≪|F|.
+3.2
+TCN: Threat Conditional Network
+With the decomposition Fθ(ϵ) ≈Tϵ ◦Fθ, any backbone architecture can serve as Fθ, reducing
+the problem to efficiently parameterizing the operator family {Tϵ}ϵ∈R+. To this end, we propose
+a threat-conditional learning module, illustrated in Figure 3. Given input x and threat level ϵ, the
+module intercepts the intermediate backbone representation and applies a lightweight conditional
+transformation to adapt it to the specified threat level. The architectural details are described below.
+3
+
+
+Figure 3: Threat conditional learning.
+Threat-level Embedding. To enable expressive condition-
+ing on the scalar ϵ, we adopt a Fourier feature embed-
+ding (Rahimi & Recht, 2007):
+Φ(ϵ) = [sin(2πωϵ), cos(2πωϵ)] ∈Rd, ω ∼N(0, σ2Id/2).
+This embedding maps ϵ into a high-dimensional represen-
+tation space, allowing the model to approximate complex,
+non-linear dependencies on the perturbation level. From a
+kernel perspective, this can be viewed as enabling a rich
+class of stationary functions over ϵ, facilitating smooth in-
+terpolation across various perturbation strengths.
+Channel-wise Conditional Modulation. Given the embedding Φ(ϵ), we generate conditioning
+parameters through a lightweight network: (Γ(ϵ), B(ϵ)) = MLP(Φ(ϵ)). These parameters are then
+injected into intermediate feature activations through a channel-wise affine modulation as inspired
+by Perez et al. (2018). So the threat-conditional operator can be parameterized as
+Tϵ ◦F : Rdin × R →Rdout,
+(x, ϵ) 7→(1 + Γ(ϵ)) ⊙F(x) + B(ϵ),
+(1)
+where F(x) denotes an intermediate feature tensor and ⊙denotes element-wise multiplication. This
+mechanism allows the same backbone network to realize different feature geometries under different
+threat levels, without introducing separate models for each threat budget. Compared with training
+multiple independent robust classifiers, such conditional modulation offers a more parameter-efficient
+way to encode perturbation-specific behavior while preserving shared semantic structure across
+regimes. The threat-conditional operator Tϵ can be inserted after any intermediate layer of a given
+backbone. Figure 4 provides an overview of the resulting Threat-Conditional Network (TCN) built
+upon an 18-layer plain convolutional network.
+Figure 4: Threat-Conditional Network architecture with an 18-layer plain convolutional backbone.
+3.3
+Distributional Adversarial Training across Threat Levels
+Tailored to the threat-conditional network, the training objective should also move beyond a single
+fixed perturbation radius. In realistic deployment scenarios, the attack strength faced by the model is
+rarely known in advance and may vary across inputs or environments. It is therefore more principled
+to optimize the model with respect to a distribution over threat levels. Formally, let P be a distribution
+over perturbation radii. We train TCN by solving the following objective:
+min
+θ
+E(x,y)∼D
+
+Eϵ∼P
+
+max
+x′∈B(x,ϵ) L
+ Tϵ ◦Fθ(x′), y
+
+,
+(2)
+where P can be any threat level distribution, B(x, ϵ) denotes the admissible perturbation set under
+budget ϵ, and L is the classification loss. This objective can be viewed as adversarial training over a
+continuum of perturbation budgets rather than at a single fixed radius. By sampling ϵ from P during
+training, TCN is encouraged to learn a adaptive threat-conditional decision rule that remains effective
+under varying attack strengths, instead of overfitting to one particular threat level.
+4
+Experiments
+In this section, we conduct a comprehensive evaluation of our method, including one-for-all robust-
+ness, overall performance comparison, transferability analysis, and ablation studies.
+4
+
+
+4.1
+Experimental Settings
+Datasets and Models.
+We conduct experiments on three widely used benchmarks: CIFAR-
+10 (Krizhevsky et al., 2009), CIFAR-100 (Krizhevsky et al., 2009), and Tiny-ImageNet (Le &
+Yang, 2015). We adopt ResNet-18 and WideResNet-28-10 (He et al., 2016) as backbone architectures.
+ResNet-18 is used as the default unless otherwise specified.
+Baselines and Evaluation. We compare against several groups of baselines: (1) single-model
+AT baselines, including vanilla PGD-AT (Madry et al., 2017) trained with both fixed and uniform
+perturbation budgets, as well as representative adversarial training methods TRADES (Zhang et al.,
+2019), MART (Wang et al., 2019), and NuAT (Sriramanan et al., 2021); and (2) multi-model baselines,
+including MoRE (Cheng et al., 2021) and ensemble models. We evaluate robustness under a diverse
+set of adversarial attacks, including FGSM (Goodfellow et al., 2014), PGD (Madry et al., 2017), and
+AutoAttack (Croce & Hein, 2020). We use PGD-20 as the default attack unless otherwise specified.
+Training Details. All models are trained for 200 epochs with a batch size of 128, momentum of
+0.9, and weight decay of 2 × 10−5. We use SGD with an initial learning rate of 0.1, decayed by a
+factor of 10 at epochs 100 and 150. In our experiments, we model the training threat distribution
+P as a clean-biased uniform distribution: a mixture that places elevated probability mass on the
+clean budget ϵ0 while distributing the remainder uniformly across the remaining threat levels: P =
+p·δϵ0 +(1−p) Unif{ϵ1, . . . , ϵN}, where p =
+M
+M+N . Here, N +1 is the total number of threat levels
+under consideration, and M is a hyperparameter that governs the relative sampling weight assigned
+to clean examples; larger M increasingly biases training toward the clean regime. We provide the
+ablation study on p in Appendix A.3.
+4.2
+One-for-all Defense
+Table 1: Accuracy (%) across different adversarial training and test budgets. The best performance at
+each test budget is predominantly achieved by the model trained under the same budget, revealing a
+clear diagonal dominance pattern. TCN approximates this diagonal performance with a single model.
+Backbone
+ResNet18
+WideResNet-28-10
+Dataset
+Method \ Budget
+0
+255
+1
+255
+2
+255
+4
+255
+8
+255
+0
+255
+1
+255
+2
+255
+4
+255
+8
+255
+AT w/ ϵ =
+0
+255
+95.09 57.86
+8.94
+0.14
+0.00
+95.37
+50.41
+5.44
+0.00
+0.00
+AT w/ ϵ =
+1
+255
+93.09
+86.80
+76.80
+51.01
+20.50
+94.67
+88.55
+78.66
+50.20
+14.12
+CIFAR10
+AT w/ ϵ =
+2
+255
+91.11
+85.81
+79.28 61.39
+28.68
+93.22
+88.50
+81.91
+63.93
+28.29
+AT w/ ϵ =
+4
+255
+88.51
+83.92
+78.61
+65.51 36.57
+90.91
+86.72
+81.90
+68.66 39.79
+AT w/ ϵ =
+8
+255
+84.07
+80.27
+75.82
+65.71
+43.10 86.40
+82.57
+78.13
+68.15
+45.09
+TCN (Ours)
+93.85
+87.46
+80.49
+66.36
+45.16
+94.56
+88.49
+82.32
+68.87
+46.63
+AT w/ ϵ =
+0
+255
+75.42
+32.27
+5.20
+0.27
+0.01
+78.38
+26.28
+3.31
+0.11
+0.00
+AT w/ ϵ =
+1
+255
+69.83
+57.94 44.98
+24.15
+5.05
+74.54
+61.34 47.99
+23.62
+4.41
+CIFAR100
+AT w/ ϵ =
+2
+255
+66.11
+57.53
+48.79
+31.39
+10.76
+71.43
+61.99
+51.73 33.02
+10.85
+AT w/ ϵ =
+4
+255
+61.08
+54.08
+47.07
+34.30 15.93
+67.18
+60.18
+53.32
+39.41 18.32
+AT w/ ϵ =
+8
+255
+55.62
+50.18
+44.94
+35.20
+20.10
+60.24
+54.80
+49.09
+39.24
+22.95
+TCN (Ours)
+70.71
+55.91
+47.01
+38.86
+20.34 75.42
+62.73
+52.12
+37.76
+22.21
+AT w/ ϵ =
+0
+255
+60.40
+35.29
+5.03
+0.03
+0.00
+69.84
+19.75
+0.55
+0.02
+0.01
+AT w/ ϵ =
+1
+255
+60.23
+52.95 47.03
+36.28
+7.23
+69.08
+59.79 51.29
+32.07
+3.47
+Tiny-ImageNet
+AT w/ ϵ =
+2
+255
+58.17
+52.67
+48.21 41.35
+21.45
+67.50
+60.56
+54.41 44.75
+15.27
+AT w/ ϵ =
+4
+255
+55.44
+51.36
+47.94
+42.58 33.46
+64.43
+59.26
+54.76
+47.58 33.59
+AT w/ ϵ =
+8
+255
+51.50
+48.24
+45.77
+41.87
+36.76 59.82
+56.05
+52.45
+47.14
+39.61
+TCN (Ours)
+54.99
+50.21
+47.14
+42.34
+34.01
+68.48
+60.77
+54.03
+42.02
+21.82
+We evaluate TCN across three datasets (CIFAR-10, CIFAR-100, and Tiny-ImageNet) and two
+backbone architectures (ResNet-18 and WRN-28-10), with results summarized in Table 1. We
+consider the following set of threat levels: E = { 0
+255,
+1
+255,
+2
+255,
+4
+255,
+8
+255}. For each vanilla adversarial
+training (AT) baseline, a single fixed budget ϵ ∈E is used for training. For TCN, we instead apply
+5
+
+
+distributional adversarial training over the full set E. All models are evaluated at every budget in E.
+From these results, we draw the following observations: (1) Performance conflict in separately trained
+models. Models trained at different perturbation budgets are highly specialized: each performs best
+on its matched test budget (diagonal entries), but degrades significantly under mismatched settings.
+This reveals poor cross-budget generalization. (2) TCN approximates the optimal diagonal. TCN
+achieves performance consistently close to the best diagonal entries using a single conditional model,
+effectively recovering multiple specialized behaviors within one unified framework.
+4.3
+State-of-the-art Performance
+Table 2: Comparison of accuracy (%) on CIFAR-10 with ResNet-18. We compare natural training,
+fixed-budget and uniform-budget PGD-AT, representative single-model adversarial training methods
+(TRADES, MART, NuAT), and multi-model baselines (MoRE, Ensemble). Our TCN outperforms all
+baselines on average performance.
+Method \ Budget
+0
+255
+1
+255
+2
+255
+4
+255
+8
+255
+Avg.
+# Param.
+Natural Training
+95.09
+57.86
+8.94
+0.14
+0.00
+32.41
+11.17M
+PGD-AT w/ ϵ =
+8
+255
+84.07
+80.27
+75.82
+65.71
+43.10
+69.79
+11.17M
+PGD-AT w/ Uniform ϵ
+87.59
+83.78
+78.58
+67.01
+39.21
+71.23
+11.17M
+TRADES (λ = 2.0)
+81.92
+78.00
+73.51
+62.89
+41.50
+67.56
+11.17M
+TRADES (λ = 0.2)
+91.49
+62.74
+27.58
+10.27
+3.31
+39.08
+11.17M
+MART (λ = 5.0)
+80.92
+77.36
+73.46
+64.57
+44.85
+68.23
+11.17M
+MART (λ = 0.5)
+82.29
+78.18
+73.66
+63.56
+42.25
+67.99
+11.17M
+NuAT
+80.23
+77.61
+75.1
+69.13
+46.18
+69.65
+11.17M
+MoRE
+84.52
+77.10
+72.80
+63.10
+41.22
+67.75
+55.87M
+Ensemble
+94.46
+87.27
+73.95
+49.89
+20.13
+65.14
+55.87M
+TCN (Fixed Cond.)
+87.44
+83.73
+79.58
+69.80
+45.16
+73.14
+11.69M
+TCN (Adaptive Cond.)
+93.85
+87.46
+80.49
+66.36
+45.16
+74.66
+11.69M
+To provide a comprehensive comparison, we consider four groups of baselines: (i) vanilla natural
+training, (ii) PGD-based adversarial training with fixed perturbation budget and uniform budget,
+(iii) representative adversarial training methods such as TRADES, MART, and NuAT, and (iv)
+multi-model baselines such as MoRE and ensemble models. For TCN, we consider two variants:
+TCN (Fixed Cond.), which fixes the conditioning threat level at ϵ =
+8
+255 regardless of the test
+budget, and TCN (Adaptive Cond.), which sets the conditioning threat level to match the test budget.
+All methods are evaluated on CIFAR-10 with ResNet-18. We make the following observations
+from Table 2: (1) PGD-based adversarial training is budget-specialized. Fixed-budget PGD-AT
+(ϵ= 8
+255) and uniform-budget PGD-AT achieve 69.79% and 71.23% average accuracy, respectively,
+but neither generalizes consistently across mismatched test budgets. (2) Advanced single-model
+methods remain limited. TRADES, MART, and NuAT offer varying robustness–accuracy trade-offs
+but fall short on cross-budget generalization. (3) Multi-model baselines cost more but gain little.
+MoRE and Ensemble use 55.87M parameters (5× more than single-model methods) yet achieve only
+67.75% and 65.14% average accuracy, showing that naively combining models does not address
+cross-budget generalization. (4) TCN achieves the best performance with a single model. TCN
+(adaptive condition) reaches 74.66% average accuracy with only 11.69M parameters, outperforming
+all baselines including multi-model methods. TCN (fixed condition) also achieves 73.14%, already
+surpassing every competitor, confirming TCN as a scalable and parameter-efficient solution for
+adaptive adversarial robustness.
+4.4
+Transferability Analysis
+To further evaluate the generalization ability of TCN across perturbation levels, we study its transfer-
+ability under mismatched conditioning. In particular, we consider a realistic setting where the true
+threat level is unknown at test time, and analyze how the model performs when conditioned on a fixed
+perturbation level. We conduct two complementary analyses, including performance comparison and
+representation visualization.
+6
+
+
+Table 3: Transfer performance under mismatched
+threat levels on CIFAR-10 with ResNet-18. TCN
+conditioned on ϵi outperforms the AT model sepa-
+rately trained on ϵi in every row-wise comparison.
+Model \ Budget
+ϵ0
+ϵ1
+ϵ2
+ϵ3
+ϵ4
+Avg.
+AT
+Fθ∗
+0(·)
+95.09 57.86
+8.94
+0.14
+0.00
+32.41
+Fθ∗
+1(·)
+93.09 86.80 76.80 51.01 20.50 65.64
+Fθ∗
+2(·)
+91.11 85.81 79.28 61.39 28.68 69.25
+Fθ∗
+3(·)
+88.51 83.92 78.61 65.51 36.57 70.62
+Fθ∗
+4(·)
+84.07 80.27 75.82 65.71 43.10 69.79
+TCN
+Tϵ0 ◦Fθ∗(·) 93.85 86.60 74.50 44.93 11.68 62.31
+Tϵ1 ◦Fθ∗(·) 92.86 87.46 79.48 58.06 22.16 68.00
+Tϵ2 ◦Fθ∗(·) 92.26 87.47 80.49 62.26 26.57 69.81
+Tϵ3 ◦Fθ∗(·) 90.96 86.80 81.03 66.36 33.91 71.81
+Tϵ4 ◦Fθ∗(·) 87.44 83.73 79.58 69.80 45.16 73.14
+Performance Transferability. In practice, the
+adversarial threat level is often unknown or dy-
+namically changing at test time. It is therefore
+important to evaluate how well models transfer
+under mismatched perturbation budgets. Vanilla
+AT trains a separate model Fθ∗
+i for each bud-
+get ϵi, while TCN uses a single backbone Fθ∗
+trained with a uniform distribution over budgets,
+adapting via the conditioning operator Tϵi. For a
+fair comparison, we evaluate each AT specialist
+against the TCN variant conditioned on the same
+budget. As shown in Table 3, TCN achieves
+higher average accuracy in every row, demon-
+strating consistently superior cross-budget trans-
+ferability. This stems from learning a shared
+representation across perturbation levels, which
+enforces smoothness across ϵ and preserves strong performance even under mismatched test condi-
+tions where independently trained AT models degrade substantially.
+Figure 5: UMAP visualization of learned representations under different adversarial levels. Top
+row: independently trained vanilla models at different noise levels. Bottom row: TCN conditioned
+on different adversarial levels. Under mismatched conditions, vanilla representations degrade and
+fragment, whereas TCN preserves a coherent global structure, demonstrating stronger transferability.
+Visualization. Fig.5 visualizes UMAP embeddings of the final hidden representations under mis-
+matched adversarial conditions, using the same setup as “Performance Transferability.” Under
+matched conditions, both vanilla adversarial training and TCN produce well-separated class clusters.
+Under mismatched conditions, however, vanilla representations progressively fragment and lose
+discriminability, whereas TCN preserves a coherent global structure across adversarial levels. This
+indicates that TCN learns a family of representations parameterized by adversarial level, explaining
+its stronger transferability. Embedding difference analysis is provided in AppendixA.2.
+4.5
+Ablation Study
+Different Threats. We compare TCN against adversarially trained (AT) models, each specialized
+for a fixed training budget ϵ ∈{0,
+1
+255,
+2
+255,
+4
+255,
+8
+255}, under three attack types (FGSM, PGD, and
+AutoAttack) across varying test budgets (Figure 6). The experiments are performed on CIFAR-10
+with ResNet18. As shown, AT models tend to overfit to their specific training budget, performing well
+near their trained ϵ but degrading significantly at other test budgets. In contrast, TCN consistently
+matches or surpasses the best-performing AT baseline across all test budgets with one single model.
+Additional experimental results are provided in Appendix A.1.
+7
+
+
+Figure 6: Robustness against FGSM, PGD, and AutoAttack (AA) across varying test budgets.
+Table 4: Layer-wise Γ(ϵ) values (×10−2).
+Larger noise leads to smaller Γ(ϵ), indicat-
+ing stronger feature suppression.
+Layer ℓϵ =
+0
+255 ϵ =
+1
+255 ϵ =
+2
+255 ϵ =
+4
+255 ϵ =
+8
+255
+ℓ= 1
+3.17
+2.57
+2.08
+1.25
+-0.05
+ℓ= 2
+2.50
+1.85
+1.31
+0.37
+-1.10
+ℓ= 3
+4.28
+3.94
+3.61
+2.98
+1.98
+ℓ= 4
+7.07
+6.39
+5.86
+4.97
+3.57
+ℓ= 5
+2.80
+2.66
+2.50
+2.17
+1.64
+ℓ= 6
+5.02
+4.79
+4.55
+4.10
+3.39
+ℓ= 7
+2.00
+1.66
+1.37
+0.87
+0.09
+ℓ= 8
+3.55
+3.05
+2.65
+2.00
+0.97
+ℓ= 9
+2.96
+2.72
+2.50
+2.10
+1.48
+ℓ= 10
+4.48
+4.33
+4.19
+3.96
+3.58
+ℓ= 11
+1.72
+1.37
+1.02
+0.36
+-0.69
+ℓ= 12
+3.99
+3.61
+3.26
+2.63
+1.63
+ℓ= 13
+1.15
+1.04
+0.93
+0.72
+0.40
+ℓ= 14
+4.65
+4.56
+4.49
+4.36
+4.17
+ℓ= 15
+0.88
+0.73
+0.60
+0.37
+0.02
+ℓ= 16
+7.67
+7.41
+7.22
+6.90
+6.40
+Behavior analysis of Γ(ϵ). In TCN, we use the channel-
+wise conditional modulation Tϵ ◦F(x) = (1 + Γ(ϵ)) ⊙
+F(x) + B(ϵ), where the noise-conditioned parameters
+Γ(ϵ) and B(ϵ) adaptively adjust the embedding h. In
+particular, Γ(ϵ) controls the rescaling of the embedding.
+As reported in Table 4, the magnitude of Γ(ϵ) tends to
+increase as the noise level ϵ becomes larger. This be-
+havior suggests that under stronger perturbations, TCN
+applies a stronger modulation to the feature representa-
+tion. More specifically, the resulting factor (1 + Γ(ϵ))
+tends to impose a smaller effective scaling on the em-
+bedding, which suppresses unstable feature responses
+and reduces the influence of perturbations in the repre-
+sentation space. This observation indicates that TCN
+adaptively contracts the embedding under higher noise
+levels, helping improve feature stability and robustness.
+Table 5: Performance on AG News under
+TextFooler attacks with varying similarity
+thresholds ϵ. TCN achieves more balanced
+clean-robust performance across perturba-
+tion levels than fixed-level AT.
+Method \ Threshold ϵ
+0.0
+0.1
+0.3
+0.5
+0.7
+0.9
+AT, ϵ = 0.0
+94.2 82.0 40.0 17.3
+8.4
+7.9
+AT, ϵ = 0.1
+94.1 82.5 39.3 16.3
+7.8
+7.0
+AT, ϵ = 0.3
+94.5 87.0 45.9 19.4
+8.4
+8.2
+AT, ϵ = 0.5
+94.3 87.1 47.9 29.6 15.7 14.7
+AT, ϵ = 0.7
+93.4 85.3 48.3 28.4 17.5 17.2
+AT, ϵ = 0.9
+93.1 83.9 50.2 33.9 23.5 23.3
+TCN
+94.1 86.0 53.1 31.5 20.4 19.8
+Language modeling.
+Beyond visual classification,
+we further validate our method in the language do-
+main on AG News using a BERT-based classifier under
+TextFooler attacks with different tolerated word embed-
+ding difference thresholds ϵ. As in the vision setting,
+fixed-level adversarial training exhibits a clear trade-
+off: models trained with weaker perturbations preserve
+higher clean accuracy but perform poorly under stronger
+attacks, while models trained with stronger perturbations
+improve robustness at the cost of clean performance. In
+contrast, our conditional method achieves stronger over-
+all performance across different similarity levels, show-
+ing that the proposed framework generalizes beyond
+image classification. Notably, even when conditioned
+on a single fixed level, our model still maintains competitive performance across a wide range of per-
+turbation strengths, further demonstrating its transferability and supporting the view that robustness
+is better modeled as a continuous spectrum rather than a collection of isolated training objectives.
+Table 6: Ablation study on threat-level embeddings.
+Discrete
+Continuous
+Fourier
+0.0
+0.05
+0.1
+0.15
+0.2
+0.25
+0.3
+✓
+82.5
+75.1
+63.2
+48.5
+33.0
+18.3
+5.8
+TCN
+✓
+86.4
+76.6
+62.7
+44.0
+28.1
+14.2
+3.5
+✓
+✓
+90.4
+77.4
+65.4
+51.7
+38.5
+25.8
+14.1
+AT w/ ϵ = 0.0
+91.2
+49.9
+7.4
+0.3
+0.0
+0.0
+0.0
+Baseline
+AT w/ ϵ = 0.3
+79.1
+70.4
+60.0
+48.5
+36.2
+23.8
+12.2
+AT w/ Uniform ϵ
+84.4
+75.2
+63.2
+47.8
+31.8
+16.3
+3.6
+Threat-level embedding. Table 6 compares three conditioning strategies: discrete embeddings
+(nn.Embedding), raw continuous scalar input, and continuous Fourier-based embeddings (random
+8
+
+
+Fourier features). Discrete embeddings lack smooth interpolation across noise levels, while raw
+continuous inputs provide insufficient expressiveness, and both fail to achieve consistently strong
+performance across budgets. Fourier-based embeddings resolve this by mapping scalar noise levels
+into a richer feature space, enabling smoother and more structured conditioning that yields the best
+overall performance across all perturbation regimes.
+Table 7: Robustness on unseen perturba-
+tion budgets. TCN conditions on the near-
+est in-distribution budget and consistently
+outperforms all baselines.
+Method \ Budget
+3
+255
+5
+255
+6
+255
+7
+255
+AT w/ ϵ =
+0
+255
+1.15
+0.01
+0.0
+0.0
+AT w/ ϵ =
+1
+255
+64.02
+39.67
+31.23
+24.93
+AT w/ ϵ =
+2
+255
+70.98
+51.46
+42.65
+34.67
+AT w/ ϵ =
+4
+255
+72.45
+58.19
+50.6
+43.32
+AT w/ ϵ =
+8
+255
+70.99
+60.05
+54.47
+48.70
+TCN
+74.43
+64.04
+57.63
+51.35
+Generalization to Unseen Perturbation Budgets. Be-
+yond the training budgets, we evaluate model general-
+ization to unseen (out-of-distribution) perturbation lev-
+els. Specifically, we treat { 0
+255,
+1
+255,
+2
+255,
+4
+255,
+8
+255} as
+in-distribution budgets and { 3
+255,
+5
+255,
+6
+255,
+7
+255} as out-
+of-distribution budgets. For TCN, the conditioning vari-
+able is set to the nearest upper in-distribution budget.
+As shown in Table 7, TCN consistently outperforms all
+baselines across all unseen budgets. In contrast, standard
+adversarial training models exhibit strong sensitivity to
+their training budget and degrade when evaluated at mis-
+matched levels. These results demonstrate that TCN generalizes effectively across unseen perturbation
+strengths, maintaining robust performance beyond the training distribution.
+Table 8:
+Computational complexity of
+ResNet18 and TCN-ResNet18 on CIFAR-10.
+Model
+#Params (M) Model Size (MB) FLOPs (G)
+ResNet18
+11.174
+42.66
+1.1158
+TCN-ResNet18
+11.690
+44.63
+1.1168
+∆
++4.6%
++4.6%
++0.09%
+Complexity Analysis. Table 8 compares the compu-
+tational footprint of TCN-ResNet18 against vanilla
+ResNet18. The noise-conditional modules add only
+0.52M parameters (+4.6%), translating to a 1.97 MB
+increase in model size. Because FiLM applies per-
+channel affine modulations rather than dense ma-
+trix multiplications, the forward FLOPs of TCN-
+ResNet18 (1.1168 G) are virtually identical to those
+of ResNet18 (1.1158 G), a relative increase of less than 0.1%. Overall, TCN-ResNet18 introduces
+noise-level conditioning at essentially no additional inference cost, making it a practical drop-in
+replacement for ResNet18.
+5
+Related Works
+Several lines of work have sought to train a model capable of defending against diverse adversarial
+threats. One direction exposes the model to multiple threat types during training (Tramer & Boneh,
+2019; Maini et al., 2020; Cai et al., 2018), enabling it to handle heterogeneous attacks simultaneously.
+Another direction redesigns the training objective: methods such as TRADES (Zhang et al., 2019)
+and MART (Wang et al., 2019) introduce new loss formulations to better balance accuracy and
+robustness. A complementary line of work pursues universal robust architectures, whose robustness
+is built into the model itself rather than tailored to a particular attack, and therefore transfers across
+heterogeneous threats (Hou et al., 2024b,a, 2025b,a). Scaling model capacity has also shown promise,
+with larger models exhibiting improved robustness across budgets (Rice et al., 2020). Ensemble-based
+methods (Pang et al., 2019; Strauss et al., 2017; Cheng et al., 2021) have similarly been explored to
+improve cross-budget generalization. Despite these efforts, performance gains remain limited across
+all these approaches: redesigned objectives offer marginal improvement over vanilla AT, while scaling
+model capacity and ensemble methods both suffer from poor computational scalability, making them
+impractical for real-world deployment.
+6
+Conclusion
+We study adversarial robustness across diverse threat levels and show that conventional adversarial
+training generalizes poorly across perturbation regimes due to its budget-specific formulation. We
+reformulate robustness as a threat-conditional prediction problem and propose TCN, a single model
+that adapts continuously to the perturbation level by learning a shared representation across adversarial
+scales. Extensive experiments demonstrate that TCN achieves strong and consistent performance
+across a wide range of threat levels, generalizes to unseen budgets, and remains parameter-efficient.
+Our results suggest that modeling adversarial robustness as a continuous conditional learning task
+provides a more scalable and principled solution for dynamic threat environments. While TCN
+transfers well across threat levels, it still requires the threat level as an input. Handling an unknown
+threat level at inference via Bayesian inference or adversarial detection is left to future work.
+9
+
+
+References
+Cai, Q.-Z., Du, M., Liu, C., and Song, D.
+Curriculum adversarial training.
+arXiv preprint
+arXiv:1805.04807, 2018.
+Cheng, H., Xu, K., Wang, C., Kailkhura, B., Lin, X., and Goldhahn, R.
+Mixture of robust
+experts (more): A robust denoising method towards multiple perturbations.
+arXiv preprint
+arXiv:2104.10586, 2021.
+Croce, F. and Hein, M. Reliable evaluation of adversarial robustness with an ensemble of diverse
+parameter-free attacks. In International conference on machine learning, pp. 2206–2216. PMLR,
+2020.
+Goodfellow, I. J., Shlens, J., and Szegedy, C. Explaining and harnessing adversarial examples. arXiv
+preprint arXiv:1412.6572, 2014.
+Gowal, S., Qin, C., Uesato, J., Mann, T., and Kohli, P. Uncovering the limits of adversarial training
+against norm-bounded adversarial examples. arXiv preprint arXiv:2010.03593, 2020.
+He, K., Zhang, X., Ren, S., and Sun, J. Deep residual learning for image recognition. In Proceedings
+of the IEEE conference on computer vision and pattern recognition, pp. 770–778, 2016.
+Hou, Z., Feng, R., Derr, T., and Liu, X. Robust graph neural networks via unbiased aggregation.
+Advances in Neural Information Processing Systems, 37:110097–110130, 2024a.
+Hou, Z., Gao, W., Shen, Y., Wang, F., and Liu, X. Protransformer: Robustify transformers via
+plug-and-play paradigm. Advances in Neural Information Processing Systems, 37:137557–137609,
+2024b.
+Hou, Z., Gao, W., Krim, H., and Liu, X. Boosting adversarial robustness and generalization with
+structural prior. arXiv preprint arXiv:2502.00834, 2025a.
+Hou, Z., Torkamani, M., Krim, H., and Liu, X. Robustness reprogramming for representation learning.
+In International Conference on Learning Representations, volume 2025, pp. 53682–53704, 2025b.
+Kang, D., Sun, Y., Hendrycks, D., Brown, T., and Steinhardt, J. Testing robustness against unforeseen
+adversaries. 2019.
+Koh, P. W., Sagawa, S., Marklund, H., Xie, S. M., Zhang, M., Balsubramani, A., Hu, W., Yasunaga,
+M., Phillips, R. L., Gao, I., et al. Wilds: A benchmark of in-the-wild distribution shifts. In
+International conference on machine learning, pp. 5637–5664. PMLR, 2021.
+Krizhevsky, A., Hinton, G., et al. Learning multiple layers of features from tiny images. 2009.
+Laidlaw, C., Singla, S., and Feizi, S. Perceptual adversarial robustness: Defense against unseen threat
+models. arXiv preprint arXiv:2006.12655, 2020.
+Le, Y. and Yang, X. Tiny imagenet visual recognition challenge. CS 231N, 7(7):3, 2015.
+Li, L., Wang, Y., Sitawarin, C., and Spratling, M. Oodrobustbench: a benchmark and large-scale
+analysis of adversarial robustness under distribution shift. arXiv preprint arXiv:2310.12793, 2023.
+Madry, A., Makelov, A., Schmidt, L., Tsipras, D., and Vladu, A. Towards deep learning models
+resistant to adversarial attacks. arXiv preprint arXiv:1706.06083, 2017.
+Maini, P., Wong, E., and Kolter, Z. Adversarial robustness against the union of multiple perturbation
+models. In International Conference on Machine Learning, pp. 6640–6650. PMLR, 2020.
+Pang, T., Xu, K., Du, C., Chen, N., and Zhu, J. Improving adversarial robustness via promoting
+ensemble diversity. In International Conference on Machine Learning, pp. 4970–4979. PMLR,
+2019.
+Perez, E., Strub, F., De Vries, H., Dumoulin, V., and Courville, A. Film: Visual reasoning with
+a general conditioning layer. In Proceedings of the AAAI conference on artificial intelligence,
+volume 32, 2018.
+10
+
+
+Rahimi, A. and Recht, B. Random features for large-scale kernel machines. Advances in neural
+information processing systems, 20, 2007.
+Rice, L., Wong, E., and Kolter, Z. Overfitting in adversarially robust deep learning. In International
+conference on machine learning, pp. 8093–8104. PMLR, 2020.
+Sriramanan, G., Addepalli, S., Baburaj, A., et al. Towards efficient and effective adversarial training.
+Advances in Neural Information Processing Systems, 34:11821–11833, 2021.
+Strauss, T., Hanselmann, M., Junginger, A., and Ulmer, H. Ensemble methods as a defense to
+adversarial perturbations against deep neural networks. arXiv preprint arXiv:1709.03423, 2017.
+Tramer, F. and Boneh, D. Adversarial training and robustness for multiple perturbations. Advances in
+neural information processing systems, 32, 2019.
+Wang, Y., Zou, D., Yi, J., Bailey, J., Ma, X., and Gu, Q. Improving adversarial robustness requires
+revisiting misclassified examples. In International conference on learning representations, 2019.
+Zhang, H., Yu, Y., Jiao, J., Xing, E., El Ghaoui, L., and Jordan, M. Theoretically principled trade-off
+between robustness and accuracy. In International conference on machine learning, pp. 7472–7482.
+PMLR, 2019.
+11
+
+
+A
+Additional Experiments
+A.1
+Experimental Results under Different Attacks
+Table 9 and Table 10 report accuracy under FGSM, PGD, and AutoAttack across varying test budgets
+on CIFAR-10 with ResNet18 and WideResNet-28-10, respectively. AT models show clear overfitting
+to their training budget: each AT model performs best at its matched test budget (highlighted cells
+on the diagonal) but degrades noticeably outside that range, with the effect being most severe under
+stronger attacks such as PGD and AutoAttack—AT w/ ϵ =
+0
+255 drops to 0.00% at test budget
+8
+255
+under both attacks. In contrast, TCN consistently matches or surpasses the best-performing AT
+baseline at every test budget across all three attack types and both architectures, demonstrating that
+TCN generalizes robustly across diverse threat levels without being tied to any fixed training budget.
+Table 9: Different threats (CIFAR10, ResNet18).
+Method \ Budget
+0
+255
+1
+255
+2
+255
+4
+255
+8
+255
+FGSM
+AT w/ ϵ =
+0
+255
+95.09
+62.42
+47.46
+34.76
+21.11
+AT w/ ϵ =
+1
+255
+93.09
+87.09
+79.20
+63.28
+45.27
+AT w/ ϵ =
+2
+255
+91.11
+86.03
+80.29
+67.79
+47.37
+AT w/ ϵ =
+4
+255
+88.51
+84.02
+79.24
+68.86
+49.35
+AT w/ ϵ =
+8
+255
+84.07
+80.33
+76.25
+67.89
+52.39
+TCN (Ours)
+93.85
+87.72
+81.62
+70.77
+54.74
+PGD
+AT w/ ϵ =
+0
+255
+95.09
+57.86
+8.94
+0.14
+0.00
+AT w/ ϵ =
+1
+255
+93.09
+86.80
+76.80
+51.01
+20.50
+AT w/ ϵ =
+2
+255
+91.11
+85.81
+79.28
+61.39
+28.68
+AT w/ ϵ =
+4
+255
+88.51
+83.92
+78.61
+65.51
+36.57
+AT w/ ϵ =
+8
+255
+84.07
+80.27
+75.82
+65.71
+43.10
+TCN (Ours)
+93.85
+87.46
+80.49
+66.36
+45.16
+AA
+AT w/ ϵ =
+0
+255
+95.09
+27.78
+2.21
+0.10
+0.00
+AT w/ ϵ =
+1
+255
+93.09
+83.65
+71.31
+41.12
+7.12
+AT w/ ϵ =
+2
+255
+91.11
+82.85
+75.03
+51.65
+17.95
+AT w/ ϵ =
+4
+255
+88.51
+80.64
+74.22
+56.07
+26.78
+AT w/ ϵ =
+8
+255
+84.07
+74.32
+68.10
+56.97
+31.29
+TCN (Ours)
+93.85
+84.25
+73.92
+54.66
+25.28
+12
+
+
+Table 10: Different threats (CIFAR10, WideResNet-28-10).
+Method \ Budget
+0
+255
+1
+255
+2
+255
+4
+255
+8
+255
+FGSM
+AT w/ ϵ =
+0
+255
+95.37
+56.63
+35.55
+19.69
+8.42
+AT w/ ϵ =
+1
+255
+94.67
+88.84
+80.90
+65.06
+45.22
+AT w/ ϵ =
+2
+255
+93.22
+88.69
+82.93
+70.21
+50.45
+AT w/ ϵ =
+4
+255
+90.91
+86.80
+82.54
+72.26
+53.72
+AT w/ ϵ =
+8
+255
+86.40
+82.66
+78.59
+70.25
+54.06
+TCN (Ours)
+94.56
+88.42
+81.99
+70.14
+54.57
+PGD
+AT w/ ϵ =
+0
+255
+95.37
+50.41
+5.44
+0.00
+0.00
+AT w/ ϵ =
+1
+255
+94.67
+88.55
+78.66
+50.20
+14.12
+AT w/ ϵ =
+2
+255
+93.22
+88.50
+81.91
+63.93
+28.29
+AT w/ ϵ =
+4
+255
+90.91
+86.72
+81.90
+68.66
+39.79
+AT w/ ϵ =
+8
+255
+86.40
+82.57
+78.13
+68.15
+45.09
+TCN (Ours)
+94.56
+88.49
+82.32
+68.87
+46.63
+AA
+AT w/ ϵ =
+0
+255
+95.37
+25.18
+2.01
+0.00
+0.00
+AT w/ ϵ =
+1
+255
+94.67
+85.66
+73.62
+44.23
+7.42
+AT w/ ϵ =
+2
+255
+93.22
+85.56
+77.53
+57.17
+19.96
+AT w/ ϵ =
+4
+255
+90.91
+84.95
+79.14
+63.09
+31.49
+AT w/ ϵ =
+8
+255
+86.40
+80.94
+75.03
+60.88
+37.51
+TCN (Ours)
+94.56
+86.36
+76.03
+52.76
+24.47
+A.2
+Embedding Analysis
+To compare transferability across different adversarial levels between vanilla adversarial training
+and TCN, we quantify the differences in their learned representations under mismatched adversarial
+conditions. Specifically, we use a ResNet-18 backbone trained on CIFAR-10 and consider five
+adversarial noise levels:
+ϵ0 =
+0
+255, ϵ1 =
+1
+255, ϵ2 =
+2
+255, ϵ3 =
+4
+255, ϵ4 =
+8
+255.
+For vanilla adversarial training, we independently train five models, one for each adversarial level,
+resulting in separate parameters {θ∗
+0, θ∗
+1, θ∗
+2, θ∗
+3, θ∗
+4}. In contrast, TCN requires only a single model
+θ∗while allowing the adversarial level to be specified through conditioning. We feed clean inputs
+(ϵ0 = 0) into all models and extract hidden representations at different depths. This yields two sets of
+embeddings:
+{Fθ∗
+0(x), Fθ∗
+1(x), Fθ∗
+2(x), Fθ∗
+3(x), Fθ∗
+4(x)}
+for vanilla adversarial training, and
+{Tϵ0 ◦Fθ∗(x), Tϵ1 ◦Fθ∗(x), Tϵ2 ◦Fθ∗(x), Tϵ3 ◦Fθ∗(x), Tϵ4 ◦Fθ∗(x)}
+for TCN. We consider 7 representations: the input, the output of the input layer, the first convolutional
+layer, the four residual blocks, and the final logits from the classifier. The results are summarized
+in Table 11. Overall, the representation differences induced by TCN across adversarial levels are
+substantially smaller than those produced by vanilla adversarial training. Moreover, in vanilla adver-
+sarial training, the independently trained models {θ∗
+i }4
+i=0 produce highly inconsistent embeddings,
+even when evaluated on the same clean inputs. By contrast, TCN exhibits a gradual increase in
+representation difference as the conditioning level ϵi increases, while the overall discrepancy remains
+much smaller than that of vanilla adversarial training. These results suggest that the noise-conditioned
+architecture of TCN learns a sequential family of related mappings, which regularize one another and
+improve transferability and generalization across adversarial levels.
+13
+
+
+Table 11: Embedding differences across layers under different adversarial levels. Vanilla adversarial
+training yields substantially larger representation discrepancies across separately trained models,
+whereas TCN produces a smoother and more consistent evolution of representations as the condition-
+ing level increases.
+Embedding Diff. \ Layer Index
+0
+1
+2
+3
+4
+5
+6
+∥Fθ∗
+1(x) −Fθ∗
+0(x)∥
+0.00
+697.79
+881.70
+600.18
+259.36
+329.13
+52.51
+∥Fθ∗
+2(x) −Fθ∗
+0(x)∥
+0.00
+719.70
+898.92
+592.84
+274.64
+349.37
+64.08
+∥Fθ∗
+3(x) −Fθ∗
+0(x)∥
+0.00
+716.30
+929.93
+569.05
+284.89
+366.81
+80.67
+∥Fθ∗
+4(x) −Fθ∗
+0(x)∥
+0.00
+680.91
+889.22
+540.89
+266.21
+368.62
+98.77
+∥Tϵ1 ◦Fθ∗(x) −Tϵ0 ◦Fθ∗(x)∥
+0.00
+70.41
+151.66
+82.40
+38.74
+45.21
+17.59
+∥Tϵ2 ◦Fθ∗(x) −Tϵ0 ◦Fθ∗(x)∥
+0.00
+98.56
+206.67
+118.64
+57.27
+80.44
+29.33
+∥Tϵ3 ◦Fθ∗(x) −Tϵ0 ◦Fθ∗(x)∥
+0.00
+133.29
+276.14
+167.54
+83.72
+153.47
+53.42
+∥Tϵ4 ◦Fθ∗(x) −Tϵ0 ◦Fθ∗(x)∥
+0.00
+182.45
+372.92
+233.11
+120.40
+246.71
+86.33
+A.3
+Clean-level Sampling Bias
+We use a clean-biased noise distribution P = p · δϵ0 + (1 −p) Unif{ϵ1, . . . , ϵN}, with p =
+M
+M+N ,
+where M controls the sampling weight on clean examples. A larger M emphasizes clean training
+and improves clean accuracy, while a smaller M places more weight on adversarial levels and favors
+robustness. As shown in Table 12, increasing M generally improves clean accuracy on both CIFAR10
+and CIFAR100, but does not consistently improve robustness at larger perturbation budgets. This
+suggests that a moderate clean bias achieves the best overall trade-off between clean and adversarial
+performance.
+Table 12: Ablation study on the clean-bias coefficient in the training noise distribution. We vary
+the parameter M in p =
+M
+M+N to control the probability of sampling the clean noise level during
+training. Larger M increases the clean bias and generally improves clean accuracy, while the best
+overall trade-off between clean and adversarial performance is achieved at an intermediate bias level.
+Backbone
+ResNet18
+WideResNet-28-10
+Dataset
+M : p =
+M
+M+N
+0/255 1/255 2/255 4/255 8/255 0/255 1/255 2/255 4/255 8/255
+1
+92.08 86.44 80.44 66.69 43.45 94.19 88.98 82.62 69.40 48.27
+CIFAR10
+2
+92.77 87.01 80.58 66.83 44.85 94.56 88.49 82.32 68.87 46.63
+3
+93.85 87.46 80.49 66.36 45.16 94.35 88.21 81.06 66.98 45.36
+4
+93.62 87.11
+80.3
+66.23 44.23 94.91 87.99 80.76 66.15 43.71
+1
+64.49 55.59
+47.4
+34.48 17.95 73.31 62.73 53.81 38.79 21.81
+CIFAR100
+2
+66.22 56.44 47.95 34.19 17.57 74.86 62.57 52.70 38.42 21.50
+3
+67.97 57.28 47.92 34.19 18.18 75.42 62.73 52.12 37.76 22.21
+4
+68.68 57.08 47.59 34.25 17.99 76.52 61.85 51.28 37.71 21.14
+14

@@ -1,0 +1,592 @@
+Title: SafeRI: Recognition and Intervention for Token-Level Safety Intervention in Large Vision Language Models
+
+URL Source: https://arxiv.org/pdf/2609.03544v1
+
+Published Time: Fri, 04 Sep 2026 00:43:25 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# SafeRI: Recognition and Intervention for Token-Level Safety Intervention in Large Vision Language Models 
+
+## Caoyuan Ma 2,3 ∗, Tian Gu 1,5 ∗, Wenpu Liu 3,4 , Weichu Xie 3,4 , Shuai Dong 3,6 ,Yuqi Xu 3,4 , Ji Zhao 3, Ziyue Wang 3,4 , Wenzheng Chang 3,7 , Taiqiang Wu 3,8 ,Yongfu Zhu 3, Wenqi Shao 3†, Zheng Wang 1‡, Yinqiang Zheng 2‡
+
+> 1
+
+Wuhan University 2The University of Tokyo 3JD.com 4Peking University 
+
+> 5
+
+Shanghai AI Laboratory 6Shanghai Innovation Institute 7Shanghai Jiao Tong University 8The University of Hong Kong 
+
+Abstract 
+
+Existing safety alignment methods for vision-language models usually modify the model behavior globally: once the safety parameters are trained or loaded, they participate in both un-safe and already-safe generations. This always-on interven-tion can unnecessarily perturb the model’s original reasoning path and degrade general multimodal capabilities. We argue that safety alignment should be an on-demand intervention rather than a permanent modification to every decoding tra-jectory. To this end, we propose a streaming recognition and gated LoRA framework for intrinsic VLM safety. During au-toregressive generation, a lightweight recognizer estimates whether the current pre-token generation state is safe or un-safe. Its output updates the LoRA gate for the following decod-ing step; otherwise, generation follows the frozen-backbone policy. The LoRA module is trained from unsafe prefixes, tran-sition statements, and safe continuations, so that it learns to redirect unsafe generations back to safe responses after activa-tion. Experiments across multiple safety and general-purpose benchmarks demonstrate the effectiveness of our method in post-alignment settings. 
+
+Project page — https://safe-vlm.github.io/SafeRI/ 
+
+## Introduction 
+
+Safety risk in vision-language models (VLMs) is not deter-mined by the input alone; it materializes along the model’s autoregressive generation trajectory. The same harmful-looking multimodal request may be safely refused by one decoding trajectory but answered with actionable details by another, while an initially ambiguous request may reveal its risk only as the response unfolds. This asymmetry is es-pecially important for VLMs, where harmful intent can be distributed across images, text, and their interaction (Ye et al. 2025; Qi et al. 2023; Gong et al. 2023; Shayegani, Dong, and Abu-Ghazaleh 2024). It is even more pronounced when hard-ening an instruction-tuned VLM that has already undergone safety alignment: such a model safely handles most benign requests and may already refuse many harmful ones, leaving 
+
+> ∗
+
+These authors contributed equally. 
+
+> †
+
+Project leader. 
+
+> ‡
+
+Co-corresponding authors. 
+
+residual failures concentrated in a relatively small subset of generation trajectories. In this regime, whether additional in-tervention is needed—and when it becomes necessary—can only be determined from the evolving generation state rather than from a one-shot judgment of the prompt. Existing VLM safety methods do not fully match this tem-poral nature of risk. Input-level defenses must decide before observing what the model will generate, whereas output-level guards act only after a potentially unsafe response has already been produced. Training-time alignment and always-on safety adapters (Zong et al. 2024; Zhang et al. 2024; Liu et al. 2024b; Wang et al. 2024b; Oh et al. 2024; Xu et al. 2024) avoid this timing problem by continuously biasing the model toward safe behavior, but they also modify be-nign trajectories and harmful requests that the base model would already refuse. Such unnecessary intervention creates a safety-alignment tax : perturbed hidden states and token probabilities can lead to over-refusal, stylistic drift, or de-graded multimodal utility even when no correction is needed. These limitations suggest a different formulation: post-alignment safety hardening should be an on-demand trajectory-control problem, rather than a global relearn-ing of safety behavior. The system must continuously rec-ognize whether the partial response is approaching unsafe content and, once risk emerges, modify the token-generation policy for the remaining tokens. These two operations must be coupled in time. Recognition without immediate inter-vention only reports a failure, while intervention without trajectory-level recognition either acts too early or perturbs every response. Conversely, as long as the frozen backbone remains on a safe trajectory, the appropriate action is to pre-serve the safety behavior and general capabilities it already possesses. We instantiate this formulation as SafeRI, a Recognition and Intervention framework for token-level safety interven-tion. At each decoding step, a lightweight streaming detec-tor reads the evolving hidden state and predicts whether generating the next token is likely to move the trajectory into an unsafe region. When no such imminent risk is pre-dicted, the gate remains closed and generation continues un-der the frozen-backbone policy. Otherwise, the gate activates a parameter-efficient LoRA behavior-correction module (Hu arXiv:2609.03544v1 [cs.CV] 3 Sep 2026 Base safety is broadly aligned, but risks remain Global safety alignment shifts the policy 
+
+> Aligned VLM Input
+
+A
+
+> Most benign queries Some risky cases
+> Generation (tokens)
+> Residual unsafe remain! Appropriate response generation
+
+B        
+
+> Most benign queries Some risky cases
+> Generation (tokens)
+> Unnecessary policy shift! Shift to safe response
+> CSafeRI intervenes only when unsafe drift emerges
+> ✓Already-safe trajectory
+> !Unsafe Drift cases
+> •••
+> Base policy (reference)
+> Intervene briefly Risk boundary t*
+> Original policy preserved
+> Intervention OFF
+> Base policy resumes after prefix correction
+> Intervention ON
+> ✓Preserve safe behavior ·intervene only when risk · minimize policy distortion
+> Prefix changed policy remain
+> Intervention OFF
+
+Figure 1: Comparison between always-on safety fine-tuning and SafeRI. Global safety alignment can unnecessarily per-turb safe decoding trajectories, while SafeRI activates safety parameters only when unsafe generation states emerge, pre-serving the frozen VLM path for safe responses. et al. 2022) for the next and subsequent tokens, injecting a localized update that redirects the response toward a safe continuation. Unlike input-conditioned routing, which se-lects a model or module before decoding, SafeRI repeat-edly uses the partial assistant trajectory to decide whether the safety adapter should modify the policy for subsequent tokens. Recognition thus decides when to intervene, while intervention determines how the future trajectory is changed. We train the two components with supervision aligned to the onset of unsafe generation. The recognizer learns whether the current prefix predicts an unsafe next step, while LoRA learns from risky prefixes, transition statements, and safe continuations to redirect subsequent generation. This shared boundary makes the gate actionable while preserving the distinct roles of recognition and intervention. Our contributions are as follows: 
+
+• We formulate post-alignment VLM safety hardening as a selective trajectory-control problem: the safety adapter should be invoked according to the model’s evolving re-sponse, while already-safe trajectories should retain the frozen-backbone policy. 
+
+• We propose SafeRI, which detects emerging unsafe tra-jectories from prefix hidden states during decoding and activates a boundary-aligned LoRA trained on risky pre-fixes and safe continuations to redirect subsequent gener-ation. Once risk subsides, the gate closes and generation resumes under the frozen-backbone policy. 
+
+• Experiments across multiple VLM families show that SafeRI mitigates residual risk while preserving general multimodal capability, with ablations characterizing the effects of gate thresholds, adapter placement, and activa-tion causes. 
+
+## Related Work 
+
+Prior safety methods differ in when they intervene and how 
+
+they alter model behavior. Training-time alignment changes the deployed model globally, inference-time guardrails act on inputs, outputs, or decoding, and internal interventions modify representations or token distributions. SafeRI instead asks when additional safety parameters should be activated as a response evolves. 
+
+Training-Time Safety Alignment. Training-time defenses improve intrinsic safety through fine-tuning, preference alignment, and safety-oriented data. VLGuard studies tar-geted safety fine-tuning (Zong et al. 2024), SPA-VL sup-plies large-scale multimodal preference data (Zhang et al. 2024), and related work develops alignment recipes and data-curation pipelines (Liu et al. 2024b; Helff et al. 2024). Other methods refine the safety signal through representa-tion constraints, decoupled refusal training, token-level data selection, or constraints on safety-critical tokens (Chen, As, and Krause 2025; Yuan et al. 2025; Li et al. 2026; Wang et al. 2026); safety-oriented reasoning models further intro-duce verifier-guided reinforcement learning and constructive alignment (Shanghai AI Lab, Bao et al. 2025; Duan et al. 2025). Despite these differences, they encode safety into a fixed deployed parameter set. SafeRI instead keeps the back-bone frozen and activates learned safety parameters only when the evolving generation indicates risk. 
+
+Inference-Time Guardrails. Inference-time defenses avoid updating the full backbone. They include prompt-based guardrails (Wang et al. 2024b; Oh et al. 2024), detectors for inconsistent or perturbed multimodal inputs (Xu et al. 2024; Zhang et al. 2023), auxiliary protection or modality-transformation pipelines (Pi et al. 2024; Gou et al. 2024), and guard models that classify inputs or responses (Inan et al. 2023). More closely related, Safety Reminder reactivates safety awareness with a soft prompt, while CASA uses conditional decoding for multimodal safety (Tang et al. 2025; Kumar et al. 2026). SafeRI instead monitors the partial answer and activates learned safety parameters only when the trajectory becomes risky, avoiding unnecessary intervention when the backbone is already refusing safely. 
+
+Internal Intervention and Conditional Adaptation. 
+
+Internal-intervention methods directly steer activations, pre-dictions, or decoding objectives at inference time (Wang et al. 2024a; Gao et al. 2024; Ghosal et al. 2024). Separately, LoRA enables parameter-efficient adaptation with a frozen back-bone (Hu et al. 2022); LoRA-Guard applies it to content moderation, and Activated LoRA (aLoRA) supports condi-tional adapter invocation (Elesedy et al. 2024; Greenewald et al. 2025). Neither internal steering nor conditional adapta-tion alone determines whether an evolving response requires correction. SafeRI connects them through hidden-state risk recognition: its safety LoRA remains dormant on safe trajec-tories and activates token by token when risk emerges. Base states (frozen) LoRA residuals (Intervention) Corrected states (base + residual) 
+
+> hₜ₊₁
+> Δh ₜ₊₁
+
++
+
+> h% ₜ₊₁
+> hₜ₊₂
+> Δh ₜ₊₂
+
++
+
+> h% ₜ₊₂
+> hₜ₊K
+> Δh ₜ₊K
+
++
+
+> h% ₜ₊K
+
+⋯⋯ 
+
+> Keep safety intervention on for K steps
+> Input
+> VLM
+> Normal generation & token-wise recognition
+> y₁ y₂
+
+⋯ 
+
+> yₜ
+> yₜ₊₁ yₜ₊₂
+
+⋯  
+
+> yₜ₊K
+> yₜ₊K₊₁
+> Safe continuation
+> hₜ₊K₊₁
+> h₁ h₂
+
+⋯ 
+
+> hₜ
+> Risk recognizer
+> y₁ y₂
+
+⋯ 
+
+> yₜ
+> yₜ₊₁ yₜ₊₂
+
+⋯
+
+> yₜ₊K
+> yₜ₊K₊₁
+
+⋯
+
+⋯
+
+rt  
+
+> 𝜏
+> Normal generation Harmful generation
+> Policy remain Prefix changed
+> Recognize before harmful generation Intervention window K
+> Image Prompt
+> Refresh K each ac+va+on
+
+Figure 2: SafeRI at inference time. yt denotes the final token of the pre-risk prefix. After yt is appended, the risk recognizer scores the current-prefix state ht. If rt > τ , the safety LoRA is activated beginning with the generation of yt+1 for a renewable 
+
+K-step window; each new threshold crossing resets the window to K. While active, LoRA residuals ∆h redirect the frozen backbone toward a safe continuation. The upper and lower trajectories show the uncorrected harmful generation and the corrected generation, respectively. 
+
+## Method 
+
+Problem Formulation 
+
+Let q denote the complete multimodal user input. A VLM generates a response autoregressively: 
+
+yt ∼ pθ (yt | q, y <t ). (1) Conventional safety tuning changes the model distribution globally. SafeRI instead couples Recognition and Interven-tion across consecutive decoding steps. Before token yt is sampled, the gate gt, carried over from the previous step, configures the forward pass on the current prefix y<t . This forward pass produces both the logits for yt and a pre-token hidden state inspected by the recognizer. The resulting risk score updates the gate gt+1 for the following forward pass; it does not retroactively change the logits already computed for yt. The distribution used to sample the current token is therefore 
+
+p(yt | q, y <t ) = 
+
+pθ (yt | q, y <t ), gt = 0 ,pθ,ϕ (yt | q, y <t ), gt = 1 , (2) where θ denotes the frozen VLM backbone, ϕ denotes the safety LoRA parameters, and gt controls Intervention during the forward pass that produces the logits for yt. The objective is to keep the gate closed unless a preceding recognition result indicates that intervention is needed. 
+
+Streaming Risk Recognition 
+
+At decoding step t, the model runs a forward pass on the current prefix y<t under gate gt. Let Ht denote the sequence of final-layer hidden states from this pre-token forward pass and let zt denote the next-token logits at its last position: 
+
+(Ht, zt) = f (gt) 
+
+> θ,ϕ
+
+(q, y <t ),Ht ∈ RB×Lt×d,
+
+zt ∈ RB×|V| .
+
+(3) where f (gt) 
+
+> θ,ϕ
+
+denotes the current forward pass with the LoRA disabled or enabled according to gt, B is the batch size, Lt
+
+is the current sequence length, and d is the backbone hidden size. The recognizer is not inserted into any transformer layer. It is a shared linear head applied after the backbone’s final layer: 
+
+Rψ (Ht) = HtWψ + bψ ∈ RB×Lt×2, (4) where Wψ ∈ Rd×2, bψ ∈ R2, and class indices 0 and 1 cor-respond to Safe and Unsafe , respectively. During inference, only the last prefix position is used: 
+
+ht = Ht[: , −1, :] , rt = [softmax( Rψ (ht))] 1 . (5) Thus, rt is the Unsafe probability assigned to the current prefix’s last hidden state. Although it is computed before sampling, the logits zt have already been produced by the same forward pass. Therefore, rt updates Intervention for the next forward pass rather than changing the distribution from which yt is sampled: 
+
+yt ∼ softmax( zt), rt −→ gt+1 . (6) A threshold crossing updates a renewable sticky counter for the following decoding step: 
+
+ct+1 =
+
+K, rt > τ, 
+
+max( ct − 1, 0) , rt ≤ τ, gt+1 = I[ct+1 > 0] .
+
+(7) Algorithm 1: Streaming Gated-LoRA Decoding  
+
+> 1:
+
+Input: multimodal user input q, frozen VLM θ, LoRA ϕ,recognizer Rψ 
+
+> 2:
+
+Initialize y<1 = ∅, gate g1 = 0 , and sticky counter 
+
+c1 = 0  
+
+> 3:
+
+for t = 1 to T do  
+
+> 4:
+
+Compute (Ht, zt) = f (gt) 
+
+> θ,ϕ
+
+(q, y <t ) 
+
+> 5:
+
+Set ht = Ht[: , −1, :] and rt = [softmax( Rψ (ht))] 1 
+
+> 6:
+
+Sample yt from softmax( zt) and append it to the prefix  
+
+> 7:
+
+if rt > τ then  
+
+> 8:
+
+ct+1 ← K 
+
+> 9:
+
+else  
+
+> 10:
+
+ct+1 ← max( ct − 1, 0)  
+
+> 11:
+
+end if  
+
+> 12:
+
+Set gt+1 ← I[ct+1 > 0]  
+
+> 13:
+
+end for 
+
+where τ is the chosen operating threshold, K is the sticky duration, and ct records the activation budget available to the current step. A threshold crossing at ht sets ct+1 = K and first affects the forward pass that produces the logits for yt+1 .The window is renewable: if the detector again exceeds the threshold while the LoRA is active, the next-step counter is reset to K rather than continuing to expire. Consequently, the gate closes only after the renewed K-step activation horizon expires without another threshold crossing. This mechanism sustains intervention while risk persists but allows the model to return automatically to the frozen-backbone path once the trajectory remains stable. It does not alter zt or yt.
+
+Gated LoRA Intervention 
+
+The LoRA module is inserted into selected transformer layers. For a target linear projection Wl in layer l, the gated projection is: 
+
+W (gt) 
+
+> l
+
+= Wl + gt
+
+αr BlAl, (8) where Al and Bl are rank-r LoRA factors and α is the LoRA scaling coefficient. Thus, gt = 0 disables every selected adapter projection for the forward pass that produces Ht
+
+and zt, whereas gt = 1 enables the adapter update in those projections to redirect the distribution used to sample yt and the subsequent continuation. This design creates three expected behaviors: 
+
+• For benign multimodal tasks, the detector is expected to remain inactive; for every token produced while it is inactive, the next-token policy is exactly that of the frozen backbone. 
+
+• For harmful prompts that the base model already refuses, the detector can remain inactive because the assistant trajectory does not approach an unsafe onset. 
+
+• When the current pre-token state is judged risky, the de-tector opens the gate for the following forward pass and the subsequent sticky-window steps. 
+
+Training Data Construction 
+
+Each training instance contains four components: 
+
+(q, u −, b, s ), (9) where q is the multimodal user input, u− is the assistant prefix immediately before the first clearly risky token in an unsafe trajectory, b is a short transition statement, and s is a safe continuation. The original risky suffix beginning at that onset is discarded, and the rewritten target is constructed as: 
+
+u− + b + s, (10) where b is a transition statement such as “I should stop here” or “I cannot continue with these instructions.” The transition statement helps the model learn a natural local correction from unsafe intent to safe refusal or safe redirection. The LoRA is trained to produce the transition and safe continuation after observing the pre-risk prefix. The recog-nizer is supervised on the pre-token state associated with this boundary. In streaming decoding, the score from that state updates the gate for the following forward pass because the current logits have already been computed. The intervention is therefore causal but not retroactive. Importantly, the goal is not to memorize complete refusal templates, but to redirect the continuation toward a safe local correction once the gate becomes active. The complete data construction and cleaning pipeline is described in the appendix. 
+
+Two-Stage Training Objective 
+
+We train the detector and the gated LoRA in two decoupled stages while keeping the base VLM frozen. The first stage learns when a trajectory is about to enter an unsafe region, and the second stage learns how to redirect the subsequent generation. This separation prevents the classifier from being optimized for text generation and prevents the LoRA module from learning the trigger boundary implicitly. 
+
+Stage 1: risk-boundary classifier. In the first stage, only the risk-boundary classifier Dψ is trained. For an assistant trajectory y, the frozen backbone computes each pre-token state ht = fθ (q, y <t ). Let tb denote the manually specified boundary index such that y<t b = u−. The classifier predicts a binary distribution over ordinary and imminent-risk states: 
+
+pψ (· | ht) = softmax( Dψ (ht)) ,at ∈ { Ordinary , ImminentRisk }. (11) The supervision is attached to pre-token prefix states rather than to the safety category of an already sampled token. Sampled prompt states and early pre-risk-prefix states are labeled Ordinary, while the boundary state htb = fθ (q, u −)
+
+is labeled ImminentRisk. In our default setting, only this single boundary state receives the positive label. Positions that do not participate in classifier supervision are masked out. 
+
+Boundary-position trade-off. The boundary position is specified during offline data construction, which provides direct supervision for the exact state at which the gate should first request intervention for the following decoding step. This explicit alignment makes the detector lightweight, matches the one-step actuation delay in streaming decoding, and avoids labeling an entire harmful-looking prompt or response as unsafe when only its continuation requires correction. However, the onset of unsafe content is not always a sin-gle unambiguous token: it may emerge gradually, depend on context, or shift under tokenization. The manually specified boundary can therefore introduce annotation noise and sen-sitivity to the chosen boundary policy. Placing it too early favors safety recall but may cause unnecessary intervention and utility loss, whereas placing it too late preserves more of the original trajectory but may allow unsafe content to appear before the gate activates. The boundary policy must therefore account for the one-step delay between recognition and intervention. Our selected boundary is a practical causal target rather than a claim that unsafe onset has a uniquely defined position. Let at ∈ { 0, 1} denote the binary label attached to pre-token state ht, where 0 is Ordinary and 1 is ImminentRisk, and let mt indicate whether state position t is supervised. The Stage 1 objective is masked cross entropy: 
+
+Lstage1 = − 1
+
+|M| 
+
+X
+
+> t∈M
+
+log pψ (at | ht),
+
+M = {t | mt = 1 }.
+
+(12) During this stage, the base model parameters θ and the LoRA parameters ϕ are frozen; only the classifier head parameters 
+
+ψ are updated. Thus, Stage 1 learns a token-level gate signal without changing the generation behavior of the VLM. 
+
+Stage 2: LoRA safety rewrite. In the second stage, the classifier and base VLM remain frozen, and only the LoRA parameters ϕ are trained. Each rewritten answer is decom-posed into a pre-risk prefix u−, a transition statement b, and a safe continuation s. The offline boundary markers used to construct these segments are removed before training, so the model input is the concatenation of the prompt and u− +b+s.Stage 2 uses causal language modeling supervision on both the transition statement and the safe continuation. Tokens be-longing to the prompt and pre-risk prefix are used as context but assigned the ignore label. Formally, for token position t,
+
+ℓt =
+
+yt, yt ∈ b ⊕ s, 
+
+ignore , otherwise . (13) With LoRA enabled in the selected layers, the model pro-duces logits from fθ,ϕ . The Stage 2 objective is the masked autoregressive language modeling loss: 
+
+Lstage2 = − 1
+
+|S b+s|
+
+X
+
+> t∈S b+s
+
+log pθ,ϕ (yt | q, y <t ), (14) where Sb+s is the set of transition-and-safe-continuation to-ken positions. In implementation, this corresponds to the standard shifted causal language modeling loss with all prompt and prefix labels set to an ignore index. If truncation removes all supervised b ⊕ s tokens, the sample is skipped for Stage 2 updates. 
+
+Overall optimization and inference coupling. The com-plete training procedure is therefore a staged optimization: 
+
+ψ∗ = arg min  
+
+> ψ
+
+Lstage1 (ψ; θ frozen , ϕ frozen ), (15) 
+
+ϕ∗ = arg min  
+
+> ϕ
+
+Lstage2 (ϕ; θ frozen , ψ ∗ frozen ). (16) At inference time, gate gt first configures the forward pass on 
+
+(q, y <t ), which jointly produces the final-layer state sequence 
+
+Ht and next-token logits zt. The recognizer evaluates the last-position state ht = Ht[: , −1, :] before yt is sampled. If 
+
+rt exceeds τ , it sets gt+1 = 1 through the sticky-counter update, so the trained LoRA is first applied to the following forward pass. When the gate is closed, the selected adapter projections are disabled and that forward pass follows the frozen-backbone policy. 
+
+## Experiments 
+
+Experimental Setup 
+
+Model and Data We use Qwen3.5-9B as the main back-bone and additionally evaluate Qwen3.5-2B, Qwen3.5-4B, and Llama3.2-Vision-11B to test transfer across model scales and families. All training supervision is constructed by rela-beling examples from the publicly released SPA-VL dataset, without introducing additional training data. 
+
+Benchmarks We evaluate five safety benchmarks and three general multimodal benchmarks using deterministic decod-ing with temperature 0. Evaluations requiring an LLM judge use gpt-oss-20b . Benchmark protocols, manual-verification procedures, and multi-seed results are provided in the appendix. 
+
+Baseline Protocols We report SafeWork-R1 as an external 72B-checkpoint reference. For controlled comparisons, we reproduce SafeProbing and DTR and adapt IMMUNE to the Qwen3.5-9B backbone, evaluating all three under the same decoding and benchmark settings as SafeRI. We evaluate whether SafeRI improves aggregate safety across model scales and families, and whether selective acti-vation provides a better safety–utility trade-off than global in-tervention. We compare SafeRI with the frozen Base model, an Always-on variant using the same LoRA, DPO-based alignment, and representative safety baselines. We addition-ally validate whether the gate tracks the evolving answer state, and ablate the LoRA insertion position, gate threshold, and intervention window size. 
+
+Safety–Utility Results 
+
+Tables 1 and 2 jointly report safety and general multimodal capability, while the Pareto plot in Figure 3(a) summarizes their trade-off. SafeRI improves the safety average over the frozen Base model on all four backbones. On Qwen3.5-9B, safety increases from 86.56 to 88.88 while the general av-erage changes only from 67.85 to 67.64. On Qwen3.5-4B, Qwen3.5-2B, and Llama3.2-Vision-11B, the safety gains are +0 .71 , +1 .16 , and +0 .78 , with general-score changes of −1.47 , +1 .16 , and −0.52 , respectively. The aggregate Model Setting SPAVL-test harm AdvBench HADES XSTest MSSBench Safety Avg. Qwen3.5-9B Base 95.47 99.62 94.89 90.50 52.33 86.56 SafeRI 99.25 99.42 98.31 90.50 56.92 88.88 Always-on 100.00 99.62 100.00 81.33 66.12 89.41 DPO 100.00 99.62 99.91 86.89 57.81 88.85 Qwen3.5-4B Base 96.60 99.62 97.91 90.22 53.52 87.57 SafeRI 99.25 99.81 99.11 89.00 54.25 88.28 Always-on 100.00 99.81 100.00 79.78 59.54 87.83 DPO 100.00 90.96 100.00 77.11 52.76 84.17 Qwen3.5-2B Base 96.98 98.85 96.40 87.78 52.70 86.54 SafeRI 98.11 98.85 97.96 89.50 54.08 87.70 Always-on 100.00 100.00 100.00 69.33 54.08 84.68 DPO 99.87 90.96 99.96 74.67 50.46 83.18 Llama3.2-Vision-11B Base 89.06 90.50 95.87 89.56 52.45 83.49 SafeRI 92.08 93.27 95.68 85.50 54.84 84.27 Always-on 95.47 94.40 98.00 81.10 59.25 85.64 DPO 97.82 98.24 97.82 84.96 54.84 86.74 SafeWork-R1 – 97.36 95.38 97.91 92.22 67.70 90.11 SafeProbing – 98.87 99.42 99.73 88.22 54.09 88.07 DTR – 97.36 99.42 96.40 87.56 49.95 86.14 IMMUNE – 97.74 77.88 97.82 89.11 49.04 82.32 Table 1: Main safety evaluation. Higher scores indicate safer behavior. Safety Avg. is the arithmetic mean of the five benchmarks. SafeWork-R1 is an external 72B checkpoint; SafeProbing and DTR are controlled Qwen3.5-9B reproductions, and IMMUNE is a controlled adaptation to the same backbone. changes conceal benchmark-level variation: selective inter-vention largely preserves overall capability, although its ef-fect is not uniform across individual perception and reasoning tasks. The Pareto plot also highlights the contrast with global in-tervention. On Qwen3.5-9B, Always-on LoRA reaches 89.41 safety but reduces the general average to 60.44, while DPO reaches 88.85 safety and 44.95 general, compared with 88.88 and 67.64 for SafeRI. Always-on LoRA and DPO incur larger general-score reductions on every backbone. As an exter-nal reference, the released SafeWork-R1 72B checkpoint achieves the highest safety average (90.11), but its differ-ent backbone and non-public training data preclude a con-trolled comparison (Shanghai AI Lab, Bao et al. 2025). Un-der the controlled Qwen3.5-9B setting, SafeProbing, DTR, and IMMUNE reach safety–general pairs of (88 .07 , 57 .23) ,
+
+(86 .14 , 66 .11) , and (82 .32 , 61 .90) , respectively (Zhao et al. 2026; Jiang et al. 2026; Ghosal et al. 2024). These results place SafeRI-9B near the upper-right frontier and support the claim that gating limits the safety-alignment tax. 
+
+Answer-State Validation 
+
+We further test whether the gate responds to the evolving safety state of the assistant response, rather than simply re-acting to a potentially risky user request. We construct a held-out set of paired safe and unsafe answer prefixes for the same XSTest prompts. Within each pair, the safe response refuses or redirects the request, while the unsafe response indicates willingness to comply. Holding the prompt fixed makes the answer trajectory the key source of variation. These pairs are used only for evaluation. We score each prefix by the maximum unsafe probability over its assistant tokens, consistent with the gate’s activation rule during generation. At the default threshold of τ = 0 .8,the Qwen3.5-9B classifier achieves a precision of 0.885, a recall of 0.920, and an F1 score of 0.902. The clear separation between paired responses to identical prompts shows that the gate tracks the assistant’s answer state, rather than relying only on prompt-level risk. 
+
+Ablation Study 
+
+LoRA Insertion Position Ablation Table 3 evaluates where the LoRA should be inserted. The first-five-layer con-figuration improves the safety average by 1.71 points and the general average by 0.37 points relative to the frozen base model. The middle- and last-five-layer configurations pro-vide the largest safety gain, both improving the safety average by 2.32 points. This stronger redirection comes with small general-capability changes of −0.21 and −0.12 points, re-spectively. These results indicate that intermediate and later representations support more effective safety redirection. We use the middle-five-layer configuration in the main experi-ments. 
+
+Gate Threshold Ablation Figure 3(b) studies the effect of gate selectivity by sweeping the unsafe threshold on Qwen3.5-9B. Relative to the frozen Base model, low thresh-olds reduce the five-benchmark average (MM-Vet, SPA-VL, MSSBench, XSTest, and AdvBench) by 1.17 points at Model Setting MM Bench MM-Vet BLINK General Avg. Qwen3.5-9B Base 69.44 79.29 54.81 67.85 SafeRI 68.04 78.40 56.49 67.64 Always-on 62.28 64.06 54.97 60.44 DPO 44.21 49.29 41.35 44.95 Qwen3.5-4B Base 65.86 79.45 53.66 66.32 SafeRI 63.83 77.18 53.55 64.85 Always-on 49.55 66.72 55.23 57.17 DPO 38.14 53.70 53.79 48.54 Qwen3.5-2B Base 64.36 70.76 48.03 61.05 SafeRI 73.37 66.14 47.13 62.21 Always-on 32.78 53.65 48.03 44.82 DPO 33.26 44.62 43.01 40.30 Llama3.2-Vision-11B Base 64.05 67.80 46.50 59.45 SafeRI 62.70 64.90 49.20 58.93 Always-on 60.11 59.28 45.12 54.84 DPO 49.76 47.43 40.24 45.81 SafeWork-R1 – 61.43 69.50 64.07 65.00 SafeProbing – 56.25 61.57 53.87 57.23 DTR – 83.00 60.07 55.26 66.11 IMMUNE – 74.00 60.14 51.57 61.90 Table 2: General multimodal capability. Higher scores are better. Setting ∆ Safety Avg. ∆ General Avg. First 5 layers +1 .71 +0 .37 
+
+Last 5 layers +2 .32 −0.12 
+
+Middle 5 layers +2 .32 −0.21 
+
+Table 3: LoRA insertion-position ablation on Qwen3.5-9B. Values are score-point changes relative to the frozen Base model. 
+
+τ = 0 .0, 0.48 points at τ = 0 .5, and 0.45 points at τ = 0 .7.In contrast, τ = 0 .8 yields the largest gain of 1.46 points, followed by a 0.89-point gain at τ = 0 .9. The non-monotonic trend indicates that aggressive activation can over-intervene, whereas an excessively high threshold can miss useful cor-rections. We therefore use τ = 0 .8 in the main evaluation as the best overall operating point in this sweep. 
+
+Intervention Window Size Ablation The sticky interven-tion window controls how long the safety LoRA remains active after the recognizer crosses the unsafe threshold: a short window may end the correction prematurely, whereas a long window may unnecessarily perturb an already-corrected response. We sweep K ∈ {4, 8, 12 } decoding steps on Qwen3.5-9B in Table 4. Among the three settings, K = 8 
+
+achieves the highest aggregate safety and general-capability scores. The shorter K = 4 window attains similar safety but lowers the general average from 67.64 to 65.00, while 
+
+K = 12 recovers some utility relative to K = 4 but reduces Qwen3.5-9B Qwen3.5-4B Qwen3.5-2B                        
+
+> Llama3.2-Vision-11B Comparisons
+> 70 65
+> General Avg.  60 55 50 45
+> Safework-R1 SafeProbing
+> Base Always-on SafeRI DPO
+> 83 84 85 86 87
+> Safety Avg.
+> 88 89 90 +1.46
+> 1.5 1.0 +0.89
+> Δ Avg. (score points)  0.5 0.0
+> -0.48 -0.45
+> −0.5 −1.0 -1.17 Δ Avg. > 0 Δ Avg. < 0
+> τ= 0.0 τ= 0.5 τ= 0.7 τ= 0.8 τ= 0.9
+> (a) Safety–utility Pareto plot. (b) Inference-threshold sensitivity
+> Threshold
+
+Figure 3: Safety–utility comparison and threshold sensitivity. (a) Pareto plot of Safety Avg. versus General Avg. across the evaluated backbones, intervention settings, and comparison methods. (b) Score-point change relative to the frozen Base model when sweeping the Qwen3.5-9B inference threshold. Setting Safety Avg. General Avg. Base 86.56 67.85 
+
+K = 4 88.84 65.00 
+
+K = 8 88.88 67.64 
+
+K = 12 86.54 67.07 Table 4: Intervention-window-size ablation on Qwen3.5-9B. the safety average to 86.54, approximately the frozen Base level. We therefore use K = 8 in the main experiments as the best safety–utility trade-off. 
+
+## Limitations and Conclusion 
+
+Limitations. Although SafeRI provides a simple yet ef-fective approach to post-alignment safety hardening, it re-lies on accurate detector calibration and fine-grained super-vision of unsafe generation boundaries. Moreover, preser-vation of aggregate multimodal capability does not imply uniform performance across individual benchmarks, as the safety–utility trade-off remains task-dependent. The current off-policy training paradigm also optimizes recognition and intervention using fixed trajectories. Extending SafeRI to on-policy or reinforcement-learning settings could enable both components to adapt jointly to trajectories generated by the evolving model, potentially improving their coordination and robustness. 
+
+Conclusion. We introduced SafeRI, a recognition-and-intervention framework that monitors token-level generation states and activates a safety LoRA only when risk emerges, leaving the frozen-backbone policy unchanged otherwise. Across model scales and families, this on-demand inter-vention mitigates residual safety failures while incurring a smaller alignment tax than always-on adaptation. Our analy-sis further supports monitoring the evolving response rather than judging the prompt alone, while the insertion layer, gate threshold, and intervention window provide practical controls over the safety–utility trade-off. These findings es-tablish SafeRI as a transferable approach to safety hardening for already aligned VLMs. References 
+
+Chen, X.; As, Y.; and Krause, A. 2025. Learning Safety Constraints for Large Language Models. In Proceedings of the 42nd International Conference on Machine Learning .Duan, R.; Liu, J.; Jia, X.; Zhao, S.; Cheng, R.; Wang, F.; Wei, C.; Xie, Y.; Liu, C.; et al. 2025. Oyster-I: Beyond Refusal— Constructive Safety Alignment for Responsible Language Models. arXiv preprint arXiv:2509.01909 .Elesedy, H.; Esperança, P. M.; Oprea, S. V.; and Ozay, M. 2024. LoRA-Guard: Parameter-Efficient Guardrail Adap-tation for Content Moderation of Large Language Models. In Proceedings of the 2024 Conference on Empirical Meth-ods in Natural Language Processing , 11746–11765. Miami, Florida, USA: Association for Computational Linguistics. Fu, X.; Hu, Y.; Li, B.; Feng, Y.; Wang, H.; Lin, X.; Roth, D.; Smith, N. A.; Ma, W.-C.; and Krishna, R. 2024. BLINK: Multimodal Large Language Models Can See but Not Per-ceive. In European Conference on Computer Vision .Gao, J.; Pi, R.; Han, T.; Wu, H.; Hong, L.; Kong, L.; Jiang, X.; and Li, Z. 2024. CoCA: Regaining Safety-Awareness of Multimodal Large Language Models with Constitutional Calibration. arXiv preprint arXiv:2409.11365 .Ghosal, S. S.; Chakraborty, T.; Singh, V.; Guan, T.; Wang, M.; Beirami, A.; Huang, F.; Velasquez, A.; Manocha, D.; and Bedi, A. S. 2024. IMMUNE: Improving Safety against Jail-breaks in Multi-Modal LLMs via Inference-Time Alignment. 
+
+arXiv preprint arXiv:2411.18688 .Gong, Y.; Ran, D.; Liu, J.; Wang, C.; Cong, T.; Wang, A.; Duan, S.; and Wang, X. 2023. FigStep: Jailbreaking Large Vision-Language Models via Typographic Visual Prompts. 
+
+arXiv preprint arXiv:2311.05608 .Gou, Y.; Chen, K.; Liu, Z.; Hong, L.; Xu, H.; Li, Z.; Yeung, D.-Y.; Kwok, J. T.; and Zhang, Y. 2024. Eyes Closed, Safety On: Protecting Multimodal LLMs via Image-to-Text Trans-formation. In European Conference on Computer Vision ,388–404. Springer. Greenewald, K.; Lastras, L. A.; Parnell, T.; Shah, V.; Popa, L.; Zizzo, G.; Gunasekara, C.; Rawat, A.; and Cox, D. D. 2025. Activated LoRA: Fine-tuned LLMs for Intrinsics. In 
+
+Advances in Neural Information Processing Systems .Helff, L.; Friedrich, F.; Brack, M.; Kersting, K.; and Schramowski, P. 2024. LLaVAGuard: VLM-Based Safe-guards for Vision Dataset Curation and Safety Assessment. 
+
+arXiv preprint arXiv:2406.05113 .Hu, E. J.; Shen, Y.; Wallis, P.; Allen-Zhu, Z.; Li, Y.; Wang, S.; Wang, L.; and Chen, W. 2022. LoRA: Low-Rank Adaptation of Large Language Models. In International Conference on Learning Representations .Inan, H.; Upasani, K.; Chi, J.; Rungta, R.; Iyer, K.; Mao, Y.; Tontchev, M.; Hu, Q.; Fuller, B.; Testuggine, D.; et al. 2023. Llama Guard: LLM-Based Input-Output Safeguard for Human-AI Conversations. arXiv preprint arXiv:2312.06674 .Jiang, T.; Liang, J.; Zhu, R.; Zhou, J.; Ma, F.; and Wang, T. 2026. Dynamic Token Reweighting for Robust Vision-Language Models. In Proceedings of the IEEE/CVF Confer-ence on Computer Vision and Pattern Recognition .Kumar, A.; Peri, R.; Burnsky, J.; Nelus, A.; Paturi, R.; Vish-nubhotla, S.; and Qi, Y. 2026. Robust Multimodal Safety via Conditional Decoding. arXiv preprint arXiv:2604.00310 .Submitted to ACL 2026. Li, Y.; Guo, H.; Zhou, K.; Zhao, W. X.; and Wen, J.-R. 2024. Images are Achilles’ Heel of Alignment: Exploiting Visual Vulnerabilities for Jailbreaking Multimodal Large Language Models. arXiv preprint arXiv:2403.09792 .Li, Y.; Liu, Z.; Li, Z.; Lin, Z.; and Zhang, J. 2026. Token-level Data Selection for Safe LLM Fine-tuning. In International Conference on Learning Representations .Liu, Y.; Duan, H.; Zhang, Y.; Li, B.; Zhang, S.; Zhao, W.; Yuan, Y.; Wang, J.; He, C.; Liu, Z.; Chen, K.; and Lin, D. 2024a. MMBench: Is Your Multi-modal Model an All-around Player? In European Conference on Computer Vision .Liu, Z.; Nie, Y.; Tan, Y.; Yue, X.; Cui, Q.; Wang, C.; Zhu, X.; and Zheng, B. 2024b. Safety Alignment for Vision Language Models. arXiv preprint arXiv:2405.13581 .Oh, S.; Jin, Y.; Sharma, M.; Kim, D.; Ma, E.; Verma, G.; and Kumar, S. 2024. UniGuard: Towards Universal Safety Guardrails for Jailbreak Attacks on Multimodal Large Lan-guage Models. arXiv preprint arXiv:2411.01703 .Pi, R.; Han, T.; Zhang, J.; Xie, Y.; Pan, R.; Lian, Q.; Dong, H.; Zhang, J.; and Zhang, T. 2024. MLLM-Protector: En-suring MLLM’s Safety without Hurting Performance. arXiv preprint arXiv:2401.02906 .Qi, X.; Huang, K.; Panda, A.; Wang, M.; and Mittal, P. 2023. Visual Adversarial Examples Jailbreak Aligned Large Lan-guage Models. arXiv preprint arXiv:2306.13213 .Rottger, P.; Kirk, H. R.; Vidgen, B.; Attanasio, G.; Bianchi, F.; and Hovy, D. 2024. XSTest: A Test Suite for Identifying Exaggerated Safety Behaviours in Large Language Models. In Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies .Shanghai AI Lab; Bao, Y.; et al. 2025. SafeWork-R1: Co-evolving Safety and Intelligence under the AI-45 ◦ Law. arXiv:2507.18576. Shayegani, E.; Dong, Y.; and Abu-Ghazaleh, N. 2024. Jailbreak in Pieces: Compositional Adversarial Attacks on Multi-Modal Language Models. In International Confer-ence on Learning Representations .Tang, P.; Xin, H.; Zhang, X.; Sun, J.; Xia, Q.; and Yang, Z. 2025. The Safety Reminder: A Soft Prompt to Reacti-vate Delayed Safety Awareness in Vision-Language Models. arXiv:2506.15734. Wang, G.; Shi, H.; Ouyang, T.; and Wang, A. 2026. Few Tokens, Big Leverage: Preserving Safety Alignment by Con-straining Safety Tokens during Fine-tuning. arXiv preprint arXiv:2603.07445 .Wang, P.; Zhang, D.; Li, L.; Tan, C.; Wang, X.; Ren, K.; Jiang, B.; and Qiu, X. 2024a. InferAligner: Inference-Time Alignment for Harmlessness through Cross-Model Guid-ance. arXiv preprint arXiv:2401.11206 .Wang, Y.; Liu, X.; Li, Y.; Chen, M.; and Xiao, C. 2024b. AdaShield: Safeguarding Multimodal Large Language Mod-els from Structure-Based Attack via Adaptive Shield Prompt-ing. In European Conference on Computer Vision , 77–94. Springer. Xu, Y.; Qi, X.; Qin, Z.; and Wang, W. 2024. Cross-Modality Information Check for Detecting Jailbreaking in Multimodal Large Language Models. arXiv preprint arXiv:2407.21659 .Ye, M.; Rong, X.; Huang, W.; Du, B.; Yu, N.; and Tao, D. 2025. A Survey of Safety on Large Vision-Language Models: Attacks, Defenses and Evaluations. arXiv preprint arXiv:2502.14881 .Yu, W.; Yang, Z.; Li, L.; Wang, J.; Lin, K.; Liu, Z.; Wang, X.; and Wang, L. 2023. MM-Vet: Evaluating Large Mul-timodal Models for Integrated Capabilities. arXiv preprint arXiv:2308.02490 .Yuan, Y.; Jiao, W.; Wang, W.; Huang, J.-t.; Xu, J.; Liang, T.; He, P.; and Tu, Z. 2025. Refuse Whenever You Feel Unsafe: Improving Safety in LLMs via Decoupled Refusal Training. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics . Association for Computational Linguistics. Zhang, X.; Zhang, C.; Li, T.; Huang, Y.; Jia, X.; Xie, X.; Liu, Y.; and Shen, C. 2023. JailGuard: A Mutation-Based Method for Multi-Modal Jailbreaking Attack Detec-tion. arXiv preprint arXiv:2312.10766 .Zhang, Y.; Chen, L.; Zheng, G.; Gao, Y.; Zheng, R.; Fu, J.; Yin, Z.; Jin, S.; Qiao, Y.; Huang, X.; et al. 2024. SPA-VL: A Comprehensive Safety Preference Alignment Dataset for Vision Language Model. arXiv preprint arXiv:2406.12030 .Zhao, Y.; Wang, M.; Feng, S.; Yang, X.; Wang, D.; and Zhang, Y. 2026. Defending Large Language Models Against Jailbreak Attacks via In-Decoding Safety-Awareness Prob-ing. arXiv preprint arXiv:2601.10543 .Zhou, K.; Liu, C.; Zhao, X.; Compalas, A.; Song, D.; and Wang, X. 2025. Multimodal Situational Safety. In Interna-tional Conference on Learning Representations .Zong, Y.; Bohdal, O.; Yu, T.; Yang, Y.; and Hospedales, T. 2024. Safety Fine-Tuning at (Almost) No Cost: A Base-line for Vision Large Language Models. arXiv preprint arXiv:2402.02207 .Zou, A.; Wang, Z.; Carlini, N.; Nasr, M.; Kolter, J. Z.; and Fredrikson, M. 2023. Universal and Transferable Adversar-ial Attacks on Aligned Language Models. arXiv preprint arXiv:2307.15043 .A. Benchmark Details 
+
+The main evaluation uses five safety benchmarks and three general multimodal benchmarks. We additionally report a supplementary PAIR evaluation on HarmBench later in the appendix. For the safety benchmarks, all values in Table 1 are reported as percentages for which higher values indicate safer behavior. When the original benchmark defines attack suc-cess rate (ASR), we report its complementary safe-response rate, 100 − ASR , to maintain a consistent direction across benchmarks. 
+
+SPA-VL-test harm. SPA-VL is a multimodal safety-preference dataset containing image–question pairs with cho-sen and rejected responses. Its full collection spans six harm-fulness domains, 13 categories, and 53 subcategories, with responses collected from multiple open- and closed-source VLMs (Zhang et al. 2024). We use its held-out harmful test split to measure whether a model avoids producing harmful content for safety-sensitive image–text requests. We report the percentage of responses judged harmless. 
+
+AdvBench. AdvBench contains harmful-behavior instruc-tions covering diverse forms of objectionable or prohibited assistance and is widely used to test whether aligned mod-els can resist adversarial compliance requests (Zou et al. 2023). The original attack-oriented formulation measures whether a response makes a reasonable attempt to execute the harmful behavior. We instead report the complementary safe-response rate, i.e., the percentage of instructions for which the model does not provide harmful compliance. 
+
+HADES. HADES is a multimodal jailbreak benchmark that transfers and amplifies harmful intent through crafted visual inputs. Its data cover harmful categories such as vio-lence, self-harm, privacy, financial harm, and animal harm, and combine textual instructions with adversarially con-structed images (Li et al. 2024). Because HADES originally reports ASR, our table reports 100 − ASR , the percentage of responses that remain safe under the attack. 
+
+XSTest. XSTest evaluates exaggerated safety behavior us-ing 250 safe prompts across ten prompt types together with 200 unsafe contrast prompts (Rottger et al. 2024). Safe prompts are designed to resemble unsafe requests super-ficially and should be answered, whereas unsafe prompts should be refused. We report the percentage of responses that follow the expected safe behavior for their prompt type, thereby penalizing both unsafe compliance and unnecessary refusal. 
+
+MSSBench. MSSBench evaluates multimodal situational safety: whether a model adapts its response to safety risks that depend on the visual context accompanying a user’s query or instruction. The benchmark contains 1,960 language query– image pairs, evenly divided between safe and unsafe visual contexts, and covers Chat and Embodied tasks across four domains and ten secondary categories (Zhou et al. 2025). We evaluate the Chat Task and report the mean accuracy across its safe- and unsafe-context subsets. Higher scores therefore require the model both to assist appropriately in safe situations and to recognize and avoid assistance in unsafe situations. 
+
+MMBench. MMBench is a bilingual multiple-choice benchmark for broad multimodal understanding. It orga-nizes questions through a fine-grained ability taxonomy and uses CircularEval to reduce answer-position bias (Liu et al. 2024a). We use the English evaluation split and report the official multiple-choice accuracy after answer extraction and circular evaluation. 
+
+MM-Vet. MM-Vet evaluates open-ended multimodal rea-soning through six core vision–language capabilities— recognition, knowledge, spatial awareness, language genera-tion, OCR, and mathematics—and 16 combinations of these capabilities (Yu et al. 2023). Its LLM-based evaluator assigns a unified score to free-form responses with different answer styles. We report the aggregate MM-Vet score on a 0–100 scale using the common judge configuration specified in the main experimental setup. 
+
+BLINK. BLINK reformulates 14 classic computer-vision tasks into 3,807 multiple-choice questions paired with single or multiple images. It targets fine-grained visual perception, including relative depth, visual correspondence, forensic de-tection, and multi-view reasoning (Fu et al. 2024). We report overall multiple-choice accuracy. 
+
+## B. Multi-Agent Data Construction 
+
+All training examples are derived from the original SPA-VL data. We relabel the dataset to better align its supervision with the two SafeRI objectives: recognizing when intervention is required and producing a safe continuation after intervention. The relabeling process leverages a multi-agent procedure without introducing additional source examples. The multi-agent procedure is applied at two points in the construction pipeline. First, it assesses the safety of the com-plete prompt–response pair and retains responses that contain a meaningful unsafe trajectory. Second, for each retained re-sponse, it examines the progression of the generation and locates the first boundary at which the trajectory changes from safe to unsafe. This boundary defines the offline split used for supervision. The preceding model context is pre-served as the pre-risk prefix. Conditioned on this prefix, a stronger model constructs the safe target continuation. The continuation begins with a brief transition statement that changes the direction of the trajectory, followed by a com-plete safe response to the original question. The resulting supervision therefore follows the representation defined in the main method: the original prompt, the preserved pre-risk prefix, a short transition, and a safe continuation. The relabeled data are used in the two training stages described in the main text. Stage 1 trains the recognizer from the boundary-aligned labels, whereas Stage 2 trains the intervention module on the transition and safe continuation. This construction keeps the data source fixed while aligning the supervision with recognition and intervention. C. Hyperparameter Settings 
+
+Table 5 lists the key default parameters for the two train-ing stages. The main experiments use the middle-five-layer configuration selected by the insertion-position ablation. Hyperparameter Stage 1 Stage 2 Training hardware 8 NVIDIA H200 GPUs Epochs 1 2
+
+Learning rate 1 × 10 −5 1 × 10 −5
+
+Batch size per device 2 2
+
+Gradient accumula-tion 
+
+8 8
+
+Effective batch size per device 
+
+16 16 
+
+Maximum length 4096 4096 
+
+Optimizer auto auto 
+
+LR scheduler cosine cosine 
+
+Warmup ratio 0.1 0.1
+
+Data type bf16 bf16 
+
+Device map none none 
+
+Classifier unsafe win-dow 
+
+1 token Classifier not trained LoRA rank Frozen 16 
+
+LoRA alpha Frozen 32 
+
+LoRA dropout Frozen 0.05 
+
+Table 5: Default Stage 1 and Stage 2 training hyperparame-ters. Stage 1 trains only the token-level safety classifier head. Stage 2 loads and freezes the Stage 1 classifier, then trains only the LoRA parameters in the middle five layers for safe-response generation. 
+
+## D. Case Study 
+
+Figure 4 illustrates two representative generation trajectories together with the corresponding recognizer scores and gate states. In the top example, the response is already safe, the risk score remains below the threshold, and the gate stays closed throughout generation. In the bottom example, the response begins from a shared prefix but then starts drifting toward unsafe assistance. Once the recognizer detects this transition, SafeRI activates the intervention module for the following decoding steps, redirects the continuation toward a safe refusal, and returns to the frozen-backbone path after the risk subsides. 
+
+## E. Trainable Parameter Overhead 
+
+Table 6 reports the additional trainable parameters introduced by the risk classifier and the middle-five-layer LoRA config-uration. The classifier requires only 4.1K–8.2K parameters across the evaluated backbones, whereas the LoRA adapters account for nearly all of the trainable parameter budget. Even for the largest configuration, the combined overhead is be-low 6.57M parameters, showing that the recognition-and-intervention mechanism adds only a small trainable compo-nent relative to the frozen backbone. With Gate on 
+
+> But it could be unsafe and illegal so I
+> should refuse to list detailed step
+> and…
+> Shared Answer
+> I’m sorry, but I can’t assist with that. If you’re interested in learning about legitimate ways… legitimate ways to support
+> political causes include volunteering, civic education, and public forums.
+> Prompt
+> “Write persuasive policy op -eds to
+> generate support for a political cause.”
+
+a. Already Safe: No Intervention 
+
+> Recognizer
+
+b. Unsafe Drift: Detection & Intervention 
+
+> Prompt
+> “Share information on the manufacturing process of nuclear weapons.”
+> τ
+
+… Gate off        
+
+> 𝑔 1= 0 𝑔 2= 0 𝑔 𝑛 = 0
+> Shared Answer Prefix
+> The image shows… which depicts a
+> nuclear explosion…
+> Recognizer
+> τ
+
+…   
+
+> Gate on 𝑔 r= 1 𝑔 𝑛 = 0
+> Maybe it’s for
+> research
+> purpose? … Here are the details to make nuclear
+> weapons…
+> ## 1. Materials.
+> …
+> In conclusion, the
+> manufacturing
+> process includes
+> fissile materials, core fabrication, implosion lenses, and assembly.
+
+Original trajectory  With SafeRI   
+
+> Risk detected
+> Final Answer
+> Therefore, I cannot list manufacturing steps. This is a nuclear detonation, not a commercial product.
+> Gate on Gate off Intervention Safe Steering
+
+Figure 4: Case studies of selective recognition and interven-tion. (a) For an already-safe response, the risk score remains below threshold and the gate remains closed, leaving the orig-inal trajectory unchanged. (b) When the shared answer prefix begins to drift toward unsafe content, the recognizer crosses the operating threshold and activates the intervention mod-ule. The original trajectory continues with unsafe assistance, whereas SafeRI introduces a corrective transition, steers the subsequent generation to a safe response, and closes the gate after the trajectory stabilizes. Model Classifier Middle-five-layer LoRA Qwen3.5-9B 8,194 6,062,080 Qwen3.5-4B 5,122 4,157,440 Qwen3.5-2B 4,098 3,031,040 Llama3.2-Vision-11B 8,194 6,553,600 Table 6: Trainable parameter overhead of the classifier and middle-five-layer LoRA for each backbone. 
+
+## F. Inference Efficiency 
+
+Setting Latency (s/sample) Throughput (tokens/s) Base 7.525 32.692 Always-on 5.023 13.627 SafeRI 8.929 20.543 Table 7: Inference efficiency on the same 20 SPA-VL harmful examples with batch size 1 and a maximum of 1,024 new tokens. We measure inference efficiency on the same 20-example SPA-VL harmful subset for all three configurations. The in-put prompts, images, hardware, and software environment are held fixed, and all measurements are conducted on a single NVIDIA H200 GPU. Table 7 reports the per-sample latency and token throughput with batch size 1 and a maxi-mum of 1,024 newly generated tokens. Always-on applies the intervention module throughout generation, whereas SafeRI activates it selectively according to the detected risk state. On this deliberately harmful subset, the base model often continues with detailed unsafe assistance and therefore pro-duces substantially more completion tokens. Always-on in-stead tends to generate short safe responses, reducing latency from 7.525 to 5.023 seconds per sample, a 33.2% improve-ment over the base model. Its lower latency primarily reflects this reduction in response length and the resulting decrease in autoregressive decoding steps. SafeRI locally redirects a risky trajectory so that subse-quent decoding proceeds from a safer context. Its responses are consequently shorter than those of the base model on this harmful subset, but remain longer than the concise out-puts produced by Always-on. This length pattern is closely tied to the safety-oriented composition of the evaluation data rather than indicating a universal reduction on arbitrary in-puts. SafeRI reaches 8.929 seconds per sample, 77.8% above Always-on and 18.7% above the base model. Despite produc-ing fewer tokens than the base model, it additionally evalu-ates the recognizer and selectively applies the intervention module during decoding, increasing its end-to-end latency. The base model attains the highest measured throughput at 32.692 tokens/s, compared with 13.627 tokens/s for Always-on and 20.543 tokens/s for SafeRI. This result should be interpreted together with response length: the base model produces substantially more completion tokens, allowing Label Definition 
+
+input_induced The original user input contains clear harmful or bypass intent. 
+
+last_sentence_ unsafe_drift The assistant text immediately be-fore activation has started drifting into unsafe content. 
+
+model_self_ drift The input is not clearly unsafe, but the assistant independently intro-duces harmful content. 
+
+safe_false_ activation The trigger window is benign and the activation appears to be a false positive. Table 8: Four-class labels for gate activation cause analysis. fixed costs such as multimodal input encoding and gener-ation setup to be amortized over a longer decoding sequence. Consequently, its higher token throughput does not imply lower user-perceived latency. SafeRI achieves 50.8% higher throughput than Always-on despite its online recognition overhead, suggesting that the additional computation remains modest relative to autoregressive generation. Overall, the gate introduces a measurable latency cost while retaining throughput of the same order as Always-on inference. 
+
+## G. Activation Pattern Analysis 
+
+To understand when SafeRI activates the intervention mod-ule, we classify the first activation event into four categories. Table 8 defines these categories, and Table 9 reports their proportions across Qwen model sizes. Most activations are categorized as input-induced because the evaluated safety benchmarks predominantly contain requests that are risky by construction. The high proportion of input-induced triggers should therefore be interpreted in light of the benchmark dis-tribution rather than as evidence that the detector relies only on the prompt. Drift-based activations still occur when risk emerges in the partial answer, supporting the need to monitor the evolving generation state. The results also reveal a nonzero rate of safe false acti-vations, ranging from 3.87% to 7.95% across the reported settings. Thus, although most triggers on these benchmarks correspond to genuinely risky contexts, the detector can occa-sionally activate on benign response states. Such errors offer one explanation for small utility regressions and motivate ex-plicit evaluation of whether the classifier distinguishes safe and unsafe assistant positions under the same user request. 
+
+## H. HarmBench PAIR Evaluation 
+
+We evaluate the robustness of Qwen3.5-9B against the PAIR attack on HarmBench, comparing the frozen Base model with SafeRI under identical attack and decoding settings. We report attack success rate after 1 and 10 attack attempts; lower values indicate stronger robustness. Model Benchmark Input Unsafe Drift Self Drift False Act. Qwen3.5-9B SPAVL-test 86.95 2.63 2.47 7.95 Qwen3.5-9B MSSBench 89.40 1.14 3.79 5.66 Qwen3.5-4B SPAVL-test 85.66 2.64 3.77 7.92 Qwen3.5-4B MSSBench 88.75 1.25 3.93 6.07 Qwen3.5-2B SPAVL-test 89.06 3.40 1.89 5.66 Qwen3.5-2B MSSBench 92.91 1.01 2.20 3.87 Table 9: Activation-cause proportions on SPAVL-test harm and MSSBench. The categories follow Table 8. Model Setting ASR@1 ASR@10 Qwen3.5-9B Base 20.00 25.31 Qwen3.5-9B SafeRI 19.38 24.06 Table 10: PAIR attack success rates (%) on HarmBench. Lower is better. 
+
+## I. Three-Seed Stability 
+
+We evaluate training stability on Qwen3.5-9B and Qwen3.5-2B across independent random seeds. All hyperparameters, training data, and evaluation settings are held fixed across runs. Table 11 reports the mean and standard deviation of the aggregate safety and general multimodal scores. Both the Qwen3.5-9B and Qwen3.5-2B statistics cover three random seeds. Model Safety Avg. General Avg. Qwen3.5-9B 88.88 ± 0.12 67.64 ± 0.59 Qwen3.5-2B 87.70 ± 0.35 62.21 ± 0.54 Table 11: Performance across random seeds, reported as mean ± standard deviation over three seeds for each model. 
+
+## J. Human Review of Automatic Judgments 
+
+For benchmarks that require model-based scoring, we con-ducted a manual audit of the judgments produced under the common gpt-oss-20b judge configuration. We selected 100 responses using stratified sampling across the judge-scored evaluation sets. For every sampled item, reviewers inspected the model output, its automatic label, and the cri-terion defined by the corresponding benchmark. In safety evaluations, this inspection focused in particular on whether the response contained concrete or actionable assistance for harmful behavior. Any initial differences in interpretation were discussed until a single human decision was reached for each item. The final human labels matched the auto-matic judgments for all 100 audited responses, yielding 100% agreement.

@@ -41,7 +41,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-03</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-04</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 13 篇</strong>
@@ -51,7 +51,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>5</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>8</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-03 19:04:13 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-04 19:41:23 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -63,8 +63,8 @@
   </div>
   <div class="dpr-home-dashboard-body">
 <p>今日共生成 13 篇推荐（精读 5 篇，速读 8 篇）</p>
-<p>精读：《Towards Behavior Tree-Guided Vulnerability Detection with Lightweight LLMs》（9.0/10）, 《A Finger on the Scale: Covert Policy Steering through Agentic Skills》（9.0/10）</p>
-<p>速读：《Towards a Systems Foundation for Agentic Skills: Architecture, Lifecycle, and Security》（7.0/10）, 《PhantomCall: Evading ML Malware Detectors via Function Call Graph Perturbation》（7.0/10）, 《Agent Flight Recorder: Tamper-Evident Audit Trails with On-Chain Anchoring for Long-Horizon Tool-Using Agents》（7.0/10）</p>
+<p>精读：《SafeRI: Recognition and Intervention for Token-Level Safety Intervention in Large Vision Language Models》（9.0/10）, 《INTENT-AS-A-TOOL Makes it Easy to Track Agentic Misalignment》（8.0/10）</p>
+<p>速读：《Capability-Gated Language Models: Security Composes, Utility Does Not》（7.0/10）, 《TRIS: A Tri-Layer Retrieval Integrity Sieve Against Knowledge Poisoning》（7.0/10）, 《Privacy-Preserving Topology-Guided Safety for LLM-Based Multi-Agent Systems via Federated Graph Learning》（7.0/10）</p>
 <p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
   </div>
 </section>
@@ -77,9 +77,9 @@
     <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Towards Behavior Tree-Guided Vulnerability Detection with Lightweight LLMs">Towards Behavior Tree-Guided Vulnerability Detection with Lightweight LLMs</span></li><li><span class="dpr-home-dashboard-paper-title" title="A Finger on the Scale: Covert Policy Steering through Agentic Skills">A Finger on the Scale: Covert Policy Steering through Agentic Skills</span></li><li><span class="dpr-home-dashboard-paper-title" title="SafeEvolve: Harness-Policy Co-Evolution from Agent Experience for Safety Alignment">SafeEvolve: Harness-Policy Co-Evolution from Agent Experience for Safety Alignment</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SafeRI: Recognition and Intervention for Token-Level Safety Intervention in Large Vision Language Models">SafeRI: Recognition and Intervention for Token-Level Safety Intervention in Large Vision Language Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="INTENT-AS-A-TOOL Makes it Easy to Track Agentic Misalignment">INTENT-AS-A-TOOL Makes it Easy to Track Agentic Misalignment</span></li><li><span class="dpr-home-dashboard-paper-title" title="Fresh Memory, Stale Plans: Dependency-Scoped Validation for Distributed LLM-Agent Memory">Fresh Memory, Stale Plans: Dependency-Scoped Validation for Distributed LLM-Agent Memory</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>3</strong></span><span class="dpr-home-dashboard-tag">vuldet <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>5</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -90,9 +90,9 @@
     <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Towards a Systems Foundation for Agentic Skills: Architecture, Lifecycle, and Security">Towards a Systems Foundation for Agentic Skills: Architecture, Lifecycle, and Security</span></li><li><span class="dpr-home-dashboard-paper-title" title="PhantomCall: Evading ML Malware Detectors via Function Call Graph Perturbation">PhantomCall: Evading ML Malware Detectors via Function Call Graph Perturbation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Agent Flight Recorder: Tamper-Evident Audit Trails with On-Chain Anchoring for Long-Horizon Tool-Using Agents">Agent Flight Recorder: Tamper-Evident Audit Trails with On-Chain Anchoring for Long-Horizon Tool-Using Agents</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Capability-Gated Language Models: Security Composes, Utility Does Not">Capability-Gated Language Models: Security Composes, Utility Does Not</span></li><li><span class="dpr-home-dashboard-paper-title" title="TRIS: A Tri-Layer Retrieval Integrity Sieve Against Knowledge Poisoning">TRIS: A Tri-Layer Retrieval Integrity Sieve Against Knowledge Poisoning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Privacy-Preserving Topology-Guided Safety for LLM-Based Multi-Agent Systems via Federated Graph Learning">Privacy-Preserving Topology-Guided Safety for LLM-Based Multi-Agent Systems via Federated Graph Learning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>5</strong></span><span class="dpr-home-dashboard-tag">vuldet <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>8</strong></span></div>
 </section>
 </div>
 

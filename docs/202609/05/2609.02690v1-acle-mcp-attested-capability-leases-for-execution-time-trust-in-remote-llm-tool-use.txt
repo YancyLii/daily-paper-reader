@@ -1,0 +1,318 @@
+Title: ACLE-MCP: Attested Capability Leases for Execution-Time Trust in Remote LLM Tool Use
+
+URL Source: https://arxiv.org/pdf/2609.02690v1
+
+Published Time: Thu, 03 Sep 2026 01:16:01 GMT
+
+Number of Pages: 8
+
+Markdown Content:
+# ACLE-MCP: Attested Capability Leases for Execution-Time Trust in Remote LLM Tool Use 
+
+## Zhiyang Ding, Yang Luo *, Guangpu Chen, Qingni Shen, Zhonghai Wu 
+
+Peking University dingzhiyang26@stu.pku.edu.cn, luoyang@pku.edu.cn, chenguangpu@stu.pku.edu.cn, qingnishen@ss.pku.edu.cn, wuzh@pku.edu.cn 
+
+> *
+
+Corresponding author 
+
+Abstract 
+
+Remote Model Context Protocol (MCP) services enable large language model agents to invoke external tools, but OAuth authorization alone does not ensure that a later tool call is executed by the provider-side workload that the relying party intended to trust. An endpoint may remain authorized even after execution shifts to a substituted workload, relies on stale appraisal state, reuses authority transferred from another sender, or traverses an undeclared downstream component. We call this problem the post-authorization execution trust gap . We present ACLE-MCP, an invocation-scoped architec-ture that couples delegated authorization, workload appraisal, and resource-side execution admission. For protected calls, ACLE-MCP issues a short-lived, sender-constrained capabil-ity lease that binds the expected workload, freshness require-ment, operation, object and parameter bounds, downstream constraints, and receipt obligations. A provider-side Execu-tion Gate consumes the lease immediately before protected tool logic begins. We implement a runnable prototype with Keycloak/OIDC validation, an MCP Python SDK server, and an optional vTPM quote-verification backend. Controlled se-curity experiments and an agent tool-use extension show that weaker authorization or connect-time attestation modes leave distinct post-authorization attacks open, whereas full ACLE-MCP blocks all evaluated attack families while preserving all benign tasks. In the locally simulated agent extension, the complete design increases request-level pooled p95 latency on normal allowed calls by 25.7% relative to OAuth-only. These results indicate that invocation-time binding between call au-thority and current workload state is a practical complement to OAuth-protected remote tool use. 
+
+## Introduction 
+
+Large language model (LLM) applications increasingly in-voke external tools, data sources, and enterprise services through the Model Context Protocol (MCP). This shift from passive text generation to agentic execution allows a Host to retrieve private data, update records, invoke inter-nal APIs, and trigger external workflows. In remote deploy-ments, OAuth can authorize an MCP Client to access a pro-tected MCP Server. OAuth answers an important question— whether a client or user may access a resource—but it does not establish that the concrete provider-side workload exe-cuting a later invocation is still the execution unit that the relying party intended to trust. We call this problem the post-authorization execution trust gap . A remote endpoint may complete OAuth, expose plau-sible MCP metadata, and return syntactically valid results while the underlying execution unit has been replaced, rolled back, misconfigured, compromised, or routed through an undisclosed downstream component. An attestation result obtained at registration or connection time may also become stale before authority is actually consumed. The authoriza-tion decision can therefore remain valid even though the execution context no longer satisfies the trust assumptions under which the call was allowed. Consider an agent authorized to invoke 
+
+update_ticket on ticket T-17 . The Host selects the correct tool, validates the arguments, and obtains a valid access token. Before the invocation reaches the protected handler, however, the provider may roll the serving container back to a vulnerable image, route the request through an undeclared proxy, or accept a lease copied from another sender. Operation and parameter bounds remain important, but they are not the central research problem; rather, they ensure that authority issued after successful workload appraisal cannot be widened when consumed. The core question is whether an OAuth-authorized call is still executed by the expected, freshly appraised workload within the bounds for which the additional authority was issued. Existing mechanisms protect adjacent but distinct secu-rity boundaries. Prompt-injection defenses and plan valida-tors operate before remote execution. OAuth and rich au-thorization mechanisms govern delegated access, but do not identify or appraise the concrete provider-side workload that ultimately consumes authority. Sender-constrained tokens re-duce credential-transfer risk, but do not establish current workload state. Remote attestation can establish workload properties, yet an appraisal obtained at connection time may become invalid before a later invocation. What is missing is an invocation-scoped binding among the OAuth autho-rization context, current workload appraisal, caller sender proof, and resource-side admission decision at the execution boundary. We present ACLE-MCP, an attested capability-lease ar-chitecture for high-risk remote MCP invocations. For a pro-tected call, a Verifier appraises evidence from the target workload and returns a freshness-bounded attestation re-sult. A lease issuer combines that result with the verified arXiv:2609.02690v1 [cs.CR] 2 Sep 2026 OAuth context and requested invocation boundary. The re-sulting short-lived, sender-constrained lease binds workload identity, operation and object scope, parameter bounds, side-effect budget, downstream constraints, freshness, and any re-ceipt obligation. A provider-controlled Execution Gate val-idates and consumes the lease at the final admission point before protected tool logic begins. We implement a Python prototype with separate Verifier, lease-issuer, gate, and tool services. A realistic integration path validates standard Keycloak/OIDC access tokens and forwards admitted requests to an MCP Python SDK Server. Keycloak remains the ordinary OAuth/OIDC Provider; an in-dependent lease issuer consumes the verified OAuth context and appraisal result to issue ACLE-MCP leases. An optional 
+
+swtpm /tpm2-tools path replaces the simulated evidence signature with nonce-bound quote verification while preserv-ing the same appraisal-result, lease, and gate interfaces. This paper makes three contributions: 
+
+• We identify and formalize the post-authorization execu-tion trust gap in remote MCP deployments: valid OAuth authorization does not imply that a later tool call is exe-cuted by the expected and freshly appraised provider-side workload. 
+
+• We design ACLE-MCP, which binds OAuth-derived au-thority, sender key possession, workload appraisal, in-vocation constraints, and provider-side admission into a short-lived capability consumed immediately before exe-cution. 
+
+• We implement and evaluate five enforcement modes. The evaluation covers replay, workload substitution, stale ap-praisal, scope misuse, undeclared proxying, and receipt violations, and extends the analysis to chained and stream-ing agent tool-use scenarios without redefining the core security problem. 
+
+## Security Problem 
+
+Post-Authorization Execution Trust Gap 
+
+For an invocation at time t, let the Host-authorized invocation boundary be 
+
+It = ⟨aud, tool, op, obj, Θ, D, B, ρ ⟩, (1) where aud is the intended audience; tool , op , and obj iden-tify the tool, operation class, and object scope; Θ specifies parameter constraints; D is the approved downstream set; B
+
+is the side-effect budget; and ρ is the minimum workload-assurance policy. Let the corresponding provider-side execution observation be 
+
+Et = ⟨wid, aud ′, tool ′, op ′, obj ′, θ ′, D ′, s, τ ⟩, (2) where wid identifies the workload actually serving the re-quest, s is its appraised state, and τ is the evidence time. OAuth authorization establishes only that the client may ac-cess aud ; it does not imply that wid is the expected workload, that s satisfies ρ, or that the appraisal remains sufficiently fresh at execution time. The post-authorization execution trust gap is precisely this missing implication. ACLE-MCP targets the following admission property: 
+
+Allow (Et) ⇒ OAuthOK 
+
+∧ FreshWorkload (wid, s, τ, ρ )
+
+∧ WithinBounds (Et, It).
+
+(3) The first two terms express the core contribution: delegated access and current workload trust must hold simultaneously at invocation time. The final term confines authority issued after appraisal so that it cannot be consumed for a broader op-eration, object, parameter range, side effect, or downstream path. This property neither proves arbitrary tool semantics nor infers latent user intent. 
+
+Attack Classes and Security Goals 
+
+The core attack classes follow directly from the trust gap. 
+
+Credential replay or transfer attempts to reuse authority for another sender or invocation. Workload substitution 
+
+replaces the serving process, container, virtual machine, en-clave, image, configuration, or dependency state after au-thorization. Stale appraisal reuse exploits the interval be-tween an earlier appraisal and a later execution decision. 
+
+Invocation-boundary misuse consumes a valid lease for a different operation, object, or parameter range. Undeclared delegation forwards execution to a downstream component outside the authorized path. Receipt violations remove or forge the structured execution evidence required for high-impact operations. The chained, reordered, repeated, and streaming cases in the agent extension are concrete ways in which invocation-scoped authority can be reused or widened. They test the applicability of the lease abstraction in complex agent work-flows, but they do not replace the paper’s original post-authorization workload-trust problem. 
+
+Threat, Trust, and Policy Model 
+
+The adversary may control or influence the MCP-facing ap-plication workload, its deployment configuration, or an ap-parently legitimate downstream proxy. The adversary may return syntactically valid responses, replay captured cre-dentials, reuse stale appraisal results, substitute a workload after authorization, broaden request arguments, reuse au-thority across steps, or forward execution to an undeclared dependency. These capabilities are consistent with docu-mented risks in LLM tool chains, MCP deployments, ex-cessive agency, insecure tool integration, and compromised connected systems (OWASP Foundation 2025; National In-stitute of Standards and Technology 2024; National Vulner-ability Database 2025; JFrog Security Research 2025; Endor Labs 2026). We trust the Host’s invocation-boundary construction logic, the Verifier, the lease issuer, and the provider-side Execution Gate. We assume standard cryptographic mech-anisms are secure and that the gate is non-bypassable for protected handlers. The application workload is outside the trusted computing base and may be stale, substituted, com-promised, or misconfigured. If a Provider exposes an alter-nate path around the gate, the guarantee does not apply to that path. We do not address prompt injection, incorrect Host-side planning, malicious local stdio launch commands, com-promise of the trusted components, or hidden dependencies that are neither declared nor mediated. Policy has two owners. Host policy determines the user-authorized invocation boundary and cannot be widened by remote tool metadata. Provider policy determines accept-able workload states, appraisal freshness, and deployment-specific downstream constraints. Appraisal results and leases carry signed policy-version identifiers. The lease issuer com-putes the intersection of the two policies; a conflict, missing version, or policy downgrade fails closed rather than silently reducing assurance. 
+
+## Related Work 
+
+Agent and tool security. ToolHijacker, cross-tool harvesting and pollution, and MCP memory attacks show that malicious tool descriptions, tool outputs, and shared state can corrupt planning and cross-tool behavior (Shi et al. 2026; Li et al. 2025b; Sun et al. 2025). ACE, SAGA, and AgentSentinel introduce barriers, governance, authentication, or runtime monitoring around agent planning and execution (Li et al. 2025a; Syros et al. 2026; Hu et al. 2025). AgentDojo and InjecAgent provide environments for studying prompt in-jection against tool-using agents (Debenedetti et al. 2024). These efforts primarily protect plan formation, tool selection, agent communication, or Host-observable actions. ACLE-MCP addresses a later remote boundary: after OAuth autho-rization succeeds, whether the provider-side workload that consumes the call is still the expected and freshly appraised execution unit. 
+
+Delegated authorization and capabilities. OAuth pro-vides delegated access to protected resources. Rich Au-thorization Requests express structured authorization de-tails, Token Exchange supports delegation, DPoP sender-constrains tokens, and Stateful Least Privilege incorporates Server-side action history into authorization policy (Lodder-stedt, Richer, and Campbell 2023; Jones et al. 2020; Fett et al. 2023; Cao et al. 2024). Macaroons and WAVE demonstrate attenuated, contextual, and delegated capabilities (Birgisson et al. 2014; Andersen et al. 2019). ACLE-MCP builds on these ideas rather than replacing them. Its additional con-tribution is to bind narrow invocation authority to a fresh provider-side workload appraisal and consume that authority at the tool-execution boundary. 
+
+Remote attestation and execution control. RATS separates Evidence, Appraisal, and Relying Party Deci-sions (Birkholz et al. 2023). Runtime SBOM verification, Attestable Builds, ARI, Full Trust Alchemist, and Transpar-ent Attested DNS strengthen remote workload identity, build provenance, or dynamic appraisal (Chen 2023; Hugenroth et al. 2025; Wang et al. 2023; Galanou et al. 2025; Delignat-Lavaud et al. 2025). Confidential-computing systems such as SHELTER and Acai provide lower-level workload or ac-celerator isolation (Zhang et al. 2023; Sridhara et al. 2024). These systems establish or protect execution environments. ACLE-MCP instead studies how an appraisal result should change the admission decision for one concrete remote agent tool invocation. 
+
+## Methodology 
+
+Design Overview 
+
+Figure 1 shows how ACLE-MCP closes the post-authorization execution trust gap. The Host Orchestrator first normalizes the selected structured call and compiles the in-vocation boundary It. Low-risk calls may remain on the ordi-nary OAuth path when both Host and Provider policies per-mit. Medium- and high-risk calls trigger Attested Step-Up. The Verifier appraises the provider-side workload expected to serve the call, and the lease issuer combines the signed ap-praisal result, verified OAuth context, sender identity, and It
+
+into a short-lived capability lease. The provider-side Execu-tion Gate validates and consumes the lease before protected tool logic begins; only after all checks pass may the applica-tion workload execute the call. The placement of the final check is essential. When OAuth authorization completes, the concrete provider-side execu-tion unit may not yet be known; connect-time appraisal may also precede the protected invocation by an unsafe interval. The lease carries the intersection of the Host-authorized in-vocation boundary and provider-side workload policy to the point where authority is actually consumed. A request is de-nied if the sender or serving workload does not match the lease, if the appraisal is stale, or if the tool, operation, ob-ject, parameters, side effects, or downstream path exceed the issued boundary. 
+
+Attested Step-Up and Lease Issuance 
+
+At tool registration, the Host records a local policy pro-file for each tool, including default operation, data, side-effect, scope, and dependency classes. At invocation time, the boundary compiler refines these defaults using the concrete object, parameter ranges, tenant boundary, external trans-mission, administrative scope, expected tool-chain position, and declared downstream path. It then produces It and the minimum workload-assurance requirement ρ.Risk classes directly control enforcement. A low-risk read may continue through ordinary OAuth when Provider pol-icy permits. A medium-risk invocation requires a narrowly scoped lease and an appraisal result within a bounded reuse window. A high-risk invocation requires stricter freshness, a shorter or single-use lease, tighter side-effect bounds, and any execution receipt required by policy. Uncertainty may only raise the risk class; it never triggers an automatic down-grade. For a protected invocation, an attestation coordination component obtains evidence for the workload expected to serve the call. Following the RATS separation of Evidence, Appraisal, and Relying Party Decisions (Birkholz et al. 2023), the Verifier checks evidence integrity, nonce and time freshness, platform- or Provider-specific measurements, and Provider policy. It then emits 
+
+AR t = Sign V ⟨wid, state, ts, exp, pid P , verdict ⟩. (4) Here, wid identifies the appraised workload, state captures policy-relevant state, and ts and exp bound the result’s valid-ity interval. Raw evidence may remain inside the Provider– Verifier boundary; the Host, lease issuer, and gate require only the minimized signed result needed for admission. Host / Client Side 
+
+> LLM Host /
+> Host Orchestrator
+> Tool planning
+> Risk
+> classification
+> Authority
+> normalization
+> Low -risk reads may
+> use ordinary OAuth path
+
+Attested Step -Up / 
+
+Lease Issuance 
+
+> Authorization Server
+> OAuth / OIDC
+> Lease Broker /
+> Policy Engine
+> Verifier
+> RATS
+> appraisal
+> Attester /
+> Target MCP
+> Workload
+> 3. Evidence → appraisal
+> OAuth +
+> appraisal +
+> lease
+> OAuth
+> authorization
+> Step -Up
+> for Risky
+> Call
+> Attested
+> Capability Lease
+
+Provider -Side 
+
+Execution Boundary 
+
+> Execution Gate
+> Any
+> failure
+> ↓
+> Deny
+> Attes -
+> tation
+> result
+> All
+> success
+> ↓
+> Prove
+> Token +
+> Lease +
+> Proof
+
+Protected 
+
+Execution 
+
+> Protected MCP
+> Tool Handler
+> MCP Workload
+> Allowed Downstream
+> Services
+> Admit and
+> execute
+> Structured Execution Receipt
+> (High -impact ops)
+
+Figure 1: Overview of ACLE-MCP. OAuth authorizes the client to access the remote MCP resource; Attested Step-Up binds protected invocation authority to a fresh appraisal of the expected provider-side workload; and the Execution Gate validates the relevant credentials and consumes the resulting lease immediately before protected tool logic begins. Keycloak continues to issue standard OAuth/OIDC access tokens. After validating the OAuth context, It, and AR t, the lease issuer creates 
+
+CL t = Issue (It, AR t, sender, expiry, pid H , pid P ). (5) The concrete lease binds the issuer, subject, audience, sender confirmation key, workload identity, tool, operation and ob-ject, parameter bounds, execution-state constraints, down-stream set, side-effect budget, appraisal digest, policy ver-sions, receipt obligation, expiration, and unique lease identi-fier. OAuth represents delegated access; the lease represents permission to execute one bounded invocation under a partic-ular workload state. The Capability-only baseline retains re-quest caveats but omits fresh workload binding, thereby sep-arating fine-grained authority constraints from invocation-time workload appraisal. 
+
+Invocation-Time Enforcement 
+
+The Execution Gate is placed before the protected handler and controlled by the Provider or platform boundary rather than by the potentially compromised application workload. It may be implemented as a reverse proxy, sidecar, gateway, service-mesh authorization filter, or confidential-computing wrapper, provided alternate paths are prevented. Algorithm 1 gives the mandatory enforcement order. This order prevents side effects before validation com-pletes. Sender binding prevents a copied lease from be-coming portable authority. Workload binding prevents an appraisal for one execution unit from authorizing another. Freshness narrows the attestation-to-execution window. Re-quest and state constraints prevent a lease issued for one tool, object, order, stream state, or downstream set from authoriz-ing another invocation. Downstream constraints apply only to dependencies visi-ble to enforcement. A Provider may validate declared end-points, mediate egress traffic, or require a signed dependency manifest. Each protected hop in a chained workflow there-fore requires either a separate lease or inclusion in an ex-plicitly authorized downstream set. Receipts for high-impact operations can provide structured accountability, but can-not undo external side effects or prove arbitrary program semantics. A protected call fails closed whenever workload appraisal, lease issuance, sender key possession, freshness, policy-version agreement, boundary validation, or required receipt validation fails. 
+
+## Evaluation 
+
+We evaluate three questions: RQ1 : Does invocation-time workload binding close the modeled post-authorization trust gap while preserving benign tool calls? RQ2 : Which mech-anisms account for the observed security gains? RQ3 : What integration cost and runtime overhead does the prototype introduce? 
+
+Experimental Setup 
+
+We implement separate Python services for the Verifier, lease issuer, Execution Gate, MCP tool service, and adversarial workloads, with components communicating over HTTP. The main controlled experiments use simulated OAuth, work-load appraisal, and sender proof to isolate lease issuance and resource-side execution logic. The Verifier produces signed appraisal results from evidence, freshness, and Provider pol-icy; the lease issuer validates the OAuth context, invocation boundary, and appraisal result before issuing a signed, short-lived, sender-constrained capability lease; and the Execution Gate validates the token, lease, sender proof, workload bind-ing, and invocation boundary before the protected handler. The harness records request-level decisions, randomized sce-nario order, environment manifests, stage-level latency, and security outcomes. Algorithm 1: Invocation Admission at the Execution Gate 
+
+Require: Request q, access token AT , lease L, sender proof 
+
+P , appraisal result AR 
+
+Ensure: Allow with an optional receipt, or Deny  
+
+> 1:
+
+Validate AT for issuer, subject, audience, and target re-source.  
+
+> 2:
+
+Validate L for issuer, signature, audience, expiration, and policy versions.  
+
+> 3:
+
+Verify P against the sender key bound in L.cnf . 
+
+> 4:
+
+Verify AR ; require AR.wid = L.wid and require AR 
+
+to be sufficiently fresh for L. 
+
+> 5:
+
+Reject any authority reuse that violates L’s replay or execution-state policy.  
+
+> 6:
+
+Require q to satisfy L’s tool, operation, object, parame-ter, side-effect, and downstream bounds.  
+
+> 7:
+
+if L requires a receipt then  
+
+> 8:
+
+Execute only through the receipt-producing protected path.  
+
+> 9:
+
+Verify that the receipt binds L, q, AR , the result digest, and the downstream summary.  
+
+> 10:
+
+else  
+
+> 11:
+
+Execute through the protected tool handler.  
+
+> 12:
+
+end if  
+
+> 13:
+
+Mark single-use authority as consumed when required and return Allow. A separate integration path uses Keycloak for OAu-th/OIDC authorization and validates access-token issuer, client, and resource audience through the issuer’s JWKS. Admitted requests are forwarded to a tool service im-plemented with the MCP Python SDK. An optional 
+
+swtpm /tpm2-tools path verifies nonce-bound vTPM quotes over PCRs 0, 1, 2, 3, 4, 7, and 11 to confirm that the Verifier backend is replaceable. This path is not used to measure production TPM performance and does not claim complete hardware binding for every application-level work-load property. We compare five modes. OAuth-only validates bearer ac-cess but does not check workload state or invocation bounds. 
+
+Attest-on-connect records workload appraisal at connection time but does not consume fresh evidence for each invoca-tion. Stateful LP checks tool, operation, object, parameters, execution order, and declared downstream policy at the re-source side, but omits sender proof and workload appraisal. 
+
+Capability-only uses a short-lived capability with audience and request caveats but no fresh workload binding. ACLE-MCP enables the complete enforcement chain. The agent tool-use extension contains four benign task families: filesystem summarization, GitHub issue comment-ing, bounded database reporting, and Kubernetes status in-spection. It also contains six execution-misuse attack fam-ilies: wrong-tool execution, validate/execute order reversal, tool-chain step injection, authority reuse across tool-chain steps, downgrade or re-execution, and streaming semantic mutation. Each scenario is repeated ten times under each mode, yielding 500 mode–scenario observations. We report benign-task success, attack-blocking rate, false-positive and Table 1: Agent tool-use results over ten repetitions. Latency is the request-level pooled p95 over normal expected-allow requests that were allowed.                                            
+
+> Mode Benign success Attack block Normal p95 (ms) OAuth-only 1.000 0.0000 12.20 Attest-on-connect 1.000 0.0000 17.30 Stateful LP 1.000 0.8333 11.06 Capability-only 1.000 0.6667 11.57
+> ACLE-MCP 1.000 1.0000 15.34 auth. reuse step inj. down-grd. sem. mut. wrong order wrong tool
+> Drift family
+> OAuth-only Attest-on-connect Stateful LP Capability-only ACLE-MCP
+> Mode
+> 0% 0% 0% 0% 0% 0% 0% 0% 0% 0% 0% 0% 100% 100% 100% 0% 100% 100% 100% 0% 100% 0% 100% 100% 100% 100% 100% 100% 100% 100%
+
+Figure 2: Attack-blocking rates in the agent tool-use exten-sion. Full ACLE-MCP blocks all six execution-misuse fam-ilies, whereas weaker modes cover only subsets. false-negative rates, and request-level pooled p95 latency over normal expected-allow requests that were actually al-lowed. Correctly blocked attack scenarios are security out-comes rather than runtime errors. 
+
+RQ1: Security Effectiveness and Agent Extension 
+
+The mechanism-level security experiments first validate ACLE-MCP’s original claim: OAuth-only and connect-time attestation admit replay, workload substitution, stale ap-praisal, undeclared proxying, and receipt violations because neither mode binds a protected invocation to the current provider-side appraisal result at the gate. The component results in RQ2 identify the checks required to close these attacks. Table 1 reports the agent tool-use extension. All five modes allow every benign task and therefore have a false-positive rate of zero in this diagnostic suite. OAuth-only and Attest-on-connect block none of the six execution-misuse families. Stateful LP blocks five families but misses streaming seman-tic mutation because it lacks fresh workload and invocation-state binding. Capability-only blocks four families but misses tool-chain step injection and streaming semantic mutation. Full ACLE-MCP blocks every evaluated scenario in every repetition and has a false-negative rate of zero. These scenar-ios broaden the evaluation context without changing the pa-per’s central claim about post-authorization workload trust. In the current local simulation, OAuth-only and the com-plete mechanism each contribute 40 normal allowed request samples. The complete mechanism increases request-level pooled p95 latency from 12.20 ms to 15.34 ms, an increase of 3.14 ms or 25.7% (1.26 ×). This result reflects the cur-rent warm-cache simulated Verifier path; it does not repre-sent cold-cache operation, real JWKS retrieval, or hardware-attestation cost. Four benign task families are insufficient to support a broad claim that general agent capability is unaf-fected. The result shows only that the observed security gains are not achieved through indiscriminate denial. 
+
+RQ2: Ablation Study and Mechanism Attribution 
+
+We repeat the complete ACLE-MCP configuration and its component-removal variants over the same 24 scenarios, 10 random seeds, and single-concurrency setting. Each configu-ration contains 190 attack samples expected to be blocked and 30 benign samples. Table 2 reports the blocking rate over at-tacks expected to be denied, rather than mixing attack-labeled control cases that are expected to be allowed into the denom-inator. Under this definition, the complete design achieves a 100% blocking rate. Removing sender proof admits token replay and cross-client lease transfer. Removing freshness checks reopens TOCTOU and stale appraisal-result reuse. Removing down-stream constraints reopens undeclared proxying and SSRF access to metadata services. Removing receipt validation admits missing, forged, and digest-mismatched receipts. The configuration without Attested Step-Up also disables workload-binding checks and should therefore be interpreted as a joint ablation of these two mechanisms rather than as removal of the Verifier alone. All security ablations preserve 100% benign-task success, indicating that the degradation arises from missing checks rather than indiscriminate block-ing of normal requests. The complete design and the configuration with the appraisal-result cache disabled have identical security out-comes. Disabling the cache increases Verifier calls from 27 to 210 and raises normal pooled p95 latency from 21.84 ms to 23.45 ms, an increase of approximately 7.4%. The AR cache is therefore a performance optimization rather than a secu-rity requirement. The main ablation uses single concurrency; although disabling single-flight leaves security unchanged, this setting does not actually exercise concurrent-request co-alescing, so we do not quantify the performance benefit of single-flight. 
+
+Freshness sensitivity. Freshness is not merely a perfor-mance parameter. We hold the complete enforcement mode fixed and sweep the maximum acceptable age of an appraisal result. Figure 3 shows that a 50 ms window blocks all mod-eled TOCTOU cases, with an average of 10.2 Verifier calls and a cache-hit ratio of 0.5143. At 500 ms, the TOCTOU blocking rate falls to 0.60; at 5000 ms, it falls to zero. This result shows why connect-time attestation is insufficient for later high-risk invocations. Such operations require short freshness windows, active invalidation when the workload changes, or single-use leases. Wider reuse windows are ap-propriate only when the operation policy explicitly accepts the corresponding exposure. 50 500 5k 0% 25% 50% 75% 100%    
+
+> TOCTOU block rate  100% 60% 0%
+> (a)
+> 50 500 5k 0.0 2.5 5.0 7.5 10.0
+> Verifier calls  10.2 4.2 3.5
+> (b)
+> Freshness window (ms)
+
+Figure 3: Security-performance trade-off of appraisal fresh-ness: (a) TOCTOU blocking rate under different freshness windows; and (b) the corresponding number of Verifier calls. Wider reuse windows reduce verification pressure but enlarge the exposure interval between appraisal and execution. OAuth-only Attest-on-connect ACLE-MCP 020 40      
+
+> Latency (ms)
+> 23.2 25.2 21.1 38.5 32.4 29.2
+> (a) Mean Pooled p95 Attack block pooled p95 0100 200 300
+> Latency contribution (ms)
+> 350.00 ms configured pre-invocation delay >200 ms freshness bound
+> 6.13 ms remaining measured end-to-end time
+> 356.13 ms adversarial waiting path; not lease issuance latency
+> (b)
+
+Figure 4: Mechanism-level latency. (a) Mean and pooled p95 for normal requests. (b) The 356.13 ms TOCTOU block comprises a configured 350 ms delay and 6.13 ms residual time, not lease or gate overhead. 
+
+RQ3: Real-Component Integration and Runtime Cost 
+
+Full ACLE-MCP has a request-level pooled p95 of 15.34 ms for normal allowed requests in the agent suite, compared with 12.20 ms for OAuth-only, a relative increase of 25.7%. The mechanism-level experiment further separates normal and blocking paths in Figure 4. Normal allowed requests have a pooled mean of 23.17 ms and p95 of 38.41 ms. The 356.13 ms blocking-path p95 is dominated by a configured 350 ms pre-invocation delay that makes the appraisal exceed the 200 ms freshness threshold; it is not lease-issuance or gate overhead. Table 2: Component ablations over ten repetitions. Blocking rate uses the 190 attacks expected to be denied as the denominator; p95 includes only normal allowed requests.                                                                      
+
+> Configuration Removed component Block rate FN Benign success Normal p95 Verifier calls Reopened attack fami-lies (%) (%) (ms)
+> C_full None (complete design) 100.00 0100.00 21.84 27 None
+> C_no_sender Sender proof/binding 89.47 20 100.00 21.56 30 Token replay; cross-client lease transfer
+> C_no_freshness Freshness checks 89.47 20 100.00 37.32 29 TOCTOU; stale ap-praisal reuse
+> C_no_downstream Downstream constraints 84.21 30 100.00 21.19 35 Undeclared proxy; SSRF metadata access
+> C_no_receipt Receipt requirement/-validation 78.95 40 100.00 20.78 25 Missing, forged, or digest-mismatched receipts
+> C_no_attest_stepup Attested Step-Up and workload binding 84.21 30 100.00 20.84 0Compromised, substi-tuted, or mismatched workloads
+> C_cache_off AR cache 100.00 0100.00 23.45 210 None; only higher Ver-ifier load and normal-path cost
+
+Table 3: Real-component and backend-substitution vali-dation. “Pass” denotes successful integration checks, not production-grade performance.       
+
+> Validation target Exercised property Result Keycloak/OIDC Issuer, JWKS, client, and audience checks Pass MCP Python SDK Protected tool invocation after gate admission Pass vTPM quote path Quote material and nonce-bound verification Pass Full control chain Verifier, lease-issuer, and gate interfaces Pass
+
+The agent and mechanism-level experiments use different scenario mixtures and should not be numerically combined. The Keycloak/MCP path validates a real Keycloak token, enforces the intended resource audience at the Execution Gate, and invokes an MCP Python SDK tool. It does not yet include production remote attestation, DPoP-bound issuance, or a complete hardware trust chain. Table 3 summarizes the exercised components. The optional vTPM path replaces simulated evidence signatures with nonce-bound quote gen-eration and verification while preserving the appraisal-result, lease-issuance, and gate interfaces. 
+
+## Discussion 
+
+ACLE-MCP is a reference-monitor architecture for the post-authorization execution trust gap, not a complete trust frame-work for agentic systems. Its key assumption is a non-bypassable provider-side Execution Gate: protected requests must reach the application workload only after admission. If an attacker controls the gate or all routing paths, enforcement fails. The prototype also excludes prompt injection, incorrect Host-side planning, and compromise of the Verifier or lease issuer. The evaluation is limited to four benign and six author-constructed misuse families. Sender proof and workload ap-praisal are simulated in the main harness, while the vTPM path verifies quotes without binding every workload claim. Receipts cannot undo external side effects, and downstream guarantees cover only declared or mediated dependencies. These results therefore demonstrate prototype-level feasibil-ity rather than production readiness. 
+
+## Conclusion 
+
+We studied the post-authorization execution trust gap in re-mote LLM tool use: OAuth can authorize a client to access an MCP service without ensuring that a later invocation is executed by the expected and freshly appraised provider-side workload. ACLE-MCP closes this gap by issuing a short-lived, sender-constrained capability lease that binds work-load appraisal to the invocation boundary and is consumed immediately before protected tool logic begins. Controlled attacks, component ablations, and the agent tool-use exten-sion show that authorization-only, connect-time attestation, Stateful policy, and Capability-only designs leave distinct attack surfaces, whereas the complete design preserves the evaluated benign tasks and blocks all evaluated attack fam-ilies. The conclusion is intentionally narrow: for high-risk remote tool calls, workload trust must be checked at the point where delegated authority is actually consumed. 
+
+## References 
+
+Andersen, M. P.; Kumar, S.; AbdelBaky, M.; Fierro, G.; Kolb, J.; Kim, H.-S.; Culler, D. E.; and Popa, R. A. 2019. WAVE: A decentralized authorization framework with transitive del-egation. In 28th USENIX Security Symposium (USENIX Security 19) , 1375–1392. Birgisson, A.; Politz, J. G.; Erlingsson, U.; Taly, A.; Vrable, M.; and Lentczner, M. 2014. Macaroons: Cookies with Con-textual Caveats for Decentralized Authorization in the Cloud. In NDSS .Birkholz, H.; Thaler, D.; Richardson, M.; Smith, N.; and Pan, W. 2023. Remote ATtestation procedureS (RATS) Architec-ture. RFC 9334. Cao, L.; Meng, L.; Stefan, D.; and Fernandes, E. 2024. Stateful least privilege authorization for the cloud. In 33rd USENIX Security Symposium (USENIX Security 24) , 3477– 3494. Chen, B. 2023. Runtime Verification for Software Supply Chain Security using Confidential Computing. In Proceed-ings of the 2024 Workshop on Software Supply Chain Offen-sive Research and Ecosystem Defenses , 14–14. Debenedetti, E.; Zhang, J.; Balunovic, M.; Beurer-Kellner, L.; Fischer, M.; and Tramèr, F. 2024. AgentDojo: A Dynamic Environment to Evaluate Prompt Injection Attacks and De-fenses for LLM Agents. In Globerson, A.; Mackey, L.; Bel-grave, D.; Fan, A.; Paquet, U.; Tomczak, J.; and Zhang, C., eds., Advances in Neural Information Processing Systems ,volume 37, 82895–82920. Curran Associates, Inc. Delignat-Lavaud, A.; Fournet, C.; Vaswani, K.; Costa, M.; Clebsch, S.; and Wintersteiger, C. M. 2025. Transparent Attested DNS for Confidential Computing Services. In 34th USENIX Security Symposium (USENIX Security 25) , 1129– 1148. Endor Labs. 2026. Classic Vulnerabilities Meet AI Infrastructure: Why MCP Needs AppSec. https://www.endorlabs.com/learn/classic-vulnerabilities-meet-ai-infrastructure-why-mcp-needs-appsec. Accessed 2026-04-29. Fett, D.; Campbell, B.; Bradley, J.; Lodderstedt, T.; Jones, M. B.; and Waite, D. 2023. OAuth 2.0 Demonstrating Proof of Possession (DPoP). RFC 9449. Galanou, A.; Lubitz, F.; Jeon, H.; Fetzer, C.; and Kapitza, R. 2025. Full Trust Alchemist: Reforging Attestation for Cloud-based Confidential Workloads. In Proceedings of the 26th International Middleware Conference , 369–382. Hu, H.; Chen, P.; Zhao, Y.; and Chen, Y. 2025. Agentsen-tinel: An end-to-end and real-time security defense frame-work for computer-use agents. In Proceedings of the 2025 ACM SIGSAC Conference on Computer and Communica-tions Security , 3535–3549. Hugenroth, D.; Lins, M.; Mayrhofer, R.; and Beresford, A. R. 2025. Attestable builds: compiling verifiable binaries on un-trusted systems using trusted execution environments. In 
+
+Proceedings of the 2025 ACM SIGSAC Conference on Com-puter and Communications Security , 4514–4528. JFrog Security Research. 2025. CVE-2025-6515: Prompt Hi-jacking Attack Affects MCP Ecosystems. https://jfrog.com/ blog/mcp-prompt-hijacking-vulnerability/. Accessed 2026-04-29. Jones, M. B.; Nadalin, A.; Campbell, B.; Bradley, J.; and Mortimore, C. 2020. OAuth 2.0 Token Exchange. RFC 8693. Li, E.; Mallick, T.; Rose, E.; Robertson, W.; Oprea, A.; and Nita-Rotaru, C. 2025a. Ace: A security architecture for llm-integrated app systems. arXiv preprint arXiv:2504.20984 .Li, Z.; Cui, J.; Liao, X.; and Xing, L. 2025b. Les Disso-nances: Cross-Tool Harvesting and Polluting in Pool-of-Tools Empowered LLM Agents. arXiv preprint arXiv:2504.03111 .Lodderstedt, T.; Richer, J.; and Campbell, B. 2023. OAuth 2.0 Rich Authorization Requests. RFC 9396. National Institute of Standards and Technology. 2024. Arti-ficial Intelligence Risk Management Framework: Generative Artificial Intelligence Profile. Technical Report NIST AI 600-1, National Institute of Standards and Technology. National Vulnerability Database. 2025. CVE-2025-52573 Detail. https://nvd.nist.gov/vuln/detail/CVE-2025-52573. Accessed 2026-04-29. OWASP Foundation. 2025. OWASP Top 10 for Large Lan-guage Model Applications. https://owasp.org/www-project-top-10-for-large-language-model-applications/. Accessed 2026-04-29. Shi, J.; Yuan, Z.; Tie, G.; Zhou, P.; Gong, N. Z.; and Sun, L. 2026. Prompt Injection Attack to Tool Selection in LLM Agents. In Proceedings of the Network and Distributed Sys-tem Security Symposium (NDSS) . Internet Society. Sridhara, S.; Bertschi, A.; Schlüter, B.; Kuhne, M.; Alib-erti, F.; and Shinde, S. 2024. ACAI: Protecting accelerator execution with arm confidential computing architecture. In 
+
+33rd USENIX Security Symposium (USENIX Security 24) ,3423–3440. Sun, Y.; Du, L.; Su, Z.; Wang, Y.; Liu, H.; Zhao, Q.; and Niu, X. 2025. MSA: A Cross-MCP Privacy Attack via Memory Exfiltration of Large Language Models. In Proceedings of the 24th Workshop on Privacy in the Electronic Society , 177– 182. Syros, G.; Suri, A.; Ginesin, J.; Nita-Rotaru, C.; and Oprea, A. 2026. SAGA: A Security Architecture for Governing AI Agentic Systems. In Proceedings of the Network and Dis-tributed System Security Symposium (NDSS) . Internet Soci-ety. Wang, J.; Wang, Y.; Li, A.; Xiao, Y.; Zhang, R.; Lou, W.; Hou, Y. T.; and Zhang, N. 2023. ARI: Attestation of real-time mission execution integrity. In 32nd USENIX Security Symposium (USENIX Security 23) , 2761–2778. Zhang, Y.; Hu, Y.; Ning, Z.; Zhang, F.; Luo, X.; Huang, H.; Yan, S.; and He, Z. 2023. SHELTER: extending ARM CCA with isolation in user space. In 32nd USENIX Security Symposium (USENIX Security 23) , 6257–6274.

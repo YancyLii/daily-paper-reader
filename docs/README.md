@@ -41,7 +41,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-05</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-06</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 7 篇</strong>
@@ -51,7 +51,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>3</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>4</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-05 19:31:32 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-06 19:01:34 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,10 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日读完7篇论文（精读3篇、速读4篇），聚焦LLM智能体递归任务中的安全与授权风险。</p>
-<p>最值得关注两个方向：递归智能体树应“自由生成、谨慎行动”的渐进式风险释放，以及智能体记忆可能被滥用为“授权洗钱”表面。</p>
-<p>下步建议：普通读者可重点跟踪智能体权限收紧与记忆审计机制，避免AI代理在长程任务中自行扩大权限。</p>
+<p>今日共生成 7 篇推荐（精读 3 篇，速读 4 篇）</p>
+<p>精读：《SEAL: Reinforcing Global Safety in Mixture-of-Experts through Shared Expert ALignment》（9.0/10）, 《Auditing Harness Tampering in Self-Improving Agents》（8.0/10）</p>
+<p>速读：《Attesting Outputs and Delegation Ancestry in Multi-Agent AI Systems》（7.0/10）, 《Towards Agentic Cloud Engineering: Graph and Loop Engineering with a Zero-Trust Agent Harness》（7.0/10）, 《RL-FAT: Reinforcement Learning for Fair Adversarial Training》（6.0/10）</p>
+<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -76,7 +77,7 @@
     <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Spawn Freely, Act Sparingly: Progressive Risk Vesting for Recursive LLM-Agent Trees">Spawn Freely, Act Sparingly: Progressive Risk Vesting for Recursive LLM-Agent Trees</span></li><li><span class="dpr-home-dashboard-paper-title" title="Agent Memory Is a Surface for Endogenous Authorization Laundering">Agent Memory Is a Surface for Endogenous Authorization Laundering</span></li><li><span class="dpr-home-dashboard-paper-title" title="AlcaTRAz - Anchored Tree-Rule Defense Against Jailbreaks">AlcaTRAz - Anchored Tree-Rule Defense Against Jailbreaks</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SEAL: Reinforcing Global Safety in Mixture-of-Experts through Shared Expert ALignment">SEAL: Reinforcing Global Safety in Mixture-of-Experts through Shared Expert ALignment</span></li><li><span class="dpr-home-dashboard-paper-title" title="Auditing Harness Tampering in Self-Improving Agents">Auditing Harness Tampering in Self-Improving Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Safin-1: Safety from Within through Memory-Native State Evolution">Safin-1: Safety from Within through Memory-Native State Evolution</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>3</strong></span></div>
 </section>
@@ -89,7 +90,7 @@
     <strong class="dpr-home-dashboard-count">4 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SafeAtlas-VL: Beyond Binary Multimodal Safety with Large-Scale Data and Guard Models">SafeAtlas-VL: Beyond Binary Multimodal Safety with Large-Scale Data and Guard Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Context Inference Attacks Without Jailbreaks">Context Inference Attacks Without Jailbreaks</span></li><li><span class="dpr-home-dashboard-paper-title" title="ACLE-MCP: Attested Capability Leases for Execution-Time Trust in Remote LLM Tool Use">ACLE-MCP: Attested Capability Leases for Execution-Time Trust in Remote LLM Tool Use</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Attesting Outputs and Delegation Ancestry in Multi-Agent AI Systems">Attesting Outputs and Delegation Ancestry in Multi-Agent AI Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="Towards Agentic Cloud Engineering: Graph and Loop Engineering with a Zero-Trust Agent Harness">Towards Agentic Cloud Engineering: Graph and Loop Engineering with a Zero-Trust Agent Harness</span></li><li><span class="dpr-home-dashboard-paper-title" title="RL-FAT: Reinforcement Learning for Fair Adversarial Training">RL-FAT: Reinforcement Learning for Fair Adversarial Training</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>3</strong></span><span class="dpr-home-dashboard-tag">vuldet <strong>1</strong></span></div>
 </section>

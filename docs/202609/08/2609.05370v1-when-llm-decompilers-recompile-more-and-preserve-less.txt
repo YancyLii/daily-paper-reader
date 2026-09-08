@@ -1,0 +1,1448 @@
+When LLM Decompilers Recompile More and Preserve Less
+Chang Liu1, Edward Raff2, Kristopher Micinski1
+1Syracuse University
+2CrowdStrike
+cliu57@syr.edu, Edward.Raff@crowdstrike.com, kkmicins@syr.edu
+Abstract
+Decompilation recovers high-level source from compiled ma-
+chine code and serves as a foundation for security tasks such
+as vulnerability detection and malware analysis. Traditional
+decompilers like Ghidra and Hex-Rays expose whatever they
+cannot resolve as visible placeholders and often emit pseu-
+docode that will not compile or execute; LLM-based decom-
+pilers produce clean, idiomatic C and are now judged almost
+entirely by recompilability and re-executability: whether the
+output builds and passes its shipped input/output tests. We
+show that these metrics can reward the wrong path: a func-
+tion may recompile and pass every shipped test yet diverge
+on other legitimate inputs, and a disclosed vulnerability may
+disappear from the recompiled code with no visible trace of
+the crash. Neither failure is caught by existing suites.
+To address this gap, we propose Decompile-Diverge, a behav-
+ioral comparison oracle not relying on fixed or hand-crafted
+tests: for each function it synthesizes a driver, grows a fuzzing
+corpus from the reference, and reruns the decompiled code
+on the same inputs to detect changes in the function’s be-
+havior. Across eight systems in nine configurations on estab-
+lished LLM decompilation corpora, candidates that pass every
+shipped test still diverge from the original on our input cor-
+pus: 4.9% overall, and as many as 13% for a single system.
+On 300 real GitHub library functions and 287 CVE-grounded
+functions, recompilability and behavioral agreement can come
+apart: the strongest refinement LLM lifts Ghidra’s build rate
+from 75% to 90%, while its Matched rate falls from 74%
+to 62%; on disclosed vulnerabilities, up to one tenth exhibit
+Crash Absence in its output. Source-level analysis traces this
+divergence to introduced fields, types, callees, and guards that
+replace the visible unknowns traditional tools leave behind.
+1
+Introduction
+Decompilation serves as a foundation in both security and
+software engineering, facilitating critical tasks such as se-
+curity auditing, vulnerability triage, legacy software main-
+tenance, and malware analysis. As decompiled code is be-
+ing integrated in active codebases and subjected to fuzzing,
+behavioral agreement with the original is as critical as
+readability. Traditional decompilers like Ghidra (National
+Security Agency 2019), Hex-Rays (Hex-Rays 2024), and
+angr (Shoshitaishvili et al. 2016) often leave certain analysis
+unresolved and emit non-compilable pseudo code, while the
+recent LLM-based decompilation systems (Jiang et al. 2023;
+Armengol-Estap’e et al. 2023; Liu et al. 2026; Tan et al. 2024;
+Dramko, Goues, and Schwartz 2025; Tan et al. 2025a; Hu,
+Liang, and Chen 2024; Wong et al. 2025) have gained signif-
+icant improvement in recompilability and re-executability.
+Generally, they fall into two families: refinement models,
+which refine the output of a traditional decompiler (the front
+end), and E2E models, which generate C code directly from
+assembly.
+Recompilability measures whether code can be built into
+an executable, a prerequisite for re-executability that does
+not establish it. Re-executability checks a function’s output
+against assertions for given inputs. Many datasets and bench-
+marks do not provide such checks (da Silva et al. 2021). Even
+when tests are available, their coverage may be too narrow
+to establish behavioral agreement for decompiled functions.
+A candidate can therefore recompile and return cleanly on
+the shipped inputs yet behave differently on other legitimate
+inputs, as Figure 1 shows.
+Motivated
+by
+this
+measurement
+gap,
+we
+propose
+Decompile-Diverge. This framework automates evaluation
+by synthesizing a driver, generating a corpus of fuzzed inputs
+from the reference function, and comparing a digest of the
+decompiled code’s bounded observable post-state with the
+corresponding digest from the original. Both LLM-based de-
+compilers and raw front-end baselines are evaluated through
+this pipeline via two distinct tracks: a general track for behav-
+ioral agreement, and a Common Vulnerabilities and Expo-
+sures (CVE) track for vulnerability preservation. Our analy-
+sis reveals a major shift in failure modes: whereas traditional
+tools yield visible unknowns, LLMs tend to invent part of the
+code that either breaks compilation or results in behavioral
+divergence.
+Our contributions include:
+• A behavioral comparison oracle not relying on fixed tests,
+for which per-function drivers are synthesized automati-
+cally, fuzz inputs are grown dynamically from the refer-
+ence, and each decompiled output is compared with the
+reference behavior for each input by checking for crashes,
+hangs, and differences in the bounded observable post-
+state.
+• Two original benchmark sets that cover 300 real GitHub
+library functions, and a CVE-grounded track of 287 dis-
+closed vulnerable functions in self-contained suites.
+arXiv:2609.05370v1  [cs.CR]  4 Sep 2026
+
+
+• Behavioral agreement can fall as Build rises, across nine
+configurations of eight systems. Gains in build rate co-
+incide with losses in behavioral agreement, and aligned
+source analysis traces Divergence and Crash Absence to
+introduced fields, types, callees, and constants, a common
+pattern within each system.
+2
+Background
+2.1
+Traditional Decompilers
+A conventional decompiler lifts machine code to high-level
+source code, recovers variables and types, restructures con-
+trol flow, and emits C-like pseudocode (Cifuentes 1994; Yak-
+dan et al. 2016; Basque et al. 2024; National Security Agency
+2019; Hex-Rays 2024). Relevant analyses span type and data-
+structure recovery, exact recovery and recompilation, and
+learned reconstruction of stripped names (Noonan, Loginov,
+and Cok 2016; Zhang et al. 2021; Schulte et al. 2018; La-
+comis et al. 2019; Pal et al. 2024; Chen et al. 2021b; Xie et al.
+2024). Crucially, these systems expose unresolved analysis
+directly: their pseudocode contains placeholder types such
+as undefined4 and _DWORD, synthetic names such as
+uVar1 and DAT_*, raw offsets, and goto-heavy control
+flow. When compilation fails, diagnostics point to a visible
+front-end artifact or non-C syntax (Table 4). This failure pro-
+file provides a baseline for identifying symbols introduced
+by generative rewriting.
+2.2
+LLM-Based Decompilation
+LLMs have become more involved in reverse engineer-
+ing, and decompilation methodologies have evolved signifi-
+cantly (Basque et al. 2026). Early neural systems approached
+recovery from assembly or LLVM IR as a translation prob-
+lem (Katz et al. 2019; Fu et al. 2019; Hosseini and Dolan-
+Gavitt 2022) and early LLM decompilers rewrote standard
+decompiler output (Wong et al. 2023). More recently, two
+paradigms of LLM decompiler dominate: end-to-end sys-
+tems that map assembly directly to C (Armengol-Estap’e
+et al. 2023; Jiang et al. 2023; Liu et al. 2026), and refinement
+systems that process symbolic pseudocode into idiomatic,
+compilable C code (Tan et al. 2024; Dramko, Goues, and
+Schwartz 2025; Tan et al. 2025a; Hu, Liang, and Chen 2024).
+2.3
+Decompilation Datasets and Benchmarks
+Learning-based approaches inherently rely on extensive bi-
+nary corpora. Various datasets supply the critical data neces-
+sary to evaluate decompilation generalization, scalability and
+vulnerability preservation (Liu et al. 2024; Joyce et al. 2025;
+Kim et al. 2020; Anderson and Roth 2018; Saul et al. 2024;
+Dolan-Gavitt et al. 2016; Hazimeh, Herrera, and Payer 2020;
+Mei et al. 2024; Zhang and Qian 2018), while large scale
+datasets provide more realistic evaluation (Tan et al. 2025b).
+However, LLM decompilers are predominantly evaluated
+on highly constrained benchmarks: HumanEval-Decompile,
+MBPP C conversion, ExeBench, and AnghaBench (Tan et al.
+2024, 2025a; Armengol-Estap’e et al. 2022; da Silva et al.
+2021). These datasets primarily offer short functions, flat
+scalar signatures, and sparse input-output assertions. Con-
+sequently, claims of behavioral agreement rely heavily on
+recompilability and pass@k re-executability (Chen et al.
+2021a) over the fixed tests.
+Static tests and superficial similarity fail to establish be-
+havioral agreement (Liu et al. 2023; Tan et al. 2024; Cao
+et al. 2024; Dramko et al. 2024). State-of-the-art evaluations
+remain limited: they often restrict LLMs to projects with
+pre-existing fuzzing suites (Gao et al. 2025) and report only
+fuzzing coverage, omitting the broader analytic techniques
+used on conventional decompilers (Liu and Wang 2020; Zou
+et al. 2024). Csmith (Yang et al. 2011) generates random
+C programs and compares compilers on them; equivalence
+modulo inputs (Le, Afshari, and Su 2014) derives program
+variants that must agree on a profiled input set. Decompiler
+testing adopted this program-side recipe: DecFuzzer (Liu and
+Wang 2020) recompiles decompiled Csmith and programs
+and compares executions; Bin2Wrong (Yang and Nagy 2025)
+mutates source, compiler, optimization, and executable for-
+mat as one testcase, and D-Helix (Zou et al. 2024) compares
+original and recompiled binaries by symbolic differentiation.
+All vary the program and target conventional decompilers, so
+their subjects carry none of the project-specific structs, type-
+defs, or wrappers that LLM refiners replace (Section 5.3).
+CHISEL (Kohli et al. 2026) instead varies the inputs, using a
+coverage-guided fuzzer as in-loop feedback for LLM repair
+of Ghidra pseudo-C on 120 ExeBench functions.
+3
+Motivation
+LLM decompilation systems that finetune on existing mod-
+els are judged, and increasingly trained, on a surface proxy
+for behavioral agreement: emit code that compiles and
+reproduces the reference on the inputs already on hand.
+LLM4Decompile is fine-tuned with the next-token objec-
+tive over the reference tokens y = (y1, . . . , yn) given the
+front-end input x,
+L(θ) = −
+n
+X
+t=1
+log Pθ(yt | y<t, x) ,
+(1)
+which rewards resemblance to the reference string without
+measuring behavioral agreement. SK2Decompile uses rein-
+forcement learning with rewards that inspect the same sur-
+face. Its structure reward is zero when the IR does not compile
+and otherwise adds the Jaccard overlap of placeholder iden-
+tifiers rph = |Igen ∩IIR|/|Igen ∪IIR| to a base reward of
+1.0:
+rstruct =
+
+0.0,
+if IR does not compile,
+1.0 + rph,
+if IR compiles,
+(2)
+A second phase rewards identifier-name similarity. No term
+of either objective asks whether the recovered function agrees
+with the reference on an input it was never shown, and re-
+executability is only reported on shipped tests. A rewrite
+that compiles, reads cleanly, and passes every released in-
+put output pair thus receives full credit even when the func-
+tion’s behavior changes, which prior human studies also con-
+firm (Basque et al. 2026; Votipka et al. 2019; Burk et al.
+2022). Recent work adds runtime feedback, reward shaping,
+and structural guidance (Wong et al. 2025; Zou et al. 2025;
+
+
+original
+reference
+void decode6(long v,
+long width, long
+height,
+long *x, long *y){
+long w, D = 6;
+long col = v/(height*6)
+;
+long maxcol = (width-4)
+/6;
+if( col >= maxcol ){
+col = maxcol;
+D = width - maxcol*6;
+}
+w = v - col*height*6;
+*x = col*6 + w%D;
+*y = height-1 - w/D;
+}
+shipped: 10 IO pairs
+args ∈[0, 124]; none reaches the
+final band
+raw Hex-Rays
+Matched
+void __cdecl decode6(
+long v,
+...
+col = v / (6*height);
+maxcol = (width-4)/6;
+if ( col >= maxcol ){
+col = (width-4)/6;
+D = width - 6*maxcol;
+}
+*x = (v - 6*height*col)
+% D + 6*col;
+*y = height - 1
+- (v - 6*height*col)
+/D;
+}
+Shipped pass 10/10
+Generated pass
+100/100
+x, y match the reference on every
+input
+SK2Decompile
+Diverged
+void decode6(long i,
+long n, long m,
+long *x, long *y){
+long k, l, r;
+r = 6;
+k = i/(m*r);
+l = (n-4)/r;
+if( k >= l ){
+k = l;
+r = n - l*r; }
+*x = (i-k*m*r)%r
++ k*r;
+*y = m-1 - (i-k*m*r)/r;
+}
+Shipped pass 10/10
+Generated pass 70/100
+v, width, height = 100, 16, 8
+out x, y = 8, −2
+ref x, y = 12, 6
+LLM4Decompile
+Diverged
+void decode6(long n,
+long width, long
+height,
+long *x, long *y){
+long w, D, col;
+w = (width-4)/6;
+if( n >= w*height*6 ){
+D = width - w*6;
+col = w;
+}else{ D = 6;
+col = n/(height*6); }
+n -= col*height*6;
+*x = col*6 + n%D;
+*y = (height-1) - n/D;
+}
+Shipped pass 10/10
+Generated pass 66/100
+v, width, height = 0, 1010, 109
+out x, y = ∼1010, −2×1018
+ref x, y = 0, ∼109
+Figure 1: Re-executability does not imply behavioral equivalence. The three reconstructions are outputs from decompilation
+systems on the same target, which maps a linear index into bands of width 6 followed by a variable-width final band. All
+three agree with the reference on the ten shipped ExeBench tuples. Inspection of those tuples shows that none exercises
+SK2Decompile’s final-band error, while their small positive operands do not overflow LLM4Decompile’s threshold product.
+On the 100-input stress corpus, raw Hex-Rays agrees with the reference on 100/100 inputs, SK2Decompile on 70/100, and
+LLM4Decompile on 66/100. Gray highlights the reference check and the ∗x computation. SK2Decompile conflates the fixed
+stride 6 with the mutable final-band width D, then uses D where 6 is required in both the residual and the horizontal band
+offset, so both x and y may be corrupted. LLM4Decompile replaces the quotient check with n ≥maxcol · height · 6; this
+comparison is equivalent only under the intended sign constraints and when the product does not overflow. It also moves the
+quotient computation into one branch, changing division-by-zero fault behavior. Footers show a representative model output
+and the corresponding reference output.
+Wang et al. 2025; Shypula, Bastani, and Schwartz 2026) but
+leaves the proxy in place.
+ExeBench, widely used to evaluate LLM decompilers, has
+a test function decode6, which maps an index into six-
+column bands with a narrower final band (Figure 1). Its ten
+shipped input–output pairs stay in a narrow range: every ar-
+gument lies within 0 and 124, and on all ten the quotient
+col is smaller than maxcol, so the final band is never exer-
+cised and the small operands never overflow. SK2Decompile
+and LLM4Decompile both recompile and pass all ten. How-
+ever, the dynamically generated input corpus exposes the
+rewrites: SK2Decompile collapses the fixed stride 6 and
+the mutable band width D into a single variable, so on
+(v, width, height) = (100, 16, 8) it writes (x, y) = (8, −2)
+where the reference gives (12, 6); it matches only 70/100
+inputs. LLM4Decompile multiplies out the division-based
+band guard, introducing 64-bit overflow: on (0, 1010, 109)
+it returns roughly (1010, −2×1018) against the reference’s
+(0, ∼109), and matches 66/100. Raw Ghidra and Hex-
+Rays preserve the reference’s operations and match all
+100. Other Divergence cases include LLM4Decompile nar-
+rowing image_fit’s unsigned dimensions and chang-
+ing SetFloat’s constant, SK2Decompile dropping a cast
+in tableset, and AutoDecompiler emitting uninitialized
+stack arrays whose in-bounds reads evade AddressSani-
+tizer (Armengol-Estap’e et al. 2022; Liu et al. 2026; Sere-
+bryany et al. 2012). The same pattern recurs elsewhere: re-
+playing every candidate shows that the shipped suites re-
+leased by the three corpora fail to capture 3% to 45% of the
+divergence in function behavior.
+4
+Benchmark Design
+4.1
+Oracle Design
+A high level workflow of Decompile-Diverge is illustrated
+in Figure 2. It constructs a behavioral comparison oracle for
+each function from its original source. It synthesizes a driver
+from the target function, uses AFL++ (Fioraldi et al. 2020)
+to fuzz the reference implementation, and generates the re-
+sulting corpus before evaluating any decompiler outputs. For
+portability and reproducibility purposes, the portable version
+provides the inputs we used to run the experiments stated in
+Section 5.1 and Table 1, and the benchmark has an option
+to generate the inputs dynamically. The oracle supports most
+common types including fixed-width scalars, strings, pointer-
+length arrays, and bounded numeric buffers; Table 1 reports
+its coverage given the time limit stated in Section 5.1. Each
+decompiled candidate is then spliced in as-is and executed
+on exactly the same inputs as the reference. An Address-
+Sanitizer build detects crashes and hangs, while an uninstru-
+
+
+Figure 2: A reference C function is compiled to a binary that a fuzzer explores to build a fixed input corpus. Decompiler recovers
+C source that is recompiled into a candidate binary. The same inputs are then re-executed on both original and recompiled
+binaries, and their bounded observable post-states are compared to judge the function Matched (behavior preserved), Diverged
+(a changed output or bounded observable post-state), or Crash Absence (a reference crash that is silently absent, CVE only).
+mented -O0 build compares the bounded observable post-
+state including the function’s return value, the bytes written,
+process’s writable globals, the .data and .bss ranges de-
+limited by linker symbols. The reference and candidate are
+then compared symbol by symbol through the table, so the
+check is independent of memory layout (heap, stack, and reg-
+isters are excluded as relink may change layout). Two further
+guards keep unstable or environment-dependent behavior out
+of the judgments: pointer-valued state is relocation-masked
+in the digest of the bounded observable post-state, and on the
+GitHub and CVE tracks a divergence counts only if it repro-
+duces on four re-runs of both reference and candidate, dis-
+carding flakiness from address-space layout or uninitialized
+memory. The reference execution thus supplies the expected
+behavior without hand-written input/output assertions. Be-
+cause the comparison is limited to the generated corpus and
+the bounded observable post-state, the reported Matched rate
+is an upper bound on behavioral agreement across all valid in-
+puts, whereas Divergence and Crash Absence rates are lower
+bounds.
+4.2
+Benchmark Data Sources
+Established LLM Decompiler Corpora
+Our setup re-
+places the shipped input/output tests for four popular cor-
+pora used by LLM decompilation systems: HumanEval-
+Decompile (162) (Tan et al. 2024), the ExeBench valid_real
+split (1,551 retained) (Armengol-Estap’e et al. 2022), Ang-
+haBench (218) (da Silva et al. 2021), and the MBPP C con-
+version (603) (Tan et al. 2025a).
+GitHub Repositories
+The GitHub track contains 300 C
+functions (median 23 SLOC) from 132 libraries in 106
+repositories without released function-level tests, at most
+21 from any one library. Selection is model-blind and re-
+stricted to functions that can be exercised through our oracle
+fuzzer interface; among the 300, seven functions with multi-
+level pointers, function pointers, multidimensional arrays,
+by-value structs, or project-specific aggregates use manually
+written drivers with the same file-input and observation con-
+tract. Nine references do not build under the oracle harness
+and are excluded, leaving the n=291 of Table 3.
+Common Vulnerabilities and Exposures
+The Common
+Vulnerabilities and Exposures (CVE) track contains 287 vul-
+nerable C functions (median 47 SLOC) from 94 open-source
+projects. We recover 300 functions from vulnerable revisions
+identified through OSV.dev fix commits (OpenSSF 2026)
+and from the CVEfixes dataset (Bhandari, Naseer, and Moo-
+nen 2021), where 13 are dropped due to fuzzer compati-
+bility and duplication, leaving us 287 in total. Each suite
+preserves the vulnerable function’s original type definitions
+and helper routines, with minimal stubs for dependencies.
+Decompilers see the functions’ assembly compiled without
+instrumentation; the testing suites compile these functions
+with AddressSanitizer and UBSan. A file-input driver passes
+attacker-controlled bytes through the target function and in-
+cludes both vulnerability-triggering and safe inputs. AFL++
+outputs the replay corpus of 14,323 inputs, including man-
+ually constructed proofs of concept when fuzzing cannot
+recover the crash. The final generated input corpus contains
+21,119 inputs, averaging 74 per function; Table 1 reports
+coverage.
+4.3
+Systems Benchmarked
+We evaluate eight systems in nine configurations: four re-
+finement systems including LLM4Decompile (Tan et al.
+2024), Idioms (Dramko, Goues, and Schwartz 2025),
+SK2Decompile (Tan et al. 2025a), and DeGPT (Hu, Liang,
+and Chen 2024); three end-to-end systems including Au-
+toDecompiler (Liu et al. 2026), Nova (Jiang et al. 2023),
+and SLaDe (Armengol-Estap’e et al. 2023), plus GLM-
+5.2 (GLM-5-Team 2026) in both roles. LLM4Decompile
+and DeGPT refine Ghidra output; the other refinement sys-
+tems use Hex-Rays. All systems use their published settings,
+full checkpoints, and prompts. Because DeGPT’s original
+gpt-3.5-turbo backend is limited to 4,096 output to-
+kens and is no longer representative of current chat mod-
+els, we replace it with Qwen3.6-35B-A3B-FP8 (Qwen Team
+2026) and label the configuration DeGPT-Qwen throughout.
+These results characterize DeGPT’s pipeline with the Qwen
+backend; the published GPT-3.5-Turbo system is outside our
+evaluation. SLaDe follows its published source-to-assembly
+and beam-selection pipeline, using assembly generated from
+source. Other work (Wong et al. 2025; Wang et al. 2025; Zou
+et al. 2025) is excluded because sufficient public artifacts for
+evaluation were unavailable at the time of experiment.
+
+
+5
+Evaluation
+5.1
+Experiment Setup and Judgment
+Let C be the set of successfully built candidates from
+Section 4.2, each candidate receives exactly one judgment
+through the map
+Y = {Matched, Divergence, Crash Absence},
+J : C →Y,
+(3)
+where the labels are:
+• Matched: matches the reference on all inputs.
+• Divergence: diverges from the reference on at least one
+input, changing the observed state including crash, be-
+havioral change, or non-termination.
+• Crash Absence: removes a failure the reference is ex-
+pected to exhibit, reported only in the CVE track.
+Since a candidate may satisfy both the Divergence and Crash
+Absence conditions, we give Crash Absence precedence over
+Divergence so that J is well defined and the three labels are
+mutually exclusive.
+There are several types the fuzzer will not apply to (e.g.,
+multi-dimensional arrays and function pointers) and several
+functions will not be built with AddressSanitizer, and these
+are not included. As a result, the tests are applicable on a
+total of 3,089 functions, where the final denominators are
+n=161, 1,538, 215, and 597 for the four established corpora,
+291 for GitHub, 287 for CVE, in all of which the original
+references are judged as Matched. We also test fuzzing the
+established corpora at time budgets of 1 and 5 minutes; the 5-
+min run expands coverage on only thirteen ExeBench, three
+AnghaBench, and six MBPP functions, so we stop at the 5
+minute fuzzing for existing corpora. For GitHub and CVE
+functions we set a 10 minutes time limit for fuzzing (fur-
+ther extending the limit does not increase coverage), and the
+whole fuzzing coverage is shown in Table 1.
+Human
+Eval
+Exe
+Bench
+Angha
+Bench
+MBPP
+GitHub
+CVE
+Line
+98
+99
+94
+98
+90
+84
+Branch
+96
+93
+86
+97
+82
+74
+Table 1: Oracle generated input corpus coverage. Line and
+Branch are mean per-function coverage percentages.
+5.2
+Divergence across Corpora
+Passing Established-Corpus Tests while Diverging
+On
+the four established corpora (HumanEval, ExeBench, Ang-
+haBench, MBPP), Table 2 shows the tradeoff in the terms
+each corpus itself supplies: refinement clears more of the
+shipped tests while diverging far more often on the gener-
+ated corpus. LLM4Decompile passes more than Ghidra on
+every corpus that ships tests (85 against 81 on HumanEval),
+yet diverges on 13–21% of functions against Ghidra’s 1–
+4%, and SK2Decompile reaches 25% Divergence on Ang-
+haBench against Hex-Rays’s 0%. The raw front ends stay
+at or below 4% Divergence on every corpus, and in paired
+HumanEval
+ExeBench
+Angha
+MBPP
+n=161
+n=1538
+n=215
+n=597
+System
+Pass Div D|P Pass Div D|P
+Div Pass Div D|P
+Raw front ends
+Ghidra
+81
+1
+2
+58
+4
+1
+1
+73
+1
+1
+Hex-Rays
+86
+1
+1
+75
+3
+5
+0
+87
+1
+1
+Refinement systems
+LLM4Decompile
+85 15
+7
+61 21
+8
+13
+80 14
+4
+SK2Decompile
+50
+6
+4
+69 17
+6
+25
+60
+7
+4
+Idioms
+1
+0
+-
+6
+2
+5
+0
+0
+0
+-
+GLM-5.2-Refine
+61
+4
+1
+67 10
+6
+10
+70
+7
+6
+DeGPT-Qwen
+81
+2
+1
+59
+5
+2
+2
+70
+4
+4
+End-to-end systems
+AutoDecompiler
+1
+7
+0∗
+5 19
+9
+16
+2 14 14∗
+Nova
+34 55 13
+31 30 10
+33
+41 45 12
+SLaDe
+51 11
+4
+42 13
+3
+10
+53 17
+8
+GLM-5.2-E2E
+72 25
+5
+64 17
+5
+29
+76 22
+5
+Table 2: Differential testing on the four established corpora.
+Pass and Div are percentages of each corpus’s denominator n.
+Pass: the candidate builds and matches every input–output
+pair shipped with the corpus. Div: Divergence, any diver-
+gence on at least one input of the generated corpus. Div|P: of
+the candidates in Pass that Decompile-Diverge also scores,
+the percentage that diverge anyway; the denominator is that
+Pass count, not n. AnghaBench ships no tests, so only Div is
+defined there. A dash marks no scorable passer, ∗fewer than
+20 of them.
+comparisons 91% of LLM4Decompile’s Divergence cases
+and 84% of SK2Decompile’s Divergence cases arise only
+after refinement; only DeGPT-Qwen, which edits in place,
+stays at ≤5% Divergence. Crucially, the shipped tests do
+not catch this. The Div|P column isolates the candidates
+that pass every shipped test and still diverge, reaching 13%
+for Nova on HumanEval and 8% for LLM4Decompile on
+ExeBench, and pooled it puts every refinement system above
+its own front end. Replaying every candidate through the
+three released suites (ported precisely so the shipped tests
+and Decompile-Diverge score identical bytes), 4.9% of the
+12,133 such passers diverge, 77% of them by changing an
+output with no crash at all. Pooled over the 15,379 candidates
+scored by both, the two oracles disagree on 5.1%; and 3.9%
+pass every shipped test yet diverge on the generated corpus,
+while 1.2% fail a shipped test yet stay Matched.
+LLM-Amplified Divergence in Real Projects
+Table 3 re-
+ports the two tracks with no fixed tests: 291 GitHub library
+functions and 287 CVE functions. Most systems produce
+extractable code on 99–100% of cases; the exceptions are
+Nova (74%/81%), whose non-causal attention mask forbids
+a fused kernel and forces a dense tensor (100 GB VRAM
+for a 40k-token function), and SLaDe (1%/14%), whose un-
+modified source-to-assembly pipeline cannot treat header-
+dependent library functions as standalone compilation units.
+The decompilation-tuned end-to-end models also transfer
+poorly off their curated corpora: Nova builds 58–86% of
+the established corpora but only 11% of GitHub functions
+
+
+GitHub
+CVE
+n=291
+n=287
+System
+Bld
+Mat.
+Div
+Bld
+Mat.
+Div
+C-A
+Raw front ends
+Ghidra
+75
+74
+1
+30
+27
+3
+0
+Hex-Rays
+81
+78
+3
+23
+19
+3
+1
+Refinement systems
+LLM4Decompile
+90
+62
+28
+64
+38
+17
+9
+SK2Decompile
+41
+32
+9
+11
+7
+2
+2
+Idioms
+2
+1
+1
+1
+1
+0
+0
+GLM-5.2-Refine
+80
+71
+9
+31
+25
+3
+3
+DeGPT-Qwen
+74
+69
+5
+30
+27
+3
+0
+End-to-end systems
+AutoDecompiler
+7
+2
+5
+2
+0
+1
+1
+Nova
+11
+3
+8
+5
+0
+3
+2
+SLaDe
+0
+0
+0
+2
+1
+1
+0
+GLM-5.2-E2E
+41
+28
+13
+23
+8
+11
+4
+Table 3: Differential testing on the GitHub and CVE data of
+Decompile-Diverge, as percentages of each track’s denomi-
+nator n. Bld: the candidate compiles; Mat: Matched, matches
+the reference on every input; Div: Divergence, any divergence
+on at least one input, including a changed output or bounded
+observable post-state, an introduced crash, or a hang; C-A:
+Crash Absence, the validated PoC no longer crashes, defined
+only on the CVE track and counted separately from Div.
+(3% Matched), and AutoDecompiler 8–25% against 7% (2%
+Matched). GLM-5.2-E2E, reading the same assembly with
+no decompilation-specific training, reaches 41% Build and
+28% Matched. This tuned-versus-zero-shot comparison con-
+flates training distribution, scale, and objective. The con-
+flated factors limit this result to an observation about off-
+distribution robustness.
+On real code the refiners buy build rate at a cost to
+behavioral agreement. LLM4Decompile posts the largest
+build gain of any refiner, lifting Ghidra from 75% to 90%,
+while its Matched rate falls from 74% to 62%. The 28-
+point gap is mostly changes to the bounded observable
+post-state (23 points), with 5 points of introduced crashes.
+Paired per function, 137 functions are Matched under both
+Ghidra and LLM4Decompile, 77 under Ghidra alone, 42
+under LLM4Decompile alone, and 35 under neither (exact
+two-sided McNemar (Mcnemar 1947) p = .002): recompil-
+ability ranks the refiner higher; behavioral agreement ranks
+the front end higher. Most of this divergence arises during re-
+finement. Among LLM4Decompile’s GitHub functions clas-
+sified as Divergence, Table 4 attributes 77 to divergences
+absent from Ghidra and only 5 to inherited ones. GLM-5.2-
+Refine (80%/71%) and DeGPT-Qwen (74%/69%) stay near
+their front ends (Hex-Rays 81%/78%, Ghidra 75%/74%),
+while SK2Decompile cuts Hex-Rays’s build rate to 41% and
+Idioms builds only 2%.
+Crash Absence in Vulnerable Code
+On vulnerable code
+the same rewriting turns into a security problem. CVE func-
+tions are harder to recompile because their project-specific
+types hold even Ghidra and Hex-Rays to 30% and 23%
+Build. LLM4Decompile raises Ghidra’s Build to 64% at
+38% Matched, but 25 of its 183 builds lose the reference
+crash: a full-track Crash Absence rate of 25/287, or 8.7%
+(95% CI [6.0%, 12.5%]), with leave-one-project-out boot-
+strapping confirming no single project drives it. Raw Ghidra
+has no Crash Absence cases, and Hex-Rays’s three losses
+arise from mis-striding or UB artifacts. DeGPT-Qwen again
+tracks Ghidra almost exactly (30% Build, 27% Matched, 3%
+Divergence, 0% Crash Absence), whereas GLM-5.2-E2E
+loses the crash on 11 of 66 builds. The digest covers the
+bounded observable post-state, so it also flags Divergence
+when a candidate keeps the crash but changes an output or
+global. This occurs in 10 of LLM4Decompile’s 183 builds
+and 8 of GLM-5.2-E2E’s 66; a crash-only oracle would miss
+these cases.
+The refiners introduce the Crash Absence cases. Attribu-
+tion is possible only where the front end itself compiles, so
+we re-score Ghidra and Hex-Rays behind an additive declara-
+tion block that supplies the missing placeholder vocabulary
+while leaving each function body byte-identical. Even then
+the front end explains little: pooling Divergence and Crash
+Absence, of the refiners’ 114 CVE divergences it had itself
+diverged on only 27, was Matched on 71, and failed to build
+on the remaining 16, which are not adjudicable and which
+Table 4 folds into New, giving 27 and 87. The systems sep-
+arate sharply. For 64 of LLM4Decompile’s 73 divergences,
+no divergence is inherited from Ghidra. LLM4Decompile ex-
+pands Ghidra’s 85 builds to 183 and incurs 25 Crash Absence
+cases, whereas DeGPT-Qwen reproduces an already-present
+Ghidra divergence in 8 of its 9 and has none. More extensive
+rewriting shifts the failure profile from inherited front-end
+errors to newly introduced errors.
+5.3
+Source-Level Analysis of Divergence
+Across all function-candidate pairs, we compare each gen-
+erated output with its corresponding reference and front-
+end decompiler artifacts, spanning all evaluation axes. This
+source code and diagnostics level analysis operates without a
+behavioral comparison oracle, making its dataset a superset
+of the behaviorally adjudicated corpora. As shown in Ta-
+ble 4, we quantify changes to placeholder types, synthetic
+names, and raw offsets, subsequently identifying the exact
+token cited by the compiler. A field, type, or callee counts
+as introduced only if its identifier is absent, after comment
+and string stripping, from both the front-end input and the
+reference source, with C keywords, standard identifiers, and
+decompiler vocabulary exempted. A manual inspection of 60
+flagged compiled outputs plus 20 unflagged controls found no
+missed invention; among flags, 12% of tokens are mere fab-
+rications denoting entities with no counterpart in reference
+or input, while the rest rename or re-bind real ones, most of-
+ten substituting a standard-library call for a project macro or
+wrapper. The divergence association below pools both forms
+of rewriting. The columns use Scr for removed front-end vo-
+cabulary; Fld, Typ, and Cal for introduced fields, types, and
+callees; and Itr versus FE for failed splices whose diagnostic
+names an introduced symbol versus a retained front-end ar-
+tifact. Scr is not applicable to end-to-end inputs, and Idioms’
+name-canonicalized input makes callee invention part of its
+
+
+Source-level rewriting
+Divergence attribution
+FE vocab.
+introduced
+Fail token
+GitHub
+CVE
+System
+Pairs
+Voc
+Scr
+Fld
+Typ
+Cal
+NF
+Itr
+FE
+Inh
+New
+Inh
+New
+Fix
+Ghidra
+4170
+4641
+0
+0
+0
+0
+1125
+0
+487
+–
+–
+–
+–
+–
+Hex-Rays
+4152
+7884
+0
+0
+0
+0
+858
+1
+236
+–
+–
+–
+–
+–
+LLM4Decompile
+3994
+4358
+4253
+255
+362
+37
+504
+252
+13
+5
+77
+9
+64
+2
+SK2Decompile
+3979
+8096
+7931
+843
+773
+170
+668
+481
+1
+1
+23
+3
+11
+1
+Idioms
+3975
+7584
+7457
+241
+580
+777
+870
+413
+33
+0
+4
+0
+1
+0
+GLM-5.2-Refine
+3468
+6977
+2768
+75
+134
+202
+543
+148
+81
+6
+18
+7
+10
+2
+DeGPT-Qwen
+3441
+3938
+614
+0
+0
+20
+904
+58
+369
+5
+10
+8
+1
+0
+AutoDecompiler
+4009
+–
+–
+726
+1119
+593
+2529
+1050
+0
+–
+–
+–
+–
+–
+Nova
+3668
+–
+–
+807
+1172
+937
+1237
+766
+0
+–
+–
+–
+–
+–
+SLaDe
+1987
+–
+–
+100
+261
+36
+411
+276
+0
+–
+–
+–
+–
+–
+GLM-5.2-E2E
+3502
+–
+–
+532
+604
+460
+554
+282
+0
+–
+–
+–
+–
+–
+Table 4: Source-level rewriting mechanism and divergence attribution, in absolute counts. Source-level rewriting spans the
+40,345 pairs of the Pairs column. Voc: front-end vocabulary incidences in the input; Scr: how many the system removes. Fld,
+Typ, Cal: introduced fields, types, and callees (Section 5.3). Fail token: NF is the number of candidates that failed to compile,
+of which Itr name a token absent from both input and reference and FE name front-end vocabulary or an input-only symbol; the
+remainder cite non-C syntax or misuse of an existing symbol. Divergence attribution pairs each refiner with its own front end
+on the same function: of the functions the refiner diverges on, Inh counts those where the front end also diverged and New the
+rest (including unadjudicable functions whose front end did not build, 27/132 on GitHub, 16/87 on CVE, an upper bound); Fix
+(CVE only) counts front-end Divergences the refiner repairs.
+task.
+Failure mechanisms show patterns that correlate with Di-
+vergence rates. Systems whose failures retain front-end ar-
+tifacts (Ghidra, Hex-Rays, and DeGPT-Qwen) are the only
+ones to keep Divergence at or below 7.0% of their GitHub
+builds, the highest of them being DeGPT-Qwen at 15 of
+215; the next-lowest system is GLM-5.2-Refine, at 24 of 232
+builds or 10.3%. Systems that fail because they hallucinate
+new code (inventions in Table 4) perform much worse. Every
+configuration with GitHub builds where over 40% of failures
+involve an introduced symbol exhibits a Divergence rate of
+20.3% or higher, the lowest being SK2Decompile at 24 of 118
+builds. The association also holds within systems. Among a
+system’s own compiled candidates, functions whose output
+carries an introduced field, type, or callee diverge far more of-
+ten than its invention-free functions: 53% versus 20% pooled
+on GitHub (odds ratio 4.6, Fisher p < 10−6) and 59% ver-
+sus 31% on the CVE track (p < 10−4). The gap persists
+within function-length terciles. Shared drivers such as func-
+tion difficulty and type richness may still contribute, so the
+association supports the proposed mechanism without estab-
+lishing causality. The reported gap is conservative because
+Divergence rates cover only code that compiles; many hallu-
+cinated programs fail to build and are excluded.
+The main pattern is a migration from visible unknowns
+in symbolic decompilers to confident inventions. Among re-
+compilation failures, 43% for raw Ghidra and 28% for raw
+Hex-Rays name a retained front-end artifact such as DAT_*
+or undefined4. Only one Hex-Rays failure names an in-
+troduced symbol, and the remaining failures involve non-
+C syntax or misuse of a real symbol. With the exception
+of DeGPT-Qwen, rewriting systems remove 40–98% of the
+front-end vocabulary. Turning *(_DWORD*)(a1+40) into
+C requires the model to supply a field, type, or callee absent
+from the binary. Introduced symbols appear in 42–72% of
+failed splices for the tuned refiners and end-to-end mod-
+els. Even GLM-5.2-Refine, the most conservative rewriter
+by this measure, reaches 27%. Inventions that survive com-
+pilation lead outputs to diverge, yielding either Divergence
+or Crash Absence. DeGPT-Qwen edits pseudocode in place,
+removes 16% of the vocabulary, and stays at or below 1% on
+each invention axis. Its failure profile consequently resem-
+bles Ghidra’s: 41% front-end tokens compared with 43% for
+raw Ghidra.
+Analysis
+on
+the
+decompiler
+outputs
+shows
+that
+SK2Decompile rewrites aggressively, including target re-
+names, storage-class and address-of changes, and introduced
+fields; its real-world build rate is roughly half that of Hex-
+Rays. LLM4Decompile preserves most fields and callees but
+makes small, compilable inventions such as u32, Mat4, or
+a changed hexadecimal constant, which tend to surface as
+Divergence. DeGPT-Qwen edits conservatively and remains
+close to Ghidra on both vocabulary removal and invention;
+full per-system fingerprints appear in the supplement. The
+same behavior appears at different stages of the pipeline.
+Curated corpora mostly contain flat scalar signatures, leav-
+ing little room to invent fields; introduced-field prevalence
+stays at or below 2%. Most outputs still compile, so incorrect
+inventions appear as Divergence. Real code uses project-
+specific structs and types. On CVE functions, introduced-
+field prevalence reaches 56–72% for SK2Decompile, Nova,
+and GLM-5.2-E2E. Some inventions prevent compilation
+and contribute to the Build collapse in Tables 2 and 3. Those
+that compile result in Divergence when values change, or
+
+
+result in Crash Absence when the vulnerability depends on
+the introduced type width, constant, or guard.
+6
+Conclusion
+Decompile-Diverge builds a behavioral comparison oracle
+from fuzzer-generated inputs derived from the reference
+function, together with a precise splicing procedure, extend-
+ing evaluation of behavioral agreement to functions without
+released tests. Across real and vulnerable code, the results
+show that recompilability and re-executability fail to cap-
+ture behavioral divergence, and source analysis connects that
+divergence to a shift from visible front-end unknowns to
+introduced tokens.
+7
+Acknowledgments
+This work was supported by NSF award CCF-2316159. This
+work was also supported in part through computational re-
+sources provided by Syracuse University. The authors grate-
+fully acknowledge use of the OrangeGrid / HTC Campus
+Grid, supported by NSF award ACI-1341006, and techni-
+cal support from Syracuse University’s Cyberinfrastructure
+Engineer, supported by NSF award ACI-1541396.
+References
+Anderson, H. S.; and Roth, P. 2018. EMBER: An Open
+Dataset for Training Static PE Malware Machine Learning
+Models. arXiv:1804.04637.
+Armengol-Estap’e, J.; Woodruff, J.; Brauckmann, A.;
+de S. Magalhães, J. W.; and O’Boyle, M. 2022. ExeBench:
+an ML-scale dataset of executable C functions. Proceed-
+ings of the 6th ACM SIGPLAN International Symposium on
+Machine Programming.
+Armengol-Estap’e, J.; Woodruff, J.; Cummins, C.; and
+O’Boyle, M. 2023.
+SLaDe: A Portable Small Lan-
+guage Model Decompiler for Optimized Assembly. 2024
+IEEE/ACM International Symposium on Code Generation
+and Optimization (CGO), 67–80.
+Basque, Z. L.; Bajaj, A. P.; Gibbs, W.; O’Kain, J.; Miao,
+D.; Bao, T.; Doupé, A.; Shoshitaishvili, Y.; and Wang, R.
+2024. Ahoy SAILR! There is No Need to DREAM of C: A
+Compiler-Aware Structuring Algorithm for Binary Decom-
+pilation.
+Basque, Z. L.; Doria, S.; Soneji, A.; Gibbs, W.; Doupé,
+A.; Shoshitaishvili, Y.; Losiouk, E.; Wang, R.; and Aonzo,
+S. 2026.
+Decompiling the Synergy: An Empirical Study
+of Human-LLM Teaming in Software Reverse Engineering.
+Proceedings 2026 Network and Distributed System Security
+Symposium.
+Bhandari, G.; Naseer, A.; and Moonen, L. 2021. CVEfixes:
+automated collection of vulnerabilities and their fixes from
+open-source software.
+Burk, K.; Pagani, F.; Krügel, C.; and Vigna, G. 2022. Decom-
+person: How Humans Decompile and What We Can Learn
+From It. 2765–2782.
+Cao, Y.; Zhang, R.; Liang, R.; and Chen, K. 2024. Evalu-
+ating the Effectiveness of Decompilers. Proceedings of the
+33rd ACM SIGSOFT International Symposium on Software
+Testing and Analysis.
+Chen, M.; Tworek, J.; Jun, H.; Yuan, Q.; de Oliveira Pinto,
+H. P.; Kaplan, J.; Edwards, H.; Burda, Y.; Joseph, N.; Brock-
+man, G.; Ray, A.; Puri, R.; Krueger, G.; Petrov, M.; Khlaaf,
+H.; Sastry, G.; Mishkin, P.; Chan, B.; Gray, S.; Ryder, N.;
+Pavlov, M.; Power, A.; Kaiser, L.; Bavarian, M.; Winter, C.;
+Tillet, P.; Such, F. P.; Cummings, D.; Plappert, M.; Chantzis,
+F.; Barnes, E.; Herbert-Voss, A.; Guss, W. H.; Nichol, A.;
+Paino, A.; Tezak, N.; Tang, J.; Babuschkin, I.; Balaji, S.;
+Jain, S.; Saunders, W.; Hesse, C.; Carr, A. N.; Leike, J.;
+Achiam, J.; Misra, V.; Morikawa, E.; Radford, A.; Knight,
+M.; Brundage, M.; Murati, M.; Mayer, K.; Welinder, P.; Mc-
+Grew, B.; Amodei, D.; McCandlish, S.; Sutskever, I.; and
+Zaremba, W. 2021a. Evaluating Large Language Models
+Trained on Code. arXiv:2107.03374.
+Chen, Q.; Lacomis, J.; Schwartz, E. J.; Goues, C. L.; Neu-
+big, G.; and Vasilescu, B. 2021b. Augmenting Decompiler
+Output with Learned Variable Names and Types.
+ArXiv,
+abs/2108.06363.
+Cifuentes, C. 1994. Reverse compilation techniques.
+da Silva, A. F.; Kind, B. C.; de Souza Magalhães, J. W.;
+Rocha, J. N.; Ferreira Guimarães, B. C.; and Quinão Pereira,
+F. M. 2021. ANGHABENCH: A Suite with One Million
+Compilable C Benchmarks for Code-Size Reduction. In 2021
+IEEE/ACM International Symposium on Code Generation
+and Optimization (CGO), 378–390.
+Dolan-Gavitt, B.; Hulin, P.; Kirda, E.; Leek, T.; Mambretti,
+A.; Robertson, W. K.; Ulrich, F.; and Whelan, R. 2016.
+LAVA: Large-Scale Automated Vulnerability Addition. 2016
+IEEE Symposium on Security and Privacy (SP), 110–121.
+Dramko, L.; Goues, C. L.; and Schwartz, E. J. 2025. Idioms:
+Neural Decompilation With Joint Code and Type Definition
+Prediction.
+Dramko, L.; Lacomis, J.; Schwartz, E. J.; Vasilescu, B.; and
+Goues, C. L. 2024. A Taxonomy of C Decompiler Fidelity
+Issues.
+Fioraldi, A.; Maier, D.; Eißfeldt, H.; and Heuse, M. 2020.
+AFL++ : Combining Incremental Steps of Fuzzing Research.
+Fu, C.; Chen, H.; Liu, H.; Chen, X.; Tian, Y.; Koushanfar,
+F.; and Zhao, J. 2019. A Neural-based Program Decompiler.
+ArXiv, abs/1906.12029.
+Gao, Z.; Cui, Y.; Wang, H.; Qin, S.; Wang, Y.; Zhang, B.;
+and Zhang, C. 2025. DecompileBench: A Comprehensive
+Benchmark for Evaluating Decompilers in Real-World Sce-
+narios. 23250–23267.
+GLM-5-Team. 2026. GLM-5: from Vibe Coding to Agentic
+Engineering. arXiv:2602.15763.
+Hazimeh, A.; Herrera, A.; and Payer, M. 2020. Magma: A
+Ground-Truth Fuzzing Benchmark. Proc. ACM Meas. Anal.
+Comput. Syst., 4(3).
+Hex-Rays. 2024. IDA Pro and Hex-Rays Decompiler. Hex-
+Rays SA.
+Hosseini, I.; and Dolan-Gavitt, B. 2022. Beyond the C: Re-
+targetable Decompilation using Neural Machine Translation.
+ArXiv, abs/2212.08950.
+
+
+Hu, P.; Liang, R.; and Chen, K. 2024. DeGPT: Optimizing
+Decompiler Output with LLM. Proceedings 2024 Network
+and Distributed System Security Symposium.
+Jiang, N.; Wang, C.; Liu, K.; Xu, X.; Tan, L.; Zhang, X.; and
+Babkin, P. 2023. Nova: Generative Language Models for
+Assembly Code with Hierarchical Attention and Contrastive
+Learning.
+Joyce, R. J.; Miller, G. L.; Roth, P.; Zak, R.; Zaresky-
+Williams, E.; Anderson, H.; Raff, E.; and Holt, J. 2025. EM-
+BER2024 - A Benchmark Dataset for Holistic Evaluation of
+Malware Classifiers. Proceedings of the 31st ACM SIGKDD
+Conference on Knowledge Discovery and Data Mining V.2.
+Katz, O.; Olshaker, Y.; Goldberg, Y.; and Yahav, E. 2019.
+Towards Neural Decompilation. ArXiv, abs/1905.08325.
+Kim, D.; Kim, E.; Cha, S. K.; Son, S.; and Kim, Y. 2020. Re-
+visiting Binary Code Similarity Analysis Using Interpretable
+Feature Engineering and Lessons Learned. IEEE Transac-
+tions on Software Engineering, 49: 1661–1682.
+Kohli, V.; Raghava, N.; Sikdar, B.; and Divakaran, D. M.
+2026. CHISEL-ing Back Source Code with AI-enabled Iter-
+ative Recovery. arXiv:2608.27981.
+Lacomis, J.; Yin, P.; Schwartz, E. J.; Allamanis, M.; Goues,
+C. L.; Neubig, G.; and Vasilescu, B. 2019. DIRE: A Neu-
+ral Approach to Decompiled Identifier Naming. 2019 34th
+IEEE/ACM International Conference on Automated Software
+Engineering (ASE), 628–639.
+Le, V.; Afshari, M.; and Su, Z. 2014. Compiler validation
+via equivalence modulo inputs.
+Liu, C.; Saul, R.; Sun, Y.; Raff, E.; Fuchs, M.; Pantano, T. S.;
+Holt, J.; and Micinski, K. K. 2024. Assemblage: Automatic
+Binary Dataset Construction for Machine Learning. ArXiv,
+abs/2405.03991.
+Liu, J.; Xia, C.; Wang, Y.; and Zhang, L. 2023. Is Your Code
+Generated by ChatGPT Really Correct? Rigorous Evaluation
+of Large Language Models for Code Generation.
+ArXiv,
+abs/2305.01210.
+Liu, P.; Sun, J.; Xing, M.; Zeng, Y.; Yan, Z.; Zhang,
+L.; Chen, L.; and Li, D. 2026.
+Binary Decompila-
+tion LLM with Feedback-Driven Multi-Turn Refinement.
+arXiv:2606.16162.
+Liu, Z.; and Wang, S. 2020. How far we have come: testing
+decompilation correctness of C decompilers. Proceedings of
+the 29th ACM SIGSOFT International Symposium on Soft-
+ware Testing and Analysis.
+Mcnemar, Q. 1947. Note on the sampling error of the dif-
+ference between correlated proportions or percentages. Psy-
+chometrika, 12: 153–157.
+Mei, X.; Singaria, P. S.; Castillo, J.; Xi, H.; Benchikh, A.;
+Bao, T.; Wang, R.; Shoshitaishvili, Y.; Doupé, A.; Pearce,
+H.; and Dolan-Gavitt, B. 2024.
+ARVO: Atlas of Repro-
+ducible Vulnerabilities for Open Source Software. ArXiv,
+abs/2408.02153.
+National Security Agency. 2019. Ghidra Software Reverse
+Engineering Framework. https://ghidra-sre.org/. Accessed:
+2025-09-13.
+Noonan, M.; Loginov, A.; and Cok, D. 2016. Polymorphic
+type inference for machine code. Proceedings of the 37th
+ACM SIGPLAN Conference on Programming Language De-
+sign and Implementation.
+OpenSSF. 2026.
+OSV.dev: Open Source Vulnerabilities.
+https://osv.dev/. Accessed: 2026-07-14.
+Pal, K. K.; Bajaj, A. P.; Banerjee, P.; Dutcher, A.; Nakamura,
+M.; Basque, Z. L.; Gupta, H.; Sawant, S. A.; Anantheswaran,
+U.; Shoshitaishvili, Y.; Doupé, A.; Baral, C.; and Wang, R.
+2024. "Len or index or count, anything but v1": Predict-
+ing Variable Names in Decompilation Output with Transfer
+Learning. In 2024 IEEE Symposium on Security and Privacy
+(SP), 4069–4087.
+Qwen Team. 2026.
+Qwen3.6-35B-A3B: Agentic Coding
+Power, Now Open to All.
+Saul, R.; Liu, C.; Fleischmann, N.; Zak, R.; Micinski, K. K.;
+Raff, E.; and Holt, J. 2024. Is Function Similarity Over-
+Engineered? Building a Benchmark. ArXiv, abs/2410.22677.
+Schulte, E.; Ruchti, J.; Noonan, M.; Ciarletta, D.; and Logi-
+nov, A. 2018. Evolving Exact Decompilation.
+Serebryany, K.; Bruening, D.; Potapenko, A.; and Vyukov,
+D. 2012. AddressSanitizer: A Fast Address Sanity Checker.
+309–318.
+Shoshitaishvili, Y.; Wang, R.; Salls, C.; Stephens, N.; Polino,
+M.; Dutcher, A.; Grosen, J.; Feng, S.; Hauser, C.; Krügel, C.;
+and Vigna, G. 2016. SOK: (State of) The Art of War: Offen-
+sive Techniques in Binary Analysis. 2016 IEEE Symposium
+on Security and Privacy (SP), 138–157.
+Shypula, A.; Bastani, O.; and Schwartz, E. J. 2026. Decaf:
+Improving Neural Decompilation with Automatic Feedback
+and Search. ArXiv, abs/2605.11501.
+Tan, H.; Li, W.; Tian, X.; Wang, S.; Liu, J.; Li, J.; and
+Zhang, Y. 2025a. SK2Decompile: LLM-based Two-Phase
+Binary Decompilation from Skeleton to Skin.
+ArXiv,
+abs/2509.22114.
+Tan,
+H.;
+Luo,
+Q.;
+Li,
+J.;
+and
+Zhang,
+Y.
+2024.
+LLM4Decompile: Decompiling Binary Code with Large
+Language Models. 3473–3487.
+Tan, H.; Tian, X.; Qi, H.; Liu, J.; Gao, Z.; Wang, S.; Luo,
+Q.; Li, J.; and Zhang, Y. 2025b. Decompile-Bench: Million-
+Scale Binary-Source Function Pairs for Real-World Binary
+Decompilation. ArXiv, abs/2505.12668.
+Votipka, D.; Rabin, S. M.; Micinski, K. K.; Foster, J.; and
+Mazurek, M. L. 2019. An Observational Investigation of
+Reverse Engineers’ Processes. 1875–1892.
+Wang, Y.; Xu, X.; Zhu, X.; Gu, X.; and Shen, B.
+2025.
+SALT4Decompile: Inferring Source-level Abstract
+Logic Tree for LLM-Based Binary Decompilation. ArXiv,
+abs/2509.14646.
+Wong, W. K.; Wang, H.; Li, Z.; Liu, Z.; Wang, S.; Tang, Q.;
+Nie, S.; and Wu, S. 2023. Refining Decompiled C Code with
+Large Language Models. ArXiv, abs/2310.06530.
+Wong, W. K.; Wu, D.; Wang, H.; Li, Z.; Liu, Z.; Wang,
+S.; Tang, Q.; Nie, S.; and Wu, S. 2025. DecLLM: LLM-
+Augmented Recompilable Decompilation for Enabling Pro-
+grammatic Use of Decompiled Code. Proceedings of the
+ACM on Software Engineering, 2: 1841 – 1864.
+
+
+Xie, D.; Zhang, Z.; Jiang, N.; Xu, X.; Tan, L.; and Zhang,
+X. 2024. ReSym: Harnessing LLMs to Recover Variable and
+Data Structure Symbols from Stripped Binaries.
+Yakdan, K.; Dechand, S.; Gerhards-Padilla, E.; and Smith,
+M. 2016. Helping Johnny to Analyze Malware: A Usability-
+Optimized Decompiler and Malware Analysis User Study.
+2016 IEEE Symposium on Security and Privacy (SP), 158–
+177.
+Yang, X.; Chen, Y.; Eide, E.; and Regehr, J. 2011. Finding
+and understanding bugs in C compilers. In ACM-SIGPLAN
+Symposium on Programming Language Design and Imple-
+mentation.
+Yang, Z.; and Nagy, S. 2025. Bin2Wrong: a Unified Fuzzing
+Framework for Uncovering Semantic Errors in Binary-to-C
+Decompilers. In 2025 USENIX Annual Technical Confer-
+ence (USENIX ATC 25), 1161–1179. Boston, MA: USENIX
+Association. ISBN 978-1-939133-48-9.
+Zhang, H.; and Qian, Z. 2018. Precise and Accurate Patch
+Presence Test for Binaries. 887–902.
+Zhang, Z.; Ye, Y.; You, W.; Tao, G.; Lee, W.-C.; Kwon,
+Y.; Aafer, Y.; and Zhang, X. 2021. OSPREY: Recovery of
+Variable and Data Structure via Probabilistic Analysis for
+Stripped Binary. 2021 IEEE Symposium on Security and
+Privacy (SP), 813–832.
+Zou, M.; Cai, H.; Wu, H.; Basque, Z. L.; Khan, A.; Çelik,
+B.; Tian, D.; Bianchi, A.; Wang, R.; and Xu, D. 2025. D-
+LiFT: Improving LLM-based Decompiler Backend via Code
+Quality-driven Fine-tuning. ArXiv, abs/2506.10125.
+Zou, M.; Khan, A.; Wu, R.; Gao, H.; Bianchi, A.; and Tian, D.
+2024. D-Helix: A Generic Decompiler Testing Framework
+Using Symbolic Differentiation.

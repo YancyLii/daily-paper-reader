@@ -1,0 +1,1137 @@
+Title: Local Edits, Global Ripples: Replay-Informed Policy Adaptation for Workflow Synthesis
+
+URL Source: https://arxiv.org/pdf/2609.12127v1
+
+Published Time: Mon, 14 Sep 2026 00:09:40 GMT
+
+Number of Pages: 33
+
+Markdown Content:
+Preprint. 
+
+# LOCAL EDITS , G LOBAL RIPPLES : R EPLAY -I NFORMED 
+
+# POLICY ADAPTATION FOR WORKFLOW SYNTHESIS 
+
+Manqing Mao, Hong Wang, Samson Koelle, Jie Yuan, Zhuoer Wang, James Feng, Yanjun Lin, Daniel Edmiston, Nikki Lijing Kuang, Zhecheng Sheng, Wei Niu Amazon, Inc. 
+
+{manqingm, niuwei }@amazon.com 
+
+## ABSTRACT 
+
+Prompt-policy editing offers a practical way to improve agents that synthesize executable workflows without updating the underlying model. However, persistent prompt editing has two coupled properties . First, edit locality does not imply effect locality : an edit confined to one predefined policy segment can ripple through downstream execution, altering behavior far beyond the edited segment. Second, 
+
+edit effects are composition-sensitive : edits that work in isolation can interfere after composition, causing one or both to lose their benefit or become harmful. Persistent adaptation must therefore support two distinct decisions : identifying 
+
+where the policy should change from execution feedback, and determining whether 
+
+the resulting edit remains safe to persist after composition. To address these chal-lenges, we introduce RIPPLE (Replay-Informed Persistent Policy Localization and Editing), which addresses these two properties by separating where an edit is made from whether it remains safe after composition. It diagnoses failed trajec-tories, maps each actionable failure to a predefined policy segment, and restricts the correction to that part of the policy. RIPPLE then evaluates candidates against the same iteration-start policy to compare their isolated gains, before replaying promising edits after previously accepted updates to expose downstream effects and interactions. Only edits that remain safe under composition are retained. We evaluate RIPPLE on Flow-HO , a synthetic held-out benchmark for executable workflow synthesis. RIPPLE improves validation success by up to 23 .1% and yields positive gains on two additional frozen language-model backbones, while maintaining strong edit efficiency and low execution cost. Targeted interaction anal-ysis further demonstrates both properties: a segment-local tool-use edit changes downstream resource resolution and validation, while an edit beneficial in isolation becomes harmful after composition. 
+
+## 1 INTRODUCTION 
+
+LLM agents are increasingly tasked with producing executable artifacts, such as workflow JSON, infrastructure configurations, and service-integrated automations. Unlike free-form responses, these artifacts must satisfy an execution contract: they must conform to a schema, implement the requested behavior, resolve environment-specific resources, and pass external validation. A workflow can therefore appear semantically plausible but remain undeployable because one field is invalid, one transition is broken, one identifier is stale, or one repair is incomplete. For frozen-model agents, persistent improvement can target the agent’s prompt policy : the instructions that govern requirement interpretation, planning, tool use, editing, validation, and repair. Such edits can be reviewed or rolled back without changing weights. However, prompt editing has two coupled properties: First, edit locality does not imply effect locality: a local instruction change can ripple through execution, redirecting tool calls, altering resource resolution and workflow structure, and changing validation or repair behavior (Cohen et al., 2024; Sclar et al., 2024). Second, edits can interact under composition: edits that are beneficial in isolation may interfere once combined, weakening or even reversing one another’s gains. Prompt adaptation is therefore a sequential policy-composition problem, not one-shot selection: isolated gains are insufficient evidence for persistence. Existing methods provide useful mechanisms for proposing and selecting prompt updates. Prompt optimizers search over candidate instructions (Zhou et al., 2023; Yang et al., 2024a; Guo et al., 1arXiv:2609.12127v1 [cs.CL] 10 Sep 2026 Preprint. 2024; Agrawal et al., 2025; Yuksekgonul et al., 2024), while recent prompt- and skill-evolution systems use held-out evidence to decide which updates should persist (Yang et al., 2026; Ma et al., 2026; Moll et al., 2026; Shawn, 2026). However, these mechanisms do not jointly resolve two challenges for executable agents. First, execution evidence must be localized into an edit. A low reward or validation failure identifies an unsuccessful execution, but not the responsible behavior or instruction. Failures in clarification, tool use, schema construction, edit locality, and artifact completeness implicate different prompt segments. Second, an edit must be evaluated in the policy state where it will persist. An edit that improves the base policy can become redundant or harmful after previous updates are composed. The relevant criterion is therefore not whether an edit works in isolation, but whether it remains useful and safe after composition with the evolving shared policy. 
+
+We introduce RIPPLE (Replay-Informed Persistent Policy Localization and Editing) to address this question. The name reflects both properties above: a local policy edit can ripple through the agent’s execution flow , while the direction of that ripple can change as the policy evolves . RIPPLE decomposes adaptation into three decisions. For what failed , it assigns trajectory-grounded labels with a deterministic taxonomy. For where to edit , it maps each actionable diagnosis to a predefined prompt segment and instantiates a bounded patch from a versioned library, constraining the locus of the policy change. For whether to persist , it ranks candidates by local gain and promotes them sequentially, testing whether each local change remains safe after composition. After each acceptance, RIPPLE evaluates the next candidate on top of all previously accepted edits, so downstream interactions are evaluated in the policy state where the candidate would actually persist. The model, tools, and execution environment remain fixed, while accepted patches form auditable, rollbackable checkpoints. We evaluate RIPPLE on Flow-HO , a synthetic held-out suite for generating executable workflows represented as JSON. RIPPLE consistently improves validation success and composite reward across multiple frozen language models while maintaining strong edit efficiency and low execution cost. Ablations show that replay design and patch composition materially shape the resulting policy, while targeted interaction analysis reveals that local gains can reverse after composition. Together, these results support both aspects of the problem: local edits can have non-local effects, and their value depends on the evolving policy context. In summary, our contributions are: 
+
+1. Failure-localized policy editing. We formulate frozen-agent adaptation over a segmented prompt policy, mapping trajectory-grounded diagnoses from a predefined failure taxonomy to target policy segments and bounded corrective edits. 
+
+2. Composition-aware persistence. We introduce a replay-gated promotion procedure that separates local utility from compositional safety by evaluating each candidate against the advancing policy formed by previously accepted edits under separate reward and correctness constraints. 
+
+3. Flow-HO evaluation and interaction analysis. We construct Flow-HO and evaluate RIPPLE across effectiveness, replay design, composition safety, and promotion-rule trade-offs, showing substantial held-out gains and exposing failure modes that arise only through patch interaction. 
+
+## 2 PERSISTENT PROMPT -P OLICY ADAPTATION 
+
+2.1 PROBLEM SETUP 
+
+Frozen executable-agent policy. We study closed-schema executable workflow synthesis with a frozen, tool-using LLM agent. Each task x consists of a natural-language request q and an initial workflow y0, where y0 = ∅ for generation tasks: 
+
+x = ( q, y 0), τ ∼ pθ (τ | x, π ), θ fixed . (1) The prompt policy π governs the agent’s multi-turn interaction with tools and an external validator. Only π is adapted; the model parameters, tool interface, and execution environment remain fixed. A completed trajectory τ receives a bounded composite reward: 
+
+R(τ ; x) = ρ(S(τ ), C (τ ), E (τ ), K (τ )) , (2) where S denotes validation success, C is workflow correctness, E is edit efficiency, and K is normalized execution cost. The exact task-specific definitions are given in Appendix B.3.4. Because workflow correctness is also constrained separately during promotion, we retain both R and C as policy-level metrics. For X ∈ { R, C }, define the expected metric on task x as 
+
+vX (π; x) = Eτ ∼pθ (·| x,π ) [X(τ ; x)] . (3) 2Preprint. Given a task pool D and an aggregation rule g, the pool-level score of policy π on metric X is 
+
+V gX (π; D) = g
+
+ vX (π; x)
+
+> x∈D
+
+
+
+. (4) Section 3.3 instantiates g as either a uniform mean or a macro-average over workflow families. 
+
+Ordered segment-level updates. The prompt policy is partitioned into a fixed set of behavioral segments S. Let F denote a failure taxonomy and L a versioned library of bounded patches, where each a ∈ L is typed by a failure family f (a) ∈ F and a target segment s(a) ∈ S .An adaptation is an ordered sequence of accepted patches: 
+
+P = ( a1, . . . , a t), aj ∈ L , πP = π0 ⊕ P. (5) The operator ⊕ applies patches to their designated segments in acceptance order. Order matters because an edit may reinforce, override, or conflict with instructions already present in the policy. For a candidate patch a, an accepted prefix P , metric X, and task pool D, we define the prefix-conditioned marginal effect as: 
+
+∆gX (a | P ; D) = V gX (π0 ⊕ P ⊕ a; D) − V gX (π0 ⊕ P ; D). (6) Thus, the value of a persistent edit depends on both the patch a and the policy prefix P .
+
+Persistent-editing objective. Given a training pool Dtrain , a replay pool Dreplay , and a patch budget H, the ideal adaptation objective is: 
+
+P ⋆ ∈ arg max   
+
+> P=( a1,...,a t), t ≤H
+
+VR(π0 ⊕ P ; Dtrain )
+
+s.t. ∆gR(aj | P <j ; Dreplay ) ≥ εR,
+
+∆gC (aj | P <j ; Dreplay ) ≥ εC , j = 1 , . . . , t, 
+
+(7) where P <j = ( a1, . . . , a j−1). The training objective favors patch sequences that improve perfor-mance on the training pool. Before a patch is committed, it must also satisfy reward and correctness thresholds on the replay pool when evaluated on top of all previously accepted patches. Small negative replay deltas is allowed to avoid rejecting potentially useful edits due to rollout variation, but these thresholds are empirical safeguards rather than guarantees on unseen requests. Solving Eqn. 7 requires to evaluate all ordered subsets of patches up to size H. Exhaustive search is prohibitively expensive since each evaluation requires new tool-calling rollouts. Section 3 therefore approximates this objective with a localized candidate set and a greedy sequential evaluation. 2.2 TWO DECISIONS IN PERSISTENT POLICY EDITING 
+
+Eqn. 7 defines the objective and constraints for a complete patch sequence, but not how to choose the next patch. At each step, two decisions remain: which edit should be proposed from a failed execution, and whether that edit should persist after earlier edits have been accepted. 
+
+Decision 1: Which edit should be proposed? A low reward or validation failure shows that an execution was unsuccessful, but it does not identify the responsible behavior or the policy segment that should change. The same scalar outcome may arise from different failures and therefore require different edits. Candidate proposal must instead be grounded in execution evidence: 
+
+z(τ ) −→ f −→ s −→ a ∈ L f,s , (8) where z(τ ) denotes trajectory evidence, f a diagnosed failure family, s the target policy segment, and 
+
+a a bounded patch. This decision reduces open-ended prompt rewriting to a localized, typed update. 
+
+Decision 2: Should the edit persist? An edit that improves the initial policy may become redundant or harmful once combined with previously accepted edits. The relevant quantity is therefore its marginal effect on the current policy, ∆gX (a | P ; D), rather than its isolated effect on π0. Composite reward creates a separate risk: gains in validation, edit locality, or execution efficiency can offset a decline in workflow correctness. RIPPLE therefore evaluates reward and correctness separately before committing an edit. These two decisions define RIPPLE’s structure: proposing an edit is decomposed into identifying 
+
+what failed and where to edit, while replay determines whether the resulting patch should persist. 3Preprint. 
+
+Figure 1: Overall framework of RIPPLE. At iteration k, RIPPLE (i) selects informative training rollouts and diagnoses failures with a predefined taxonomy ( WHAT failed ); (ii) localizes each diagnosis to a policy segment and instantiates bounded patches from a versioned library L (WHERE to edit ); and (iii) ranks candidates by training gain and sequentially evaluates them through a two-signal replay gate against the advancing policy ( WHETHER to persist ). Accepted patches form the next policy πk+1 . Flow-HO is reserved for final evaluation. 
+
+## 3 RIPPLE: L OCALIZED AND REPLAY -G ATED POLICY EDITING 
+
+RIPPLE approximates the constrained patch-sequence objective in Eqn. 7 through greedy sequential policy improvement over the patch library. Its design separates two scopes of adaptation: localization constrains where a policy change is introduced, while advancing replay evaluates whether the resulting behavioral effects remain safe after composition. At iteration k, training rollouts are used to diagnose failures, construct localized candidate patches, and rank them by isolated gain. Replay rollouts then evaluate each candidate on top of the accepted prefix before commitment. The final evaluation set remains outside the adaptation loop. Figure 1 summarizes one adaptation iteration. Sections 3.1–3.2 describe candidate construction, Section 3.3 describes replay-gated promotion, and Section 3.4 describes the outer loop. The full multi-iteration procedure is given in Appendix B.3.3. 3.1 WHAT FAILED : R OLLOUT GENERATION AND BEHAVIORAL DIAGNOSIS 
+
+Rollout generation. For d ∈ D train , RIPPLE samples N = 3 trajectories under the current policy: 
+
+τ (k) 
+
+> d,n
+
+∼ pθ (· | d, π k), n = 1 , . . . , N. (9) Each rollout records the interaction trace, generated workflow, validator feedback, and execution cost. 
+
+Verifiable reward. Each rollout receives a scalar programmatic reward that is a bounded weighted combination of four signals. The weighting and task-specific variants are given in Appendix B.3.4: 
+
+R(τ ) = f  S(τ ), C (τ ), E (τ ), K (τ ), (10) where S ∈ { 0, 1} is service validation success (whether the generated workflow is accepted by the service validator), C ∈ [0 , 1] is workflow correctness (whether the workflow implements the intended structure and requested modification), E ∈ [0 , 1] is edit efficiency (whether the modification remains within the declared scope), and K ∈ [0 , 1] is normalized execution cost. For each datapoint d and policy π, RIPPLE estimates vX (π; d) from N independent rollouts: 
+
+¯Xπ (d) = 1
+
+N
+
+> N
+
+X
+
+> n=1
+
+X  τ πd,n 
+
+ , X ∈ { R, C }. (11) where τ πd,n is the n-th rollout of policy π on datapoint d. The resulting per-datapoint means are then combined into a pool-level score by the aggregation rule g.4Preprint. 
+
+Informative-trajectory selection. RIPPLE prioritizes for diagnosis the training datapoints with the highest rollout-level reward variance under the current policy. For each d ∈ D train , it computes: 
+
+vk(d) = Var n=1 ,...,N 
+
+h
+
+R
+
+
+
+τ (k)
+
+> d,n
+
+i 
+
+. (12) It then selects the Bdiag datapoints with the highest reward variance and diagnoses the lowest-reward rollout from each selected datapoint. High variance indicates inconsistent behavior under the current policy, while the lowest-reward rollout provides a concrete failure trace for diagnosis. 
+
+τ − 
+
+> d
+
+= arg min   
+
+> n∈{ 1,...,N }
+
+R
+
+
+
+τ (k)
+
+> d,n
+
+
+
+. (13) 
+
+Predicate-based behavioral diagnosis. For each selected trajectory τ , RIPPLE applies predefined rules to the execution log, checking for signals such as missing clarification, failed tool use, validator errors, ineffective repair, out-of-scope changes, and incomplete output. The rules return the actionable failure families and their supporting evidence, without an LLM call: 
+
+Diagnose( τ ) =  F(τ ), z (τ ), F(τ ) ⊆ F , (14) where z(τ ) records the triggered predicates and supporting trace evidence, and F(τ ) contains the actionable failure families supported by that evidence. Multiple families may be activated because an upstream error can produce several downstream symptoms, or because distinct failures co-occur in the same trajectory. For attribution, fixed precedence rules designate one activated family as primary, preferring direct and causally earlier evidence; the remaining actionable labels are retained and may seed additional candidate patches. Full predicates and precedence rules are given in Appendix B.3.1. RIPPLE uses six failure families: F1 Clarification (missing required information), F2 Tool use 
+
+(missing, incorrect, or misordered tool calls), F3 Schema (schema or service-constraint violations), F4 Repair behavior (failure to act on validator feedback), F5 Edit locality (out-of-scope modifications), and F6 Completeness (partial or unresolved artifacts). The primary label captures the earliest causal failure, while secondary labels retain additional actionable symptoms. When multiple labels are plausible, RIPPLE prefers the earliest causal failure in the execution trace over the final visible symptom. Full disambiguation rules and the evidence schema are provided in Appendix B.3.1. 3.2 WHERE TO EDIT : S EGMENT -T YPED PATCH CONSTRUCTION 
+
+Policy segmentation. Before adaptation begins, the base prompt is partitioned into seven behav-ioral segments: REQ UNDERSTANDING , CLARIFY , PLAN , TOOL USE , EDIT , VALIDATE , and 
+
+FINAL OUTPUT . Each segment governs a distinct stage of agent execution. Holding boundaries fixed keeps localization consistent across iterations and gives every patch a stable and reviewable target. RIPPLE adapts the policy only by appending bounded instructions to designated segments. 
+
+Failure-localized patch construction. For each selected trajectory τ and each diagnosed failure family f ∈ F (τ ), RIPPLE deterministically selects a target segment s and retrieves a patch a:
+
+s = Localize( f, z (τ )) , a = Retrieve( L, f, s ) . (15) The patch library L contains predefined entries indexed by failure family and target segment. Given a diagnosed failure f localized to segment s, RIPPLE first retrieves the entry matching the (f, s ) pair. If no exact match exists, it falls back to a generic entry targeting the same segment. The retrieved instruction is appended verbatim to s; no LLM is invoked. Each library entry stores a patch ID, failure family, target segment, and instruction, making the procedure deterministic and reproducible. 
+
+Candidate aggregation and coverage ordering. Let P(τ ) denote the set of patches nominated by a selected trajectory τ . The support count of patch a at iteration k is 
+
+ck(a) = X 
+
+> τ∈T k
+
+1[a ∈ P (τ )] , (16) where Tk denotes the trajectories selected for diagnosis. The count ck(a) measures how many independent failure traces nominate patch a, so a larger count indicates stronger support for that update. RIPPLE merges nominations by patch ID, removes previously accepted patches, and ranks candidates within each failure family by ck(a). It then applies a coverage-first round robin, allowing each represented family to contribute one candidate before any family contributes a second. The resulting ordered candidate set proceeds to training-side evaluation. 5Preprint. 3.3 WHETHER TO PERSIST : P OLICY IMPROVEMENT AND REPLAY -C ONSTRAINED PROMOTION 
+
+RIPPLE separates candidate ranking from commitment. Training-side pre-qualification evaluates every patch from the same iteration-start policy πk, making their one-step gains directly comparable. Replay-side promotion then evaluates candidates sequentially on top of previously accepted edits, testing each patch in the policy state where it would actually persist. This separation preserves fair ranking while testing whether a local edit’s downstream effects remain safe after composition. 
+
+Training-side policy improvement. Each candidate patch a ∈ A k defines a candidate policy 
+
+πak = πk ⊕ a. To compare candidates on a common basis, RIPPLE evaluates every patch against the same iteration-start policy πk, isolating its one-step effect from interactions with other candidates. The resulting one-step training gain is: 
+
+∆train (a) = bVR(πak ; Dtrain ) − bVR(πk; Dtrain ), (17) where bVR(π; D) = |D| −1 P 
+
+> d∈D
+
+¯Rπ (d) is the empirical mean reward over the task pool. Only positive-gain candidates advance: A+ 
+
+> k
+
+= {a ∈ A k : ∆ train (a) > 0}, and RIPPLE sorts them by decreasing ∆train (a). This stage identifies promising edits and determines their evaluation order; replay-side promotion decides whether they remain safe after composition. 
+
+Replay-side policy promotion. After sorting A+ 
+
+> k
+
+by decreasing ∆train , let aj denote the j-th candidate patch in this order. Let P <j k denote the ordered sequence of candidates accepted among the first j − 1 positions. The policy used to evaluate aj and its candidate extension are π<j k = πk ⊕ P <j k
+
+and ˜πk,j = π<j k ⊕ aj . RIPPLE first averages the N = 3 rollouts for each replay datapoint. It then computes a single replay score from these per-datapoint means using one of two weighting schemes: • Uniform aggregation guniform : all replay datapoints receive equal weight; • GT-family-balanced aggregation gbalanced (coverage-weighted in labels): datapoints are averaged within each ground-truth workflow family, then equally across represented families (Appendix C.2). Candidate aj is evaluated marginally against the latest accepted policy: 
+
+∆gR(aj | P <j k ) = g ¯R˜πk,j 
+
+ − g
+
+h ¯Rπ<j k
+
+i
+
+, ∆gC (aj | P <j k ) = g ¯C˜πk,j 
+
+ − g
+
+h ¯Cπ<j k
+
+i
+
+. (18) Candidate aj is accepted only when both replay deltas satisfy their tolerances: 
+
+Accept( aj | P <j k ) ⇐⇒ ∆gR(aj | P <j k ) ≥ εR ∧ ∆gC (aj | P <j k ) ≥ εC . (19) We use εR = −0.05 and εC = −0.10 . If aj is accepted, ˜πk,j becomes the policy used to evaluate the next candidate; if rejected, the current policy remains unchanged. Intuitively, each accepted patch changes the policy context in which later patches are judged. Replay therefore evaluates each candidate against the current accepted policy, making downstream effects and interactions with earlier edits observable before persistence. The gate constrains each patch’s replay regression rather than cumulative change from πk; because the tolerances are negative, small regressions are allowed and may accumulate across patches. Checking correctness separately guards against patches that pass the reward threshold despite a loss in workflow correctness. Appendix C.3 analyzes when this constraint binds, while Appendix C.1 discusses the AND rule and tolerance choices. 3.4 POLICY ITERATION AND REPLAY MAINTENANCE 
+
+The patches accepted at iteration k form the ordered sequence Pk = ( ak, 1, . . . , a k,m k ), and the next iteration starts from πk+1 = πk ⊕ Pk. If no patch is accepted, Pk = ∅ and πk+1 = πk. Thus, each outer iteration carries forward only edits that pass replay-side promotion. RIPPLE supports two replay modes: (i) Static replay always uses Dreplay = Dcore ; and (ii) Adaptive replay uses D(k)replay = Dcore ∪ D (k)hard ∪ D (k)recent . After scoring the iteration-k training rollouts and before promotion, RIPPLE refreshes the D(k)hard with persistently low-performing examples and the 
+
+D(k)recent with examples whose success status changed. The fixed core provides a stable reference, the refreshed subsets track current failure modes; the resulting replay set gates that iteration’s candidates. An iteration with no accepted patch increments a patience counter; any acceptance resets it. RIPPLE stops after two consecutive no-update iterations. Full algorithm is shown in Appendix B.3.3. 6Preprint. A B C D   
+
+> Flow-HO workflow family
+> 0.10
+> 0.05
+> 0.00 0.05 0.10 0.15 0.20 0.25 0.30
+> R = RRIPPLE  R 0
+> +0.209 +0.054 +0.164 +0.094 +0.049 +0.046
+> -0.045  +0.080 +0.078
+> -0.066
+> -0.003 +0.107
+> (a) Per-family reward improvement
+> Haiku 4.5 Gemma 12B Ministral 14B
+> SCEK
+> Reward component
+> 5
+> 0510 15 20 25 30
+> (RIPPLE  base), pp
+> +23.1 +0.8 +7.1 +0.4 +6.8 +0.0 +0.2 -0.2 +6.8 -0.5 +1.3 -4.5
+> (b) Reward-component deltas per backbone
+
+Figure 2: Cross-backbone reward improvement on Flow-HO modification. (a) Per-family paired 
+
+∆R = RRIPPLE − Rπ0 : every backbone improves on at least three of four families, and the two regressions (red-outlined) are backbone-specific—no family regresses across all three models. (b) 
+
+Reward-component deltas (percentage points; K negated so up is better): the gain is carried by service-validation success ( ∆S ≥ +6 .8 pp on every backbone; +23 .1 pp on Haiku), while workflow correctness ( ∆C) is flat across backbones ( |∆C| ≤ 0.9 pp). Haiku uses RIPPLE-U; Gemma and Ministral use transfer runs with N = 3 per task. 
+
+## 4 EXPERIMENTS 
+
+In this section, we examine whether RIPPLE improves held-out workflow quality across frozen policy backbones and whether replay supports safe edit persistence under iterative composition. We first describe the experimental setup and then organize the evaluation for 4 research questions (RQs): 
+
+RQ1. Cross-backbone effectiveness. Does RIPPLE improve held-out workflow quality across frozen policy backbones with different capability levels? 
+
+RQ2. Replay design. How do aggregation, replay maintenance, gating, and iteration depth jointly affect patch acceptance, policy evolution, and the quality of the selected policy? 
+
+RQ3. Composition safety. Can the advancing replay baseline detect and reject edits that are beneficial in isolation but harmful after composition with previously accepted edits? 
+
+RQ4. Promotion rules. How do stricter acceptors affect policy composition and quality? 4.1 EXPERIMENTAL SETUP 
+
+Flow-HO. Flow-HO is a synthetic held-out benchmark of executable workflow tasks in a JSON-based flow language. Its primary split contains 39 workflow-modification tasks, where the agent must modify a corrupted workflow according to a request and pass external validation. The four ground-truth families are disjoint from training and replay and are never used for adaptation or model selection. Appendix B.1 provides details and the secondary workflow-generation setting. 
+
+Systems. Claude Haiku 4.5 is the primary frozen policy backbone for RQ1–RQ4; Gemma 3-12B-it and Ministral 3-14B provide two lower-capability transfer settings (Appendix B.5.1). Transfer backbones evaluate only base π0 and RIPPLE. No variant selection is performed on transfer backbones. On Haiku, we compare π0 with five RIPPLE variants: RIPPLE-U (uniform, adaptive replay), 
+
+RIPPLE-S (family-balanced, static replay), Coverage-Adaptive (family-balanced, adaptive replay), 
+
+Train-Only (no replay promotion), and Multi-Iteration . RQ1 refers to RIPPLE-U simply as 
+
+RIPPLE . RQ4 additionally compares controlled SkillOpt-style and SkillGen-style acceptors with candidate trajectories held fixed. Appendix B.2 provides adaptation and baseline details. 
+
+Protocol. We use N = 3 rollouts per datapoint and set the diagnosis budget to Bdiag = 15 . We report service-validation success, workflow correctness, and composite reward. Haiku deltas are paired against π0 over the same 39 tasks, with 10 ,000 family-cluster bootstrap replicates; Gemma and Ministral use paired point estimates. Edit efficiency, execution cost, model settings are reported in Appendices B.4.1 and B.3.5. 7Preprint. 4.2 RQ1: H ELD -O UT EFFECTIVENESS ACROSS FROZEN BACKBONES 
+
+Table 1 reports the primary cross-backbone compari-son; the full Haiku design study appears in §4.3: 
+
+RIPPLE primarily improves deployability on the principal backbone. On Haiku 4.5, RIPPLE raises service-validation success from 54 .7% to 77 .8% 
+
+(+23 .1% ) and composite reward from 0.525 to 
+
+0.644 ; both paired family-cluster intervals exclude zero. Correctness rises by only 0.8% and remains unresolved. The main effect is a higher rate of work-flows that survive service validation rather than a broad shift in structural similarity. 
+
+The gain remains efficient and spans the bench-mark families. RIPPLE also attains the strongest edit efficiency and lowest execution cost among the harmonized systems. Its mean reward exceeds the base policy in all four Flow-HO families. Ap-pendix B.4.1 provides the family-level results.                         
+
+> Policy Success (%) Corr. (%) Reward
+> Claude Haiku 4.5 (primary backbone)
+> Base π054.7 74.9 0.525 RIPPLE 77.8 †75.7 0.644 †
+> Gemma 3-12B-it (transfer backbone)
+> Base π037.6 80.7 0.460 RIPPLE 44.4 80.7 0.492
+> Ministral 3-14B (transfer backbone) ∗
+> Base π024.8 59.7 0.299 RIPPLE 31.6 59.2 0.327
+
+Table 1: Flow-HO modification results across different frozen backbones. RIPPLE im-proves validation success and reward in all three settings. † marks a paired family-cluster 95% interval excluding zero (Ap-pendix B.3.5); ∗ marks the Ministral protocol (Appendix B.5.5). Best means are bold. 
+
+Positive untuned gains transfer to both weaker backbones. RIPPLE raises service-validation success by 6.8 pp on both Gemma and Ministral and improves reward on both, while correctness is unchanged on Gemma and slightly lower on Ministral. Accepted patches are largely backbone-specific, consistent with diagnosis adapting to distinct failure profiles (Appendix B.5.4). Crucially, both runs reuse Haiku’s proposer, patch library, replay design, and gate tolerances without backbone-specific tuning. These positive gains therefore demonstrate untuned transfer, and the residual Haiku–transfer gap should not be interpreted as a method ceiling. Ministral only bypasses the compute-saving positive-gain pre-filter; replay gating is unchanged (Appendix B.5.5). We treat these point estimates as transfer evidence rather than a precise cross-backbone ranking. 
+
+Gains are broad across families and driven by service validation. Figure 2(a) shows positive reward gains on all four families for Haiku and three of four for each transfer backbone, with regressions occurring on different families. Panel (b) shows that service-validation success drives most of the gain ( ∆S = +23 .1, +6 .8, +6 .8 pp), while workflow correctness remains essentially flat (|∆C| ≤ 0.9 pp). Full results are in Appendices B.5.3 and B.5.2.                                             
+
+> Method Success (%) Corr. (%) Reward
+> RIPPLE-S (static replay) 76.1 ↓1.777.9 ↑2.20.639 ↓0.005
+> Coverage-Adaptive ( gbal + adaptive) 69.2 ↓8.576.8 ↑1.10.599 ↓0.045
+> Train-Only (no replay gate) 71.8 ↓6.075.6 ↓0.10.613 ↓0.031
+> Multi-Iteration ( k > 1)64.1 ↓13 .774.3 ↓1.40.571 ↓0.074
+> RIPPLE-U (uniform + adaptive) 77.8 75.7 0.644
+
+Table 2: Haiku design study on Flow-HO modification. Arrows show changes from RIPPLE-U; RQ2 contrasts each ablation with Coverage-Adaptive. Bold and underline mark the top two raw means. 4.3 RQ2: R EPLAY DESIGN AND ITERATION DEPTH 
+
+Replay design governs which policy persists. Table 2 ablates aggregation, replay maintenance, gating, and iteration depth around Coverage-Adaptive. Uniform aggregation and static replay both outperform Coverage-Adaptive in success and reward, with the matched static-versus-adaptive success interval excluding zero, showing that aggregation and replay maintenance change checkpoint selection rather than merely its evaluation. Train-Only reaches similar aggregate performance but accepts a broader patch set, including edits rejected by replay; thus, similar held-out means can mask materially different persistent policies, and replay gating controls which local gains are allowed to compose into the shared policy. More adaptation is likewise not inherently better: Multi-Iteration adds two patches yet underperforms its one-iteration parent, while checkpoints with the same patch count can differ substantially in reward. These results show that persistent performance is determined by which 
+
+8Preprint.             
+
+> Context Observed effect
+> Shared parent π0∆train = +0 .0465
+> Accepted prefix P
+> ∆gR=−0.2257 ∆gC=−0.1218
+> Success: 0.354 →0.000
+
+Table 3: F2a flips after composition: positive on π0, destructive after prefix P .         
+
+> Acceptor Patches S/C/R
+> RIPPLE-U (headline) 477.8 /75.7/ 0.644
+> RIPPLE ε-AND 469.2/76.8/0.599 Skill-Compact 170.9/ 82.2 /0.625
+
+Table 4: Controlled acceptor swap. Rows 2– 3 share one trajectory, differing only in accep-tor. Skill-Compact is the one-patch checkpoint 
+
+π0 ⊕ F3a for both the SkillOpt and SkillGen. 
+
+edits survive, their order, and their interactions, not simply by patch count or iteration depth. 
+
+Appendices B.4.2 and B.4.3 provide the patch decisions and convergence traces. 4.4 RQ3: D ETECTING DESTRUCTIVE EDIT INTERACTIONS 
+
+Composition can reverse a locally beneficial edit. To answer RQ3, we isolate F2a, which restricts resource lookup to newly introduced references (Table 3). Against the shared iteration-start policy 
+
+π0, F2a passes training-side pre-qualification with ∆train = +0 .0465 . After four earlier patches are composed, however, the same edit becomes strongly destructive: replay reward and correctness fall by 0.2257 and 0.1218 , respectively, while service-validation success drops from 35 .4% to 0% .The reversal is interaction-induced: an earlier patch requires concrete resource resolution, whereas F2a exempts identifiers already present in the corrupted input, allowing stale values to survive into publication. Advancing-baseline replay exposes this failure and rejects the patch before persistence. 
+
+Thus, edit quality is policy-context dependent: an edit that is beneficial against π0 can become harmful after composition. Appendix E provides the full trace-level analysis. 4.5 RQ4: P ROMOTION RULES AND CHECKPOINT TRADE -OFFS 
+
+Promotion rules select distinct policy-composition trade-offs. To answer RQ4, we hold the proposer, candidate order, and replay evidence fixed and vary only the acceptor (Table 4). The controlled swap uses the Coverage-Adaptive trajectory, while RIPPLE-U remains the strongest checkpoint and the headline reference in Table 1. RIPPLE’s tolerant two-signal gate accepts four patches, whereas the SkillOpt-style (Yang et al., 2026) and SkillGen-style (Ma et al., 2026) rules both retain only F3a, converging on the same one-patch checkpoint that we call Skill-Compact (π0 ⊕ F3a); this isolates promotion stringency from proposal quality. Skill-Compact improves correctness by 
+
+5.4 pp and reward by 0.026 over the four-patch ε-AND checkpoint (paired 95% intervals [+1 .7, +9 .4] 
+
+and [+0 .003 , +0 .051] ), with only a 1.7% difference in success. Yet these gains are specific to the matched acceptor probe: RIPPLE-U remains the best overall configuration in the main evaluation, while both checkpoints win on subsets of requests, indicating that acceptance stringency changes not only checkpoint size but also where gains accrue. A post hoc oracle further reveals selector headroom. Thus, promotion is a substantive policy-construction decision: stricter acceptors can produce more compact checkpoints and improve certain metrics, but they reshape rather than uniformly improve the resulting policy and do not supersede RIPPLE-U as the strongest overall configuration. Appendix B.4.2 provides request-level and selector analyses. 
+
+## 5 CONCLUSION 
+
+We introduced RIPPLE , a replay-informed framework for persistent prompt-policy adaptation in executable workflow synthesis. RIPPLE turns execution failures into bounded, segment-localized edits and promotes each candidate only after replay against the evolving accepted policy. On Flow-HO, RIPPLE substantially improves service-validation success on Claude Haiku 4.5 and transfers consistently across two additional frozen backbones, while preserving correctness and achieving strong edit efficiency at low execution cost. Mechanistic analyses reveal that local gains can reverse after composition and that promotion rules select distinct checkpoints even under a fixed proposer and replay evidence. Together, these findings establish persistent prompt adaptation as a sequential policy-composition problem: the value of an edit depends not only on its local utility, but on how it interacts with the policy in which it persists. In this sense, a local policy edit can create global ripples through downstream execution, making compositional safety central to persistent adaptation. 
+
+9Preprint. 
+
+## REFERENCES 
+
+Lakshya A. Agrawal, Shangyin Tan, Dilara Soylu, Noah Ziems, Rishabh Khare, Krista Opsahl-Ong, Arnav Singhvi, Herumb Shandilya, Michael J. Ryan, Meng Jiang, Christopher Potts, Koushik Sen, Alexandros G. Dimakis, Ion Stoica, Dan Klein, Matei Zaharia, and Omar Khattab. GEPA: Reflec-tive prompt evolution can outperform reinforcement learning. arXiv preprint arXiv:2507.19457 ,2025. Xinyun Chen, Maxwell Lin, Nathanael Sch¨ arli, and Denny Zhou. Teaching large language models to self-debug. In International Conference on Learning Representations (ICLR) , 2024. Ching-An Cheng, Allen Nie, and Adith Swaminathan. Trace is the next AutoDiff: Generative optimization with rich feedback, execution traces, and LLMs. In Advances in Neural Information Processing Systems (NeurIPS) , 2024. Roi Cohen, Eden Biran, Ori Yoran, Amir Globerson, and Mor Geva. Evaluating the ripple effects of knowledge editing in language models. Transactions of the Association for Computational Linguistics (TACL) , 12, 2024. DeepSeek-AI, Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, et al. DeepSeek-R1: Incentivizing reasoning capability in LLMs via reinforcement learning. arXiv preprint arXiv:2501.12948 , 2025. Chrisantha Fernando, Dylan Banarse, Henryk Michalewski, Simon Osindero, and Tim Rockt¨ aschel. Promptbreeder: Self-referential self-improvement via prompt evolution. arXiv preprint arXiv:2309.16797 , 2023. Yao Fu, Dong-Ki Kim, Jaekyeom Kim, Sungryull Sohn, Lajanugen Logeswaran, Kyunghoon Bae, and Honglak Lee. AutoGuide: Automated generation and selection of context-aware guidelines for large language model agents. In Advances in Neural Information Processing Systems (NeurIPS) ,2024. Zhibin Gou, Zhihong Shao, Yeyun Gong, Yelong Shen, Yujiu Yang, Nan Duan, and Weizhu Chen. CRITIC: Large language models can self-correct with tool-interactive critiquing. In International Conference on Learning Representations (ICLR) , 2024. Xinyu Guan, Li Lyna Zhang, Yifei Liu, Ning Shang, Youran Sun, Yi Zhu, Fan Yang, and Mao Yang. rStar-Math: Small LLMs can master math reasoning with self-evolved deep thinking. arXiv preprint arXiv:2501.04519 , 2025. Qingyan Guo, Rui Wang, Junliang Guo, Bei Li, Kaitao Song, Xu Tan, Guoqing Liu, Jiang Bian, and Yujiu Yang. EvoPrompt: Connecting LLMs with evolutionary algorithms yields powerful prompt optimizers. In International Conference on Learning Representations (ICLR) , 2024. Arian Hosseini, Xingdi Yuan, Nikolay Malkin, Aaron Courville, Alessandro Sordoni, and Rishabh Agarwal. V-STaR: Training verifiers for self-taught reasoners. arXiv preprint arXiv:2402.06457 ,2024. Shengran Hu, Cong Lu, and Jeff Clune. Automated design of agentic systems. arXiv preprint arXiv:2408.08435 , 2024. Jie Huang, Xinyun Chen, Swaroop Mishra, Huaixiu Steven Zheng, Adams Wei Yu, Xinying Song, and Denny Zhou. Large language models cannot self-correct reasoning yet. In International Conference on Learning Representations (ICLR) , 2024. Carlos E. Jimenez, John Yang, Alexander Wettig, Shunyu Yao, Kexin Pei, Ofir Press, and Karthik Narasimhan. SWE-bench: Can language models resolve real-world GitHub issues? In International Conference on Learning Representations (ICLR) , 2024. Omar Khattab, Arnav Singhvi, Paridhi Maheshwari, Zhiyuan Zhang, Keshav Santhanam, Sri Vard-hamanan, Saiful Haq, Ashutosh Sharma, Thomas T. Joshi, Hanna Moazam, Heather Miller, Matei Zaharia, and Christopher Potts. DSPy: Compiling declarative language model calls into self-improving pipelines. In International Conference on Learning Representations (ICLR) , 2024. 10 Preprint. Aviral Kumar, Aurick Zhou, George Tucker, and Sergey Levine. Conservative Q-learning for offline reinforcement learning. In Advances in Neural Information Processing Systems , volume 33, pp. 1179–1191, 2020. Nathan Lambert, Jacob Morrison, Valentina Pyatkin, Shengyi Huang, Hamish Ivison, Faeze Brahman, Lester James V. Miranda, et al. Tulu 3: Pushing frontiers in open language model post-training. 
+
+arXiv preprint arXiv:2411.15124 , 2024. Yuchen Ma, Yue Huang, Han Bao, Haomin Zhuang, Swadheen Shukla, Michel Galley, Xiangliang Zhang, and Stefan Feuerriegel. SkillGen: Verified inference-time agent skill synthesis. arXiv preprint arXiv:2605.10999 , 2026. Johannes Moll, Jean-Philippe Corbeil, Jiazhen Pan, Martin Hadamitzky, Daniel Rueckert, Lisa Adams, and Keno Bressem. GRASP: Gated regression-aware skill proposer for self-improving LLM agents. arXiv preprint arXiv:2605.29668 , 2026. Krista Opsahl-Ong, Michael J. Ryan, Josh Purtell, David Broman, Christopher Potts, Matei Zaharia, and Omar Khattab. Optimizing instructions and demonstrations for multi-stage language model programs. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing (EMNLP) , pp. 9340–9366, 2024. Reid Pryzant, Dan Iter, Jerry Li, Yin Tat Lee, Chenguang Zhu, and Michael Zeng. Automatic prompt optimization with “gradient descent” and beam search. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing (EMNLP) , pp. 7957–7968, 2023. Tobias Schnabel and Jennifer Neville. SAMMO: A general-purpose framework for prompt optimiza-tion. arXiv preprint arXiv:2404.02319 , 2024. Melanie Sclar, Yejin Choi, Yulia Tsvetkov, and Alane Suhr. Quantifying language models’ sensitivity to spurious features in prompt design or: How i learned to start worrying about prompt formatting. In International Conference on Learning Representations (ICLR) , 2024. Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K. Li, Yu Wu, and Daya Guo. DeepSeekMath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. Zayx Shawn. PACE: Anytime-valid acceptance tests for self-evolving agents. arXiv preprint arXiv:2606.08106 , 2026. Noah Shinn, Federico Cassano, Edward Berman, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. Reflexion: Language agents with verbal reinforcement learning. In Advances in Neural Information Processing Systems (NeurIPS) , 2023. Guanzhi Wang, Yuqi Xie, Yunfan Jiang, Ajay Mandlekar, Chaowei Xiao, Yuke Zhu, Linxi Fan, and Anima Anandkumar. Voyager: An open-ended embodied agent with large language models. arXiv preprint arXiv:2305.16291 , 2023. Xingyao Wang, Yangyi Chen, Lifan Yuan, Yizhe Zhang, Yunzhu Li, Hao Peng, and Heng Ji. Executable code actions elicit better LLM agents. In International Conference on Machine Learning (ICML) , 2024a. Xinyuan Wang, Chenxi Li, Zhen Wang, Fan Bai, Haotian Luo, Jiayou Zhang, Nebojsa Jojic, Eric P. Xing, and Zhiting Hu. PromptAgent: Strategic planning with language models enables expert-level prompt optimization. In International Conference on Learning Representations (ICLR) , 2024b. Zora Zhiruo Wang, Jiayuan Mao, Daniel Fried, and Graham Neubig. Agent workflow memory. arXiv preprint arXiv:2409.07429 , 2024c. Jinyu Xiang, Jiayi Zhang, Zhaoyang Yu, Xinbing Liang, Fengwei Teng, Jinhao Tu, Fashen Ren, Xiangru Tang, Sirui Hong, Chenglin Wu, and Yuyu Luo. Self-supervised prompt optimization. 
+
+arXiv preprint arXiv:2502.06855 , 2025. 11 Preprint. Chengrun Yang, Xuezhi Wang, Yifeng Lu, Hanxiao Liu, Quoc V. Le, Denny Zhou, and Xinyun Chen. Large language models as optimizers. In International Conference on Learning Representations (ICLR) , 2024a. John Yang, Carlos E. Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao, Karthik Narasimhan, and Ofir Press. SWE-agent: Agent-computer interfaces enable automated software engineering. In 
+
+Advances in Neural Information Processing Systems (NeurIPS) , 2024b. Yifan Yang, Ziyang Gong, Weiquan Huang, Qihao Yang, Ziwei Zhou, Zisu Huang, Yan Li, Xuemei Gao, Qi Dai, Bei Liu, Kai Qiu, Yuqing Yang, Dongdong Chen, Xue Yang, and Chong Luo. SkillOpt: Executive strategy for self-evolving agent skills. arXiv preprint arXiv:2605.23904 , 2026. Shunyu Yao, Noah Shinn, Pedram Razavi, and Karthik Narasimhan. τ -bench: A benchmark for tool-agent-user interaction in real-world domains. arXiv preprint arXiv:2406.12045 , 2024. Mert Yuksekgonul, Federico Bianchi, Joseph Boen, Sheng Liu, Zhi Huang, Carlos Guestrin, and James Zou. TextGrad: Automatic “differentiation” via text. arXiv preprint arXiv:2406.07496 ,2024. Jiayi Zhang, Jinyu Xiang, Zhaoyang Yu, Fengwei Teng, Xiangru Chen, Jiaqi Chen, Mingchen Zhuge, Xin Cheng, Sirui Hong, Jinlin Wang, Bingnan Zheng, Bang Liu, Yuyu Luo, and Chenglin Wu. AFlow: Automating agentic workflow generation. In International Conference on Learning Representations (ICLR) , 2025a. Lunjun Zhang, Arian Hosseini, Hritik Bansal, Mehran Kazemi, Aviral Kumar, and Rishabh Agarwal. Generative verifiers: Reward modeling as next-token prediction. In International Conference on Learning Representations (ICLR) , 2025b. Andrew Zhao, Daniel Huang, Quentin Xu, Matthieu Lin, Yong-Jin Liu, and Gao Huang. ExpeL: LLM agents are experiential learners. In Proceedings of the AAAI Conference on Artificial Intelligence (AAAI) , 2024. Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric P. Xing, Hao Zhang, Joseph E. Gonzalez, and Ion Stoica. Judging LLM-as-a-judge with MT-Bench and chatbot arena. In Advances in Neural Information Processing Systems , volume 36, pp. 46595–46623, 2023. Wangchunshu Zhou, Yixin Ou, Shengwei Ding, Long Li, Jialong Wu, Tiannan Wang, Jiamin Chen, Shuai Wang, Xiaohua Xu, Ningyu Zhang, Huajun Chen, and Yuchen Eleanor Jiang. Symbolic learning enables self-evolving agents. arXiv preprint arXiv:2406.18532 , 2024. Yongchao Zhou, Andrei Ioan Muresanu, Ziwen Han, Keiran Paster, Silviu Pitis, Harris Chan, and Jimmy Ba. Large language models are human-level prompt engineers. In International Conference on Learning Representations (ICLR) , 2023. 12 Preprint. 
+
+## APPENDIX CONTENTS 
+
+A Related Work . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14 
+
+A.1 Automatic Prompt and Policy Optimization . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14 A.2 Verification-Driven and Conservative Improvement. . . . . . . . . . . . . . . . . . . . . . . . . . 15 A.3 Persistent Skill and Prompt Evolution. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15 A.4 Executable Workflow Synthesis and Verifiable-Reward Agents . . . . . . . . . . . . . . . . . . 16 
+
+B Implementation Details and Additional Experiments . . . . . . . . . . . . . . . . . . . . . . . . . . 16 
+
+B.1 Benchmarks . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16       
+
+> B.1.1 Workflow Modification . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16 B.1.2 Workflow Generation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17
+
+B.2 Baselines and Controlled Acceptors . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17 B.3 Framework Details . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17            
+
+> B.3.1 Candidate Construction: Diagnosis, Library, and Aggregation . . . . . . . . . . . . . . . . . 18 B.3.2 Promotion: Two-Signal Replay Gate and Replay Pool . . . . . . . . . . . . . . . . . . . . . . 19 B.3.3 Iteration Procedure . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19 B.3.4 Reward Function . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21 B.3.5 Rollout Configuration and Uncertainty . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22
+
+B.4 Haiku Principal-Study Supplementary Results . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23       
+
+> B.4.1 Reward-component breakdown and family-level consistency . . . . . . . . . . . . . . . . . . 23 B.4.2 Convergence and checkpoint complementarity. . . . . . . . . . . . . . . . . . . . . . . . . . . 25 B.4.3 Cross-configuration patch profile. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 26
+
+B.5 Cross-Backbone Transfer Supplementary Results . . . . . . . . . . . . . . . . . . . . . . . . . . . 27           
+
+> B.5.1 Backbone tier bracket . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 27 B.5.2 Cross-backbone reward-component breakdown . . . . . . . . . . . . . . . . . . . . . . . . . . 27 B.5.3 Cross-backbone family-level consistency . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 27 B.5.4 Accepted patches and per-patch replay evidence. . . . . . . . . . . . . . . . . . . . . . . . . . 28 B.5.5 Ministral protocol: bypassing the training pre-filter . . . . . . . . . . . . . . . . . . . . . . . . 29
+
+C Discussion. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 29 
+
+C.1 Why the replay gate uses two signals . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 29 C.2 What “coverage-weighted” aggregation means . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 30 C.3 When the correctness constraint becomes binding. . . . . . . . . . . . . . . . . . . . . . . . . . . 30 
+
+D Segmented Prompt Policy: Base Text and Accepted Deltas . . . . . . . . . . . . . . . . . . . . . . 30 
+
+D.1 REQ UNDERSTANDING (modified by F6b) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 30 D.2 TOOL USE (modified by F6c) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 31 D.3 EDIT (modified by F3a and F6d). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 32 D.4 Summary of policy delta . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 32 
+
+E Case Study: A Locally Helpful Patch with a Destructive Interaction . . . . . . . . . . . . . . . 32 F Future Work . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 33 
+
+13 Preprint. 
+
+## A RELATED WORK 
+
+RIPPLE lies at the intersection of automatic prompt optimization, verification-driven improvement, and persistent skill or prompt evolution. Related methods share a generate–evaluate–promote pattern; RIPPLE differs in how it localizes execution evidence, represents edits, and evaluates them after composition with an evolving policy. We organize this discussion around the two properties from Section 1. First, edit locality does not imply effect locality : a local textual change can ripple through downstream behavior, as documented in the knowledge-editing (Cohen et al., 2024) and prompt-sensitivity (Sclar et al., 2024) literatures. Second, the value of an edit is policy-context dependent : whether an improvement survives depends on the accepted prefix already in force. The subsections below thread these two properties through prompt optimization (A.1), verification-driven improvement (A.2), persistent skill evolution (A.3), and executable workflow synthesis (A.4), highlighting where each family addresses one property, both, or neither. A.1 AUTOMATIC PROMPT AND POLICY OPTIMIZATION 
+
+Search and textual optimization. APE (Zhou et al., 2023) and OPRO (Yang et al., 2024a) op-timize candidate instructions from task scores, while ProTeGi/APO (Pryzant et al., 2023) and TextGrad (Yuksekgonul et al., 2024) turn natural-language feedback into targeted textual updates. EvoPrompt (Guo et al., 2024) and GEPA (Agrawal et al., 2025) use evolutionary refinement, whereas DSPy/MIPRO (Khattab et al., 2024; Opsahl-Ong et al., 2024) and SAMMO (Schnabel & Neville, 2024) optimize instructions, demonstrations, or structured metaprompt fragments within LLM pro-grams. Collectively, these methods show that black-box textual policies can improve without gradient access to the underlying model. Because they score each candidate against a task metric on the base policy alone, however, they do not test whether an edit remains safe after other edits have been composed. The observation that small textual changes can produce non-local behavior shifts (Cohen et al., 2024; Sclar et al., 2024) is precisely what motivates evaluating a candidate in the advancing policy state, not only against π0.
+
+Search, reflection, and evolutionary proposers. A parallel line refines prompts through explicit search or self-referential rewriting: PromptAgent (Wang et al., 2024b) runs Monte Carlo tree search over error-reflection actions to reach expert-level prompts, Promptbreeder (Fernando et al., 2023) co-evolves task and mutation prompts under LLM-graded fitness, and SPO (Xiang et al., 2025) removes the need for reference labels by comparing candidate outputs with a pairwise LLM judge. Agent Symbolic Learning (Zhou et al., 2024) extends the textual-gradient view to whole-agent parameters (prompts, tools, and pipeline structure), and Trace / OptoPrime (Cheng et al., 2024) generalizes the pattern by treating execution traces and rich textual feedback as “gradients” that an LLM optimizer applies to heterogeneous parameters, including prompts and code. Both optimize the current parameter jointly against a task loss; neither retains a versioned accepted prefix against which a new candidate must remain safe, so gains that depend on the current parameter state are not distinguished from gains that would compose across accepted edits. RIPPLE shares the search-and-reflect intuition but replaces LLM-driven proposal with deterministic retrieval from a fixed patch library indexed by predicate diagnosis; unbounded proposal, in our setting, expands the search space faster than the replay gate can safely filter it. 
+
+Relation to RIPPLE. RIPPLE follows the same broad propose-and-select template but constrains proposal before evaluation: diagnosed execution evidence selects a predefined policy segment and a bounded library patch. It also decouples ranking from persistence. Shared-parent training gains rank candidates, whereas replay tests each candidate after previously accepted edits have been composed. A patch can therefore be useful in isolation yet unsafe in the policy state in which it would persist. 
+
+Model-weight adaptation. Weight-updating methods such as GRPO (Shao et al., 2024) optimize model parameters from rollout outcomes. RIPPLE instead keeps the model endpoint fixed and adapts only the prompt policy, so accepted changes remain inspectable, versionable, and reversible. 14 Preprint. A.2 VERIFICATION -D RIVEN AND CONSERVATIVE IMPROVEMENT 
+
+External verification is often necessary for reliable improvement. Intrinsic self-correction can reduce accuracy without oracle feedback (Huang et al., 2024), whereas verify-then-revise systems such as CRITIC (Gou et al., 2024) use tools or external checks to repair individual outputs. RIPPLE extends the same verify-before-commit principle from a single response to a persistent policy edit. The replay gate also parallels conservative policy improvement in offline RL (Kumar et al., 2020), but applies an empirical constraint: RIPPLE withholds a training-improving candidate when replay reward or workflow correctness exceeds the allowed regression under the advancing accepted prefix. Automated correctness signals make repeated promotion practical, and prior LLM-as-a-judge work suggests that model-based evaluation can correlate with human preferences (Zheng et al., 2023). RIPPLE nevertheless combines automated correctness with programmatic service validation rather than relying on an LLM judge alone. 
+
+Verifiable rewards and iterative acceptance. A related family scales verification-driven improve-ment to full model training. Reinforcement Learning with Verifiable Rewards (Lambert et al., 2024) and DeepSeek-R1 (DeepSeek-AI et al., 2025) update model weights against deterministic checkers (math answers, unit tests) rather than preference models; rStar-Math (Guan et al., 2025) advances a base policy in rounds gated by a learned process-preference model over trajectories; and learned verifiers such as V-STaR (Hosseini et al., 2024) and Generative Verifiers (Zhang et al., 2025b) train models to rerank generations at inference. RIPPLE inherits the same verifiable-signal premise but stays at the symbolic-policy layer: no weight updates, no learned verifier, no best-of-N reranking of outputs. Verification enters only at promotion time, as a two-signal replay constraint that a candidate patch must pass against an advancing accepted prefix before it enters the deployed policy. A.3 PERSISTENT SKILL AND PROMPT EVOLUTION 
+
+The idea of persisting textual artifacts across tasks has an older lineage. Voyager (Wang et al., 2023) maintains a lifelong library of executable skills paired with an automatic curriculum and self-verification loop; Reflexion (Shinn et al., 2023) treats per-episode natural-language reflections as verbal reinforcement over a fixed policy; ExpeL (Zhao et al., 2024) accumulates free-form insights from training tasks and retrieves them at inference; ADAS (Hu et al., 2024) lets an LLM meta-agent program new agents into an ever-growing archive; Agent Workflow Memory (Wang et al., 2024c) induces reusable workflows from browser trajectories and calls them back on later web tasks; and AutoGuide (Fu et al., 2024) distills state-conditioned natural-language guidelines from offline experience and retrieves the applicable ones at test time. Both AWM’s workflow-level artifacts and ADAS’s agent-graph edits produce persistent behavior changes whose downstream effects are non-local, and whose value can shift once earlier artifacts are already in place. AutoGuide is the closest external analog to RIPPLE’s persistent guideline layer, but it selects guidelines by state at inference rather than gating their entry into the deployed policy against an advancing accepted prefix. Together, these systems establish that acquired text can carry non-trivial behavior across tasks, but none couple acquisition to a replay-based falsifiability rule against the current accepted prefix—any generated skill, reflection, guideline, or workflow that improves the demonstration is retained. The closest methods to RIPPLE also use explicit promotion rules for persistent textual updates: • GRASP (Moll et al., 2026) induces an open-vocabulary failure taxonomy, proposes ADD/MODIFY/REMOVE skill edits, and promotes candidates when fixes exceed regressions under a hard regression budget. • SkillGen (Ma et al., 2026) compares paired rollouts with and without a skill and promotes it when repair gains exceed a minimum paired-count threshold. • SkillOpt (Yang et al., 2026) optimizes a monolithic skill file and accepts a candidate only when it strictly improves a disjoint selection score; ties are rejected. • PACE (Shawn, 2026) uses paired outcomes and an anytime-valid e-process for sequential accep-tance on a reused development pool, together with a fresh audit pool. Replay-gated promotion is therefore not unique to RIPPLE. The distinction lies in its deployment target and the structure surrounding the gate. First, RIPPLE targets schema-validated executable workflows, for which service validity, structural correctness, edit locality, resource resolution, and 15 Preprint.         
+
+> Pool Datapoints Ground-truth families
+> Dtrain 35 5
+> Dcore 83Flow-HO (modification) 39 4
+
+Table 5: Modification-pool composition. Ground-truth workflow families are disjoint across training, replay core, and Flow-HO. execution cost can diverge. Second, diagnosis uses a fixed six-family workflow taxonomy rather than a run-specific open vocabulary. Third, every update is typed by both failure family and prompt segment and retrieved from a versioned library. Finally, promotion constrains reward and workflow correctness separately while evaluating candidates against an advancing accepted prefix. These choices trade open-ended coverage for deterministic, auditable policy changes suited to persistent deployment. A.4 EXECUTABLE WORKFLOW SYNTHESIS AND VERIFIABLE -R EWARD AGENTS 
+
+RIPPLE evaluates on schema-validated executable workflows, and its verifier stack (service validity, structural correctness, resource resolution, execution) mirrors a growing class of code-agent bench-marks. SWE-bench (Jimenez et al., 2024) grades LLM patches against hidden unit tests on real GitHub issues, and τ -Bench (Yao et al., 2024) exercises multi-turn tool-using dialogue against a sim-ulated user and environment with pass k execution scoring; both establish the “deterministic checker as reward” regime that Flow-HO adapts to workflow synthesis. On the agent side, SWE-agent (Yang et al., 2024b) wraps an LLM in an edit–run–observe loop over a live repository, CodeAct (Wang et al., 2024a) unifies actions as executable code so that interpreter feedback drives per-step revision, and Self-Debug (Chen et al., 2024) shows that executable feedback alone—compiler and interpreter output, with no human critique—suffices for intra-episode repair. Closer to persistent workflow construction, AFlow (Zhang et al., 2025a) searches over code-represented workflow graphs with Monte Carlo tree search to synthesize whole pipelines under a task metric, but the search yields a single deployed workflow rather than a versioned sequence of typed prompt-segment edits. In all of these systems, executable feedback is consumed only within the current task or a one-shot search: the prompt policy is fixed at deployment, so any signal extracted from one instance is discarded when the next arrives. RIPPLE occupies a complementary slot in this landscape—the same class of executable signals is retained across tasks by admitting only those prompt-segment edits that pass the two-signal replay gate against an advancing baseline, converting intra-episode feedback into cross-task, versioned policy state. 
+
+## B IMPLEMENTATION DETAILS AND ADDITIONAL EXPERIMENTS 
+
+B.1 BENCHMARKS 
+
+Flow-HO. Flow-HO is a synthetic held-out suite of executable workflow tasks expressed in a JSON-based flow language. It covers workflow generation and modification. Every example was created for this study from publicly documented flow constructs; no customer workflow or interaction data is included. The primary study evaluates workflow modification : the agent receives a natural-language request and a corrupted workflow y0, then must return a validated workflow that implements the requested change. Workflow generation is secondary: the agent receives only the request and constructs a schema-valid workflow from scratch. B.1.1 WORKFLOW MODIFICATION 
+
+The modification benchmark contains 12 ground-truth workflow families partitioned into disjoint training, replay-core, and Flow-HO pools (Table 5). A family contains all corruption variants derived from one ground-truth workflow, and no family crosses pool boundaries. 16 Preprint.                  
+
+> Family nB/T/E Dominant pattern Structural character
+> A99/8/13 Mixed; no action type appears more than twice Short linear voice flow with logging, greeting, input capture, function lookup, one comparison branch, and disconnect. B10 10/6/16 Three voice updates and three message actions Three-language switch whose localized greeting branches reconverge before a routing transfer. C10 17/10/39 Five comparisons and four routing-target updates Largest, most branch-dense flow: channel gate, function check, compari-son cascade, wait loop, and four-way routing. D10 14/10/30 Five session-attribute updates Attribute-heavy onboarding with recording, knowledge-session initializa-tion, bot handoff, and routing transfer.
+
+Table 6: Structural properties of the four Flow-HO modification families. B/T/E denotes the numbers of blocks, distinct action types, and transitions; transitions include base, conditional, and error edges. 
+
+Held-out families. The four Flow-HO modification families are denoted A–D. Table 6 summarizes their task counts and topology. Blocks counts workflow actions, types counts distinct action types, and transitions counts base, conditional, and error NextAction edges. The families span distinct structural regimes rather than minor variants of one template, supporting the family-level analysis in §4.2. 
+
+Corruption procedure. Each corrupted input is generated deterministically while preserving a re-solvable graph and a valid start action. The operator names denote the requested repair: add-block 
+
+removes one action and redirects incoming edges; reroute changes one outgoing or error transition; 
+
+modify-config overwrites one parameter or metadata field; and replace-logic removes a self-contained subgraph and reconnects the surviving path. Metadata for deleted actions are removed, and every remaining edge resolves to an existing action. Across the 82 modification datapoints (35 training, 8 replay core, and 39 Flow-HO), the corruption mix is 25 add-block , 19 modify-config , 19 reroute , and 19 replace-logic examples. Pool-specific counts are stored with the benchmark metadata. B.1.2 WORKFLOW GENERATION 
+
+The secondary generation benchmark contains 49 synthetic workflows with 8–25 actions. Each datapoint stores a natural-language request, a ground-truth workflow, a coarse complexity label, a scenario category, and metadata for missing-information slots and refusal conditions. Generation uses the same agent and validation infrastructure, but correctness is computed with the identifier-invariant metric in Appendix B.3.4. Edit efficiency is fixed at one because no starting workflow is modified. B.2 BASELINES AND CONTROLLED ACCEPTORS 
+
+Base π0 is a human-authored segmented prompt policy created once with assistance from a stronger reference model and then frozen. Every RIPPLE configuration starts from the same π0 and changes it only through accepted library patches. RQ4 changes only the acceptor, holding RIPPLE’s proposer, candidate order, and recorded replay outcomes fixed. The SkillOpt-style rule (Yang et al., 2026) accepts only when replay reward strictly improves, ∆gR > 0; ties are rejected. The SkillGen-style rule (Ma et al., 2026) accepts when 
+
+round( mN ∆gS ) ≥ max {2, ⌈0.05 mN ⌉} ,
+
+where m = |D replay | and N is the rollout count per replay datapoint. These controlled acceptor swaps are not end-to-end reproductions of the original systems. Both select the same one-patch checkpoint, π0 ⊕ F3a , which we call Skill-Compact . Its metrics come from a separate matched acceptor-probe cache and are analyzed in RQ4 rather than ranked with the harmonized systems in Table 1. B.3 FRAMEWORK DETAILS 
+
+This subsection specifies the deterministic components summarized in Section 3: diagnosis and candidate construction (Appendix B.3.1), replay-gated promotion and replay-pool maintenance (Ap-pendix B.3.2), the multi-iteration procedure (Appendix B.3.3), the reward function (Appendix B.3.4), and rollout and uncertainty settings (Appendix B.3.5). 17 Preprint.                                     
+
+> Family Failure Predicate evidence Default target
+> F1 Clarification Direct: missed_clarification_slots ;
+> clarification_loop .
+> CLARIFY
+> F2 Tool use Direct: tool_errors ;no_tool_calls .Fallback:
+> no_resource_resolution_tools .
+> TOOL USE
+> F3 Schema Direct: hallucinated_action_types ;
+> validation_errors .Fallback: low_correctness when
+> S= 0 and C < 0.3.
+> EDIT
+> F4 Repair Direct: repair_attempted_but_failed , defined as more than one validation call while S= 0 .
+> VALIDATE
+> F5 Edit locality Direct: low_efficiency .Fallback:
+> partial_correctness_but_failed .
+> EDIT
+> F6 Completeness Direct: partial_output ;
+> missing_required_features for generation. Fallback:
+> no_generated_flow .
+> EDIT (subfam-ily overrides)
+
+Table 7: Predicate-based failure taxonomy for behavioral credit assignment. Direct evidence precedes consequence fallbacks; F6 refinements can override the default target segment. B.3.1 CANDIDATE CONSTRUCTION : D IAGNOSIS , L IBRARY , AND AGGREGATION 
+
+Taxonomy and library provenance. We constructed the taxonomy top-down from the major actionable failure loci in executable workflow synthesis, rather than inducing it from Flow-HO outcomes. Intuitively, a failed trajectory can arise because the agent did not obtain the needed information (F1), interact with tools or resources correctly (F2), produce a schema-valid artifact (F3), recover from validation feedback (F4), preserve the intended scope of an edit (F5), or complete the requested workflow (F6). These categories correspond to distinct intervention points in the agent policy, making the taxonomy useful for localizing where corrective credit should be assigned rather than merely describing observed errors. The six super-families F1–F6 therefore predate the Flow-HO evaluation used in this paper and were fixed before the final held-out split was constructed. Their tie-break orderings reflect task-aware causal priority rather than empirical prevalence in training rollouts; for example, clarification and tool-use failures take precedence when editing an existing flow. The F6 subrefinements F6a–F6h were introduced iteratively during method development: F6a–F6d were derived from an initial reward-component profile of low-reward π0 training rollouts; F6e and F6f targeted missing-block and edge failures observed in subsequent adaptation runs; F6g and F6h were added after an iteration in which no candidate was accepted, targeting the parameter-key and edge failure modes identified in that trace. Every library entry was frozen before its own replay-gate evaluation, and no accepted patch was rewritten after its replay outcome. The 23 entries were authored by the paper authors with reference to the public flow-schema documentation, and retrieval invokes no LLM. 
+
+Predicate-based diagnosis. For each selected low-reward trajectory τ , RIPPLE returns an action-able failure-family set F(τ ) and an evidence record z(τ ). Direct predicates identify observed causal behavior; consequence predicates capture downstream symptoms and are considered only when direct evidence is unavailable. Table 7 summarizes the six families and their default target segments. When multiple predicates fire, direct evidence takes precedence. Remaining ties follow a task-specific order: F1, F2, F3, F4, F5, F6 for modification, and F3, F6, F2, F1, F4, F5 for generation. Ahallucinated action type overrides either order with F3, F6, F1, F2, F4, F5. The first family is marked primary; other supported families remain actionable and may nominate additional patches. 
+
+Completeness refinement. F6 is refined using the reward-component trace: no out-put maps to F6a/ PLAN ; missing blocks to F6e/ PLAN ; missing requested capabilities to F6b/ REQ UNDERSTANDING ; unresolved values to F6c/ TOOL USE ; incorrect edges to F6f/ EDIT ;and residual under-specification to F6d/ EDIT . F6g is a second preregistered requirement-coverage patch targeting REQ UNDERSTANDING . Every refinement retrieves a fixed library entry; none triggers free-form patch generation. 18 Preprint. 
+
+Segment-typed patch library. The base prompt is parsed into seven fixed segments— 
+
+REQ UNDERSTANDING , CLARIFY , PLAN , TOOL USE , EDIT , VALIDATE , and 
+
+FINAL OUTPUT —covering request interpretation, clarification, planning, resource resolu-tion, workflow editing, validation and repair, and response completion. The default family-to-segment map is F 1 → CLARIFY , F 2 → TOOL USE , F 3 → EDIT , F 4 → VALIDATE , F 5 → EDIT , and 
+
+F 6 → EDIT ; the F6 refinements above override this default. The versioned library L contains 23 preregistered entries of the form (id , f, s, instruction ). Given family f and localized segment s, R ETRIEVE first selects an entry matching both and otherwise falls back to an entry for s. The stored instruction is appended verbatim to the target segment. Retrieval invokes no LLM, so each accepted edit is deterministic, reviewable, and independently reversible. 
+
+Aggregation. Repeated nominations are merged by patch ID, and previously accepted IDs are removed. The support count ck(a) records how many selected trajectories nominate patch a. Can-didates are sorted by support within each failure family, then interleaved by a coverage-first round robin: every represented family contributes one candidate before any family contributes a second. The leading candidates form Ak and proceed to promotion. B.3.2 PROMOTION : T WO -S IGNAL REPLAY GATE AND REPLAY POOL 
+
+Empirical scores and replay deltas. For policy π, metric X ∈ { R, C }, and pool D, define 
+
+bV gX (π; D) = g ( ¯Xπ (d)) d∈D 
+
+ , ¯Xπ (d) = 1
+
+N
+
+> N
+
+X
+
+> n=1
+
+X(τ πd,n ).
+
+Uniform aggregation weights datapoints equally. Ground-truth-family-balanced aggregation first averages within each workflow family and then weights represented families equally. The implemen-tation label coverage-weighted refers to this macro-average, not to coverage over diagnosed failure families (Appendix C.2). For the j-th ranked candidate aj , the empirical replay delta corresponding to Equation 6 is 
+
+b∆gX (aj | P <j k ; D(k)replay ) = bV gX (πk ⊕ P <j k ⊕ aj ; D(k)replay ) − bV gX (πk ⊕ P <j k ; D(k)replay ).
+
+A candidate is promoted only when both deltas satisfy (εR, ε C ) = ( −0.05 , −0.10) . Acceptance advances the prefix; rejection leaves it unchanged. Train-Only skips replay promotion after training-side pre-qualification. 
+
+Replay-pool composition. The promotion pool is assembled once per outer iteration, after scoring the parent-policy training rollouts and before evaluating candidates. Adaptive replay uses 
+
+D(k)replay = Dcore ∪ D (k)hard ∪ D (k)recent ,
+
+with duplicates removed. The fixed core contains eight datapoints spanning three ground-truth workflow families. The hard slot contains up to four non-core training datapoints with parent-policy mean reward below 0.4 and at least two failed rollouts, ordered from lowest reward upward. The recent slot contains up to four non-core datapoints whose task-success status changed between πk−1
+
+and πk; any unfilled positions are backfilled from the low-reward pool. At iteration 1, the recent slot is initialized by the same backfill rule. Static replay uses only Dcore and omits both adaptive slots. RIPPLE-U and Coverage-Adaptive use adaptive replay but different aggregators; RIPPLE-S combines static replay with balanced aggregation. Because adaptive replay may include training datapoints, it is a mixed stability pool rather than a fully disjoint validation set. Flow-HO remains outside the adaptation loop. B.3.3 ITERATION PROCEDURE 
+
+Algorithm 1 specifies one outer iteration, including replay construction, shared-parent candidate ranking, and advancing-prefix promotion. Algorithm 2 composes accepted sequences across iterations, checkpoints after every iteration, and stops after two consecutive iterations with no accepted patch. 19 Preprint. 
+
+Algorithm 1 One RIPPLE adaptation iteration 
+
+Require: Current policy πk ; training pool Dtrain ; replay core Dcore ; replay mode m ∈ { STATIC , ADAPTIVE }
+
+and history Hk−1; patch library L; aggregator g; rollout count N ; diagnosis budget Bdiag ; tolerances 
+
+(εR, ε C ); previously accepted patch IDs A<k .
+
+Ensure: Next policy πk+1 ; accepted sequence Pk ; updated history Hk ; iteration record Rk .
+
+Phase 1 — WHAT failed: rollout generation and diagnosis 
+
+1: for all d ∈ D train do 
+
+2: Sample τ (k) 
+
+> d,n
+
+∼ pθ (· | d, π k ) for n = 1 , . . . , N 
+
+3: ¯Xπk (d) ← N −1 PNn=1 X(τ (k) 
+
+> d,n
+
+) for X ∈ { R, C }
+
+4: vk (d) ← Var n[R(τ (k) 
+
+> d,n
+
+)] ; τ − 
+
+> d
+
+← arg min n R(τ (k) 
+
+> d,n
+
+)
+
+5: end for 
+
+6: Hk ← UPDATE REPLAY HISTORY (Hk−1, {τ (k) 
+
+> d,n
+
+}d,n )
+
+7: if m = STATIC then 
+
+8: D(k)replay ← D core 
+
+9: else 
+
+10: (D(k)hard , D(k)recent ) ← REFRESH REPLAY (Hk )
+
+11: D(k)replay ← D core ∪ D (k)hard ∪ D (k)recent 
+
+12: end if 
+
+13: Tk ← { τ − 
+
+> d
+
+: d ∈ Top Bdiag (vk )}
+
+14: for all τ ∈ T k do 
+
+15: (F(τ ), z (τ )) ← DIAGNOSE (τ )
+
+16: end for Phase 2 — WHERE to edit: segment-typed patch construction 
+
+17: for all τ ∈ T k do 
+
+18: P(τ ) ← ∅
+
+19: for all f ∈ F (τ ) do 
+
+20: s ← LOCALIZE (f, z (τ )) ; a ← RETRIEVE (L, f, s )
+
+21: P(τ ) ← P (τ ) ∪ { a}
+
+22: end for 
+
+23: end for 
+
+24: ck (a) ← P  
+
+> τ∈T k
+
+1[a ∈ P (τ )] for each nominated patch a
+
+25: Ak ← COVERAGE FIRST ORDER ({a ∈ S 
+
+> τ
+
+P(τ ) : id( a) /∈ A<k }, c k )
+
+Phase 3 — WHETHER to persist: shared-parent ranking and replay promotion 
+
+26: for all a ∈ A k do 
+
+27: πak ← πk ⊕ a
+
+28: ∆train (a) ← bVR(πak ; Dtrain ) − bVR(πk ; Dtrain )
+
+29: end for 
+
+30: A+ 
+
+> k
+
+← { a ∈ A k : ∆ train (a) > 0}, ordered by decreasing ∆train 
+
+31: Pk ← () ; Rk ← ∅
+
+32: for j = 1 , . . . , |A + 
+
+> k
+
+| do 
+
+33: aj ← A + 
+
+> k
+
+[j]; P <j k ← Pk
+
+34: π<j k ← πk ⊕ P <j k ; eπk,j ← π<j k ⊕ aj
+
+35: for X ∈ { R, C } do 
+
+36: ∆gX (aj | P <j k ; D(k)replay ) ← bV gX (eπk,j ; D(k)replay ) − bV gX (π<j k ; D(k)replay )
+
+37: end for 
+
+38: if ∆gR(aj | P <j k ) ≥ εR and ∆gC (aj | P <j k ) ≥ εC then 
+
+39: Pk ← Pk ∥ (aj ) ▷ advance the replay baseline 40: Log (aj , ∆gR, ∆gC , ACCEPT ) in Rk
+
+41: else 
+
+42: Log (aj , ∆gR, ∆gC , REJECT ) in Rk
+
+43: end if 
+
+44: end for 
+
+45: πk+1 ← πk ⊕ Pk
+
+46: return (πk+1 , P k , H k , Rk )
+
+20 Preprint. 
+
+Algorithm 2 Multi-iteration RIPPLE with checkpointing and patience stopping 
+
+Require: Base policy π0; training pool Dtrain ; replay core Dcore ; replay mode m; patch library L; aggregator 
+
+g; rollout count N ; diagnosis budget Bdiag ; tolerances (εR, ε C ); maximum iterations Kmax .
+
+Ensure: Final policy πfinal and ordered patch sequence P .
+
+Initialize persistent state 
+
+1: P ← () ; A<0 ← ∅; H−1 ← ∅; u ← 0 ▷ consecutive no-update iterations 
+
+Greedy outer-loop policy improvement 
+
+2: for k = 0 , . . . , K max − 1 do 
+
+3: (πk+1 , P k , H k , Rk ) ← RIPPLE-I TER 
+
+ πk , Dtrain , Dcore , m, H k−1, L,g, N, B diag , ε R, ε C , A <k 
+
+ ▷ Algorithm 1 4: P ← P ∥ Pk ; A<k +1 ← A<k ∪ { id( a) : a ∈ Pk }
+
+5: PERSIST CHECKPOINT (k + 1 , π k+1 , P, Rk )
+
+6: if Pk = ∅ then 
+
+7: u ← u + 1 
+
+8: else 
+
+9: u ← 0
+
+10: end if 
+
+11: if u ≥ 2 then 
+
+12: break 
+
+13: end if 
+
+14: end for 
+
+15: πfinal ← π0 ⊕ P
+
+16: return (πfinal , P )
+
+B.3.4 REWARD FUNCTION 
+
+Workflow modification. The modification reward is 
+
+Rmod (τ ) = 0 .3S(τ ) + 0 .3C(τ ) + 0 .2S(τ )C(τ ) + 0 .1E(τ ) − 0.1K(τ ).
+
+The interaction term rewards workflows that are both correct and service-validated; edit efficiency and execution cost provide lighter shaping. 
+
+Component definitions. S(τ ) ∈ { 0, 1} equals one only when the agent produces a candidate workflow with at least max( ⌊ncor /2⌋, 3) actions, where ncor is the action count of the corrupted input, and a post-hoc create-and-validate operation succeeds. The temporary workflow is deleted immediately after evaluation. 
+
+C(τ ) ∈ [0 , 1] is a directed field-level comparison with the ground truth, keyed by action identifier and covering action type, ground-truth parameter keys, and all base, conditional, and error transitions. Missing actions mismatch all corresponding fields; extra actions receive a fixed three-field penalty; empty-workflow edge cases are handled explicitly. 
+
+E(τ ) = 1 − UCR( τ ), where the unnecessary-change ratio counts generated actions absent from both the corrupted and ground-truth workflows, edits to actions that were already correct, and deletions of ground-truth actions. A trajectory with no edits receives E = 1 ; success and correctness separately penalize failure to implement the request. Execution cost combines interaction and token components: 
+
+I(τ ) = α min 
+
+ turns( τ )
+
+Tmax 
+
+, 1
+
+
+
++ (1 − α) min 
+
+ tools( τ )
+
+Umax 
+
+, 1
+
+
+
+,K(τ ) = β min 
+
+ tokens( τ )
+
+Cmax 
+
+, 1
+
+
+
++ (1 − β)I(τ ),
+
+21 Preprint. with Tmax = 20 , Umax = 50 , Cmax = 100 ,000 , α = 0 .4, and β = 0 .7. Rollouts are operationally capped at 15 turns; the larger normalization constants leave headroom below saturation. 
+
+Workflow generation. Generation uses 
+
+Rgen (τ ) = Cgen (τ ) − 0.1K(τ ),
+
+where Cgen is identifier-invariant and combines square-root multiset-F1 scores over action types, edges, parameter keys, and normalized parameter values. Dynamically generated identifiers are replaced with placeholders before comparison. Service validation is reported separately but does not enter Rgen ; E is fixed at one for bookkeeping. B.3.5 ROLLOUT CONFIGURATION AND UNCERTAINTY 
+
+Backbones and runtime. Each experiment fixes both the hosted model endpoint and the tool-enabled runtime. Haiku 4.5 is the principal backbone; Gemma 3-12B-it and Ministral 3-14B are used only for cross-backbone transfer. All backbones share the same base policy π0 and patch library L.
+
+User simulator. When the agent asks a clarification question during a rollout, a deterministic user simulator answers on behalf of the requester. The simulator is a Python program that consults each task’s ground-truth metadata for the missing-information slots and refusal conditions defined in the benchmark, and returns the corresponding answer verbatim; it does not paraphrase, does not volunteer information beyond what was asked, and makes no LLM calls. This lets the agent exercise the CLARIFY segment during training and diagnosis while keeping user responses reproducible across rollouts and backbones. The diagnosis module that maps trajectories to failure families is also a deterministic Python program. 
+
+Tools and environment. The agent can read, write, edit, and search files; validate workflows through the same create-and-validate path used to define S; and resolve environment resources such as routing targets, functions, bots, prompts, schedules, reusable workflows, and integrations. Rollouts execute in a dedicated evaluation environment, and temporary validation resources are deleted after use. 
+
+Rollout execution and caching. A rollout is capped at 15 agent turns, with per-turn and total timeouts. It terminates after a completed validation path or after two consecutive turns without tool calls, and one retry is permitted for a latency-only stall. We retain each endpoint’s default sampling parameters. Rollouts are cached by (example id , policy hash , run idx ), so any policy edit invalidates the corresponding cached trajectory. 
+
+Environment confounds. Tool incompleteness, ambiguous resource descriptions, and systematic infrastructure failures are not modeled separately. They can therefore appear as F2 symptoms even when no prompt patch can correct the underlying environment issue. 
+
+Family-cluster bootstrap for Haiku deltas. Haiku deltas are paired by Flow-HO datapoint. For 
+
+X ∈ { S, C, R }, define ∆X(d) = ¯Xsystem (d)− ¯Xref (d), where each bar averages the N = 3 rollouts. The 39 paired differences are grouped into four ground-truth workflow families. Each of 10 ,000 
+
+bootstrap replicates resamples four family labels with replacement, includes every paired datapoint from each sampled family, and computes the pooled datapoint mean. Repeated labels therefore repeat the entire cluster. The reported interval is the 2.5th–97.5th percentile range. Resampling complete clusters preserves within-family dependence; because family sizes differ, the pooled statistic remains datapoint-weighted. The principal Haiku deltas and their family-cluster 95% 
+
+intervals are summarized in Table 8. 22 Preprint.                
+
+> Metric Paired ∆vs. π095% interval
+> Service-validation success (pp) +23 .1[+13 ,+34]
+> Workflow correctness (pp) +0 .8[−5,+8]
+> Composite reward +0 .119 [+0 .08 ,+0 .20]
+
+Table 8: Family-cluster bootstrap 95% intervals for the principal Haiku deltas relative to π0 (10 ,000 
+
+replicates over four ground-truth workflow-family clusters). As shown in Table 8, both the service-validation success gain ( +23 .1 pp) and the composite reward gain ( +0 .119 ) have intervals that exclude zero, whereas the workflow-correctness gain remains unresolved. With only four clusters, these intervals should be interpreted as descriptive family-cluster uncertainty for the current benchmark, not as a population-level guarantee or an independent confirmation result. B.4 HAIKU PRINCIPAL -S TUDY SUPPLEMENTARY RESULTS 
+
+This section provides the supplementary analyses for the Haiku RQ1–RQ4 study in §4. Cross-backbone results for Gemma and Ministral appear in Appendix B.5.                                              
+
+> Policy S(%) C(%) E(%) K(%) R
+> Base π054.70 74.87 50.44 8.53 0.5252 Coverage-Adaptive 69.23 76.78 52.15 9.89 0.5992 Train-Only 71.79 75.60 55.68 8.95 0.6132 Multi-Iteration 64.10 74.33 51.78 9.35 0.5705
+> RIPPLE-U 77.78 75.71 57.55 8.15 0.6443 RIPPLE-S 76.07 77.88 56.47 9.48 0.6394 Skill-Compact ‡70.94 82.18 54.57 8.76 0.6254
+
+Table 9: Flow-HO modification reward components. S, C, E, and K are percentages; lower K is better. R uses the [0 , 1] components in Appendix B.3.4. ‡Skill-Compact uses a separate acceptor-probe cache and is descriptive. B.4.1 REWARD -COMPONENT BREAKDOWN AND FAMILY -LEVEL CONSISTENCY 
+
+Table 9 decomposes the Flow-HO modification reward across the harmonized Haiku systems. RIPPLE-U attains the highest validation success, edit efficiency, and composite reward, together with the lowest execution cost; RIPPLE-S attains the highest workflow correctness. Skill-Compact is included only as a descriptive checkpoint from the separate acceptor-probe cache. Figure 3 plots per-family mean reward with 1.96 × SEM intervals, and Table 10 gives the underlying numeric means and rollout counts. Their source caches and rollout counts differ: the base uses 
+
+N = 3 from the acceptor-probe cache, whereas RIPPLE-U and RIPPLE-S use N = 10 from the design-study cache. The comparison is therefore descriptive and supports family-level directionality, not paired inference. 23 Preprint. Family A Family B Family C Family D 
+
+Ground-truth workflow family       
+
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Mean reward  0.56 0.54 0.40 0.60 0.77 0.59 0.56 0.69 0.65 0.56 0.56 0.69
+> Base 0RIPPLE-U RIPPLE-S
+
+Figure 3: Mean reward by Flow-HO modification family in the Haiku study. Error bars show 
+
+1.96 × SEM over task-level means; the comparison is descriptive because caches and rollout counts differ. 
+
+Family n Base RIPPLE-U RIPPLE-S 
+
+A 9 0.563 ± 0.175 0.772 ± 0.095 0.650 ± 0.149 
+
+B 10 0.540 ± 0.154 0.594 ± 0.135 0.558 ± 0.129 
+
+C 10 0.401 ± 0.151 0.565 ± 0.128 0.560 ± 0.117 
+
+D 10 0.600 ± 0.178 0.694 ± 0.110 0.687 ± 0.102 
+
+Table 10: Per-family reward means with 1.96 × SEM intervals. Base uses N = 3 from the acceptor-probe cache; RIPPLE-U and RIPPLE-S use N = 10 from the design-study cache, so the intervals are descriptive rather than harmonized and paired. 0 1 2 3 4 5 6  
+
+> Accepted patches
+> 0.50 0.55 0.60 0.65 0.70
+> Flow-HO reward
+> Base 0
+> Coverage-Adaptive Train-Only Multi-Iteration RIPPLE-U RIPPLE-S Skill-Compact
+
+Figure 4: Accepted-patch count versus Flow-HO modification reward. Error bars show ±1 SEM across 39 held-out tasks; points with equal counts are offset only for visibility. Skill-Compact is descriptive because it uses the acceptor-probe cache. 24 Preprint. 0 F3a F6c F6b F6d F6e F6g  
+
+> 0.40 0.42 0.44 0.46 0.48 0.50 0.52
+> Replay reward
+> iter 2
+> (A) Replay score along the accepted sequence
+> 0Skill-Compact 4-patch Coverage-Adaptive 6-patch Multi-Iteration 0.500 0.525 0.550 0.575 0.600 0.625 0.650 0.675
+> Flow-HO reward
+> RIPPLE-U reference
+> (B) Flow-HO reward at selected checkpoints
+
+Figure 5: Coverage-Adaptive convergence. (A) Replay score after each accepted patch; shading marks iteration-2 acceptances. (B) Flow-HO scores at selected checkpoints. The dashed RIPPLE-U line follows a different four-patch sequence. B.4.2 CONVERGENCE AND CHECKPOINT COMPLEMENTARITY 
+
+Figure 4 places the harmonized Haiku systems on the patch-count–reward plane. Equal-size patch sets occupy different quality regimes, and the six-patch Multi-Iteration policy trails the principal variants. Figure 5 traces Coverage-Adaptive through iterations 1 and 2; the dashed line shows the distinct four-patch RIPPLE-U sequence. Table 11 records the replay score after each acceptance in the Coverage-Adaptive and RIPPLE-U trajectories, including the two iteration-2 additions (F6e, F6g); Table 12 reports the paired Flow-HO reward, correctness, and validation-success values at the same checkpoints. Together they show that iteration-2 acceptances raise the replay score but do not carry over to Flow-HO. 
+
+Checkpoint Success Correctness Reward 
+
+π0 0.396 0.717 0.431 
+
+π0 ⊕ F3a 0.521 0.725 0.503 
+
+· · · ⊕ F6c 0.500 0.736 0.496 
+
+· · · ⊕ F6b 0.479 0.684 0.456 
+
+· · · ⊕ F6d (Coverage-Adaptive final) 0.354 0.776 0.443 
+
+· · · ⊕ F6e (iter 2) 0.533 0.710 0.478 
+
+· · · ⊕ F6g (iter 2, Multi-Iter final) 0.489 0.741 0.472 
+
+Table 11: Replay scores along the Coverage-Adaptive accepted sequence (Figure 5A). Each row is the advancing baseline after the listed patch is accepted. 
+
+Checkpoint Success Correctness Reward nπ0 0.547 0.749 0.525 39 
+
+π0 ⊕ F3a (Skill-Compact) 0.709 0.822 0.625 39 4-patch (Coverage-Adaptive) 0.692 0.768 0.599 39 6-patch (Multi-Iteration) 0.641 0.743 0.571 39 
+
+RIPPLE-U reference (Table 1) 0.778 0.757 0.644 39 
+
+Table 12: Flow-HO modification scores at selected Coverage-Adaptive checkpoints (Figure 5B; 
+
+n = 39 , N = 3 ). RIPPLE-U is a reference with a different four-patch sequence. Figure 6 shows request-level complementarity between Skill-Compact and Coverage-Adaptive. Under strict sign counting, Skill-Compact is higher on 67% of tasks. With the predefined |∆R| ≤ 0.02 tie band, the counts are 15 compact wins, 9 broader-checkpoint wins, and 15 ties. A post hoc oracle that chooses the better checkpoint per request raises mean reward from 0.625 to 0.665 ; this is an upper 25 Preprint. bound, not a deployable routing rule. A request-only selector using q and y0 recovers none of this headroom under leave-one-family-out evaluation. A diagnostic selector recovers 61% but observes the ground-truth workflow and is therefore nondeployable. 0.4 0.3 0.2 0.1 0.0 0.1 0.2 0.3 0.4 Per-datapoint R = RSkill-Compact RCoverage-Adaptive  
+
+> 0.0 0.2 0.4 0.6 0.8 1.0 ECDF
+> R= 0
+
+Figure 6: ECDF of task-level reward differences, Skill-Compact minus Coverage-Adaptive ( n =39 ). Positive values favor the compact checkpoint; the sign change shows that neither checkpoint dominates all requests. 
+
+Patch Cov-Adapt RIPPLE-U RIPPLE-S Train-Only Multi-Iter 
+
+F1a −∆ −∆ −∆ −∆ −∆
+
+F2a × A A A −∆
+
+F2b −∆
+
+F3a A A × A A
+
+F3b −∆
+
+F3c −∆
+
+F5a × × A A −∆
+
+F5b A
+
+F6a −∆ −∆ −∆ −∆
+
+F6b A A × A A
+
+F6c A A A A
+
+F6d A A A A
+
+F6e A (iter 2) F6f −∆
+
+F6g A (iter 2) 
+
+Accepted total 4 4 4 6 6
+
+Table 13: Patch outcomes by configuration. A: accepted; ×: replay rejection; −∆: training pre-filter rejection; blank: not proposed. Train-Only bypasses replay promotion. B.4.3 CROSS -CONFIGURATION PATCH PROFILE 
+
+Table 13 records each proposed patch and its terminal status across Haiku configurations. The three one-iteration gated variants each accept four patches, but the sets differ: F3a is accepted by Coverage-Adaptive and RIPPLE-U but rejected under static replay; F2a is rejected by Coverage-Adaptive but accepted by RIPPLE-U and RIPPLE-S; and F5a is accepted only by RIPPLE-S among the gated one-iteration variants. Train-Only accepts six patches because replay cannot remove positive-training-gain candidates. Multi-Iteration retains the four Coverage-Adaptive patches and adds F6e and F6g in iteration 2. Similar patch counts therefore do not imply similar policies or held-out performance. 26 Preprint. B.5 CROSS -B ACKBONE TRANSFER SUPPLEMENTARY RESULTS 
+
+This section provides the supplementary tables for the Gemma and Ministral transfer runs summarized in §4.2. Both use the same N = 3 rollout protocol and patch library as the Haiku study. Ministral additionally bypasses the training-side positive-gain pre-filter (Appendix B.5.5). B.5.1 BACKBONE TIER BRACKET 
+
+Table 14 reports the base-π0 pilot on six frozen backbones, evaluated on the same 39 Flow-HO modification tasks with N = 3 . For descriptive model selection, we define peer ( S ≥ 40% ), upper-headroom ( 30% ≤ S < 40% ), lower-headroom ( 20% ≤ S < 30% ), and collapse ( S < 20% ) bands. The study selects one backbone from each non-collapse band. Collapse-band backbones are excluded because the base policy provides too little reliable execution capability for the present adaptation study.                                       
+
+> Backbone Tier band S(%) C(%) RSelected
+> Haiku 4.5 peer 54.7 74.9 0.525 ✓(principal) Gemma 3-12B-it upper-headroom 37.6 80.7 0.460 ✓
+> Ministral 3-14B lower-headroom 24.8 59.7 0.299 ✓
+> Llama 3.3 70B collapse 18.8 81.0 0.392 –Nova Micro collapse 18.8 61.8 0.268 –Llama 3.1 8B collapse 15.4 45.3 0.219 –
+
+Table 14: Base-π0 pilot on six frozen backbones (39 Flow-HO tasks, N = 3 ). Descriptive success bands are peer ( S ≥ 40% ), upper-headroom ( 30% ≤ S < 40% ), lower-headroom ( 20% ≤ S < 
+
+30% ), and collapse ( S < 20% ); one backbone is selected from each non-collapse band. B.5.2 CROSS -BACKBONE REWARD -COMPONENT BREAKDOWN 
+
+Table 15 decomposes Flow-HO modification reward for Gemma and Ministral. On Gemma, validation success and reward increase while correctness, edit efficiency, and execution cost remain nearly unchanged. On Ministral, validation success and reward also increase and edit efficiency improves slightly; execution cost rises, primarily through the token component, as the accepted patches lengthen the segmented prompt.                                     
+
+> Backbone Policy S(%) C(%) E(%) K(%) R
+> Gemma 12B Base π037.61 80.68 48.31 8.01 0.4597 Gemma 12B RIPPLE 44.44 80.68 48.53 8.19 0.4916
+> Ministral 14B Base π024.79 59.68 32.68 30.17 0.2992 Ministral 14B RIPPLE 31.62 59.20 33.94 34.63 0.3266
+
+Table 15: Cross-backbone reward components on Flow-HO modification ( n = 39 , N = 3 ). S, C, E, 
+
+and K are percentages; lower K is better. R follows Appendix B.3.4, and bold marks the better mean within each backbone. B.5.3 CROSS -BACKBONE FAMILY -LEVEL CONSISTENCY 
+
+Table 16 reports means for the same four Flow-HO modification families used in the Haiku analysis. Validation success improves in three of four families on each backbone, and the regressing family differs: family C for Gemma and family B for Ministral. Family D shows the largest reward gain on both backbones, consistent with recovering headroom where the base policy is weakest. Because each transfer run uses one frozen protocol, these values support descriptive family-level directionality rather than paired inference. 27 Preprint. 
+
+Base π0 RIPPLE Paired ∆
+
+Backbone Family S R S R ∆S ∆R
+
+Gemma 12B A ( n=9 ) 0.556 0.593 0.667 0.642 +0 .111 +0 .049 
+
+Gemma 12B B ( n=10 ) 0.467 0.459 0.600 0.505 +0 .133 +0 .047 
+
+Gemma 12B C ( n=10 ) 0.467 0.514 0.367 0.469 −0.100 −0.046 
+
+Gemma 12B D ( n=10 ) 0.033 0.286 0.167 0.366 +0 .133 +0 .079 
+
+Gemma 12B all (n=39 ) 0.376 0.460 0.444 0.492 +0 .068 +0 .032 
+
+Ministral 14B A ( n=9 ) 0.333 0.418 0.444 0.496 +0 .111 +0 .078 
+
+Ministral 14B B ( n=10 ) 0.300 0.278 0.200 0.212 −0.100 −0.067 
+
+Ministral 14B C ( n=10 ) 0.133 0.227 0.200 0.224 +0 .067 −0.003 
+
+Ministral 14B D ( n=10 ) 0.233 0.285 0.433 0.392 +0 .200 +0 .106 
+
+Ministral 14B all (n=39 ) 0.248 0.299 0.316 0.327 +0 .068 +0 .027 
+
+Table 16: Per-family Flow-HO modification means for Gemma 12B and Ministral 14B ( N = 3 ). Validation success improves in three of four families on each backbone; the regressing family differs across backbones. Family D has the largest reward gain for both. B.5.4 ACCEPTED PATCHES AND PER -PATCH REPLAY EVIDENCE 
+
+Table 17 lists accepted patches in promotion order. The transfer policies are largely backbone-specific: Gemma accepts one PLAN patch and two EDIT patches, whereas Ministral accepts one 
+
+REQ UNDERSTANDING patch and two EDIT patches. The shared concentration on EDIT reflects recurring schema and parameter failures; the remaining segment differs with the diagnosed backbone-specific failure profile. 
+
+Backbone Configuration Accepted patches Segment sequence 
+
+Haiku 4.5 RIPPLE-U F2a, F3a, F5b, F6b TOOL, EDIT, EDIT, REQ Haiku 4.5 RIPPLE-S F2a, F5a, F6c, F6d TOOL, EDIT, TOOL, EDIT Haiku 4.5 Coverage-Adaptive F3a, F6c, F6b, F6d EDIT, TOOL, REQ, EDIT Gemma 3-12B RIPPLE F6a, F3a, F3b PLAN, EDIT, EDIT Ministral 14B ∗ RIPPLE F6g, F3d, F3e REQ, EDIT, EDIT 
+
+Table 17: Accepted patches in promotion order. REQ and TOOL abbreviate REQ UNDERSTANDING 
+
+and TOOL USE . ∗Ministral bypasses the training pre-filter; see Appendix B.5.5. Table 18 reports the training and replay deltas behind these decisions. On Gemma, the replay gate rejects F5a in iteration 2 despite a positive ∆train , paralleling the replay-side discrimination in the Haiku F2a case study (§4.4). On Ministral, the three highest-ranked candidates in the diagnosis-matched pool are evaluated after bypassing the training pre-filter; all three satisfy the unchanged two-signal replay gate. 28 Preprint.                                                                                 
+
+> Backbone Iter. Patch Segment ∆train ∆gR∆gC∆gSOutcome
+> Gemma 12B 1F6a PLAN +0 .066 +0 .013 +0 .029 +0 .000 accepted Gemma 12B 1F5a EDIT −0.016 –––train pre-filter Gemma 12B 1F3a EDIT −0.079 –––train pre-filter Gemma 12B 2F3a EDIT +0 .032 +0 .038 +0 .004 +0 .077 accepted Gemma 12B 2F3b EDIT +0 .007 +0 .082 +0 .033 +0 .154 accepted Gemma 12B 2F5a EDIT +0 .006 −0.074 –−0.154 replay reject Ministral 14B ∗1F6g REQ UNDERSTANDING −0.016 +0 .033 +0 .057 +0 .026 accepted Ministral 14B ∗1F3d EDIT −0.035 +0 .007 −0.031 +0 .026 accepted Ministral 14B ∗1F3e EDIT −0.067 +0 .014 +0 .047 +0 .000 accepted
+
+Table 18: Per-patch training and replay deltas for Gemma and Ministral. Training gain is measured against πk on the diagnosis pool; replay deltas use the current accepted prefix. Dashes denote uncomputed or unrecorded quantities. Gemma F5a is rejected by replay despite positive training gain. 
+
+> ∗
+
+Ministral bypasses the training pre-filter (Appendix B.5.5); the replay gate is unchanged. B.5.5 MINISTRAL PROTOCOL : BYPASSING THE TRAINING PRE -FILTER 
+
+RIPPLE’s persistence decision is the replay-side AND rule, ∆gR ≥ − 0.05 and ∆gC ≥ − 0.10 .The training condition ∆train > 0 is a compute-saving pre-filter that avoids replay evaluation for candidates with a negative training estimate. Every accepted Haiku and Gemma patch already satisfies this condition, so the pre-filter does not change their accepted sets. For Ministral, all six candidates examined across two candidate pools have training deltas in [−0.10 , 0] .With the pre-filter enabled, no candidate reaches replay and the policy remains π0. In the reported run, we bypass the pre-filter for the final diagnosis-matched top three and apply the unchanged replay gate. F6g, F3d, and F3e are accepted sequentially with the deltas in Table 19. The three candidates from the earlier pool were not reevaluated under the bypassed protocol, so the trace does not establish how replay would have classified them.                                     
+
+> Patch Segment ∆train ∆gR∆gC∆gSOutcome
+> Reported diagnosis-matched pool; pre-filter bypassed
+> F6g REQ −0.016 +0 .033 +0 .057 +0 .026 accepted F3d EDIT −0.035 +0 .007 −0.031 +0 .026 accepted F3e EDIT −0.067 +0 .014 +0 .047 +0 .000 accepted
+> Earlier pool; pre-filter enabled
+> F5a EDIT −0.037 not replay-evaluated screened F2a TOOL −0.048 not replay-evaluated screened F3a EDIT −0.097 not replay-evaluated screened
+
+Table 19: Ministral candidate outcomes. The reported run bypasses the positive-training-gain pre-filter for the final three candidates and retains the advancing replay gate. Earlier candidates were screened under the default pre-filter and were not replay-classified under the bypassed protocol. REQ and TOOL abbreviate REQ UNDERSTANDING and TOOL USE .
+
+## C DISCUSSION 
+
+C.1 WHY THE REPLAY GATE USES TWO SIGNALS 
+
+RIPPLE promotes a candidate only when replay reward and workflow correctness both remain within their tolerances. Composite reward alone is insufficient because gains in validation success, edit efficiency, or execution cost can compensate for a correctness loss. Conversely, a structurally closer workflow can still fail service validation. Separate constraints keep both dimensions visible rather than permitting unrestricted compensation within one scalar. The gate uses an AND rule because each signal defines an independent admissibility condition; an OR rule would allow an arbitrarily large regression in one metric whenever the other passed. 29 Preprint. The thresholds are mildly negative rather than strict-improvement tests because replay effects are estimated from few rollouts on a small pool. The gate is therefore a bounded empirical safeguard, not a guarantee of monotone improvement. 
+
+Marginal rather than cumulative control. Each decision is relative to the latest accepted prefix, not to the iteration-start policy. Small admissible regressions can therefore accumulate. In the Coverage-Adaptive trace, F3a raises replay reward from 0.431 to 0.503 , after which the next three accepted patches reduce it to 0.496 , 0.456 , and 0.443 . Every marginal change remains above 
+
+εR = −0.05 , and the final checkpoint remains above the iteration-start policy, but it falls below the one-patch checkpoint. A cumulative budget or an additional constraint against πk would provide stronger control when sequence-level monotonicity is required. C.2 WHAT “COVERAGE -WEIGHTED ” AGGREGATION MEANS 
+
+The implementation label coverage-weighted denotes gbalanced : datapoints are averaged within each ground-truth workflow family, and represented families are then weighted equally. It does not refer to coverage over failure families or accepted patch types. The two notions of family are distinct. A ground-truth workflow family groups structurally related tasks and defines replay aggregation and cluster resampling. A failure family (F1–F6) is inferred from trajectory evidence and indexes candidate patches. Candidate quotas and coverage-first ordering operate on failure families; gbalanced operates on workflow families. C.3 WHEN THE CORRECTNESS CONSTRAINT BECOMES BINDING 
+
+Across 20 logged candidate decisions in the four principal modification runs, seven candidates are rejected: two by reward alone and five by both reward and correctness. No candidate fails only the correctness condition. For this candidate set and these thresholds, a reward-only replay gate would therefore reproduce the same decisions. This differs from Train-Only, which removes replay promotion entirely. In the present trace, the correctness constraint is a latent safeguard rather than an additional source of rejections. Its structural motivation remains: composite reward can tolerate a correctness decline when other components improve. Demonstrating incremental decision value, however, requires candidate trajectories on which the reward and correctness conditions disagree. 
+
+## D SEGMENTED PROMPT POLICY : B ASE TEXT AND ACCEPTED DELTAS 
+
+For auditability, this section shows the segment-level changes in the four-patch Coverage-Adaptive checkpoint, whose accepted sequence is F3a, F6c, F6b, and F6d. The original π0 text is preserved within each segment, and every patch appends one bounded instruction to its designated location. RIPPLE-U and RIPPLE-S select different four-patch sequences and are not shown here. Only the modified segments— REQ UNDERSTANDING , TOOL USE , and EDIT —are included; the remaining four segments are identical to π0. Service-specific names are replaced with functional aliases for presentation without changing the policy logic. D.1 REQ UNDERSTANDING ( MODIFIED BY F6 B)F6b is appended to the unchanged request-understanding segment. 
+
+REQ UNDERSTANDING : Base Policy and RIPPLE Delta Base policy π0                   
+
+> [REQ_UNDERSTANDING_START] When the user provides aflow JSON and amodification request: 1. Read the existing flow JSON carefully to understand its current structure ,→
+
+30 Preprint. 
+
+REQ UNDERSTANDING : Base Policy and RIPPLE Delta (continued) 
+
+2. Identify the type of modification requested (add block, reroute, modify ,→
+
+configuration, or replace logic) 3. Determine which blocks in the flow are likely affected by the request ,→
+
+4. Note the flow's overall topology: entry point, main paths, error paths, ,→
+
+and terminal blocks [REQ_UNDERSTANDING_END] 
+
+Accepted patch F6b (appended) 
+
+TRIGGER: when the request names multiple capabilities or features. Enumerate every capability the request asks for and ensure each one maps ,→
+
+to at least one concrete element in your output with its required settings ,→
+
+populated. Treat an unaddressed capability as incomplete work, not an optional extra. 
+
+Effect. F6b turns multi-capability requests into an explicit coverage checklist, reducing partial outputs. D.2 TOOL USE ( MODIFIED BY F6 C)F6c adds a resolve-before-fill requirement to the existing tool-use contract. 
+
+TOOL USE : Base Policy and RIPPLE Delta Base policy π0
+
+[TOOL_USE_START] Use the available tools to resolve resource identifiers when needed: - get_routing_targets: retrieve identifiers for routing blocks - get_functions: retrieve function identifiers for function-call blocks ,→
+
+- get_bots / get_bot_aliases: retrieve conversational-bot configuration ,→
+
+- get_prompts: retrieve prompt identifiers for message blocks - get_schedules: retrieve schedule identifiers for schedule-check blocks ,→
+
+- get_workflows: retrieve workflow identifiers for workflow-transfer blocks ,→
+
+- validate_workflow: validate the final output through the external validator ,→
+
+[TOOL_USE_END] 
+
+Accepted patch F6c (appended) 
+
+TRIGGER: when an element references an external resource (routing target, function, ,→
+
+bot, prompt, schedule). Resolve the real identifier or value for that resource before filling the field; do not leave required values blank or ,→
+
+substitute a placeholder. If a value cannot be resolved, surface that rather than emitting an empty field. 
+
+Effect. F6c requires concrete resource resolution before populating a referenced field and makes unresolved values explicit. 31 Preprint. D.3 EDIT ( MODIFIED BY F3 A AND F6 D)The EDIT segment receives F3a and F6d in acceptance order. Because its base text is unchanged, only the appended instructions are shown. 
+
+EDIT : Accepted RIPPLE Deltas F3a: schema-complete action insertion                                  
+
+> Before adding an Action of atype that has not appeared earlier in the flow, ,→
+> look up the required Parameters and Errors entries in the workflow-language knowledge base. ,→
+> Include all required fields. Do not use placeholders for required fields. ,→
+
+F6d: complete element details                                   
+
+> TRIGGER: when an element has been added but its details may be incomplete. ,→
+> For each element, complete its outgoing connections (default, conditional, ,→
+> and error branches), its metadata, and every required sub-field for its ,→
+> type. Astructurally present but under-specified element is unfinished. ,→
+
+Effect. F3a requires a schema lookup before inserting an unseen action type; F6d requires the resulting action, branches, metadata, and required subfields to be complete before editing terminates. D.4 SUMMARY OF POLICY DELTA 
+
+All four updates are additive and segment-scoped: no base instruction, segment boundary, or sur-rounding knowledge scaffold is overwritten. The checkpoint can therefore be reviewed, attributed, and rolled back patch by patch. 
+
+## E CASE STUDY : A L OCALLY HELPFUL PATCH WITH A DESTRUCTIVE 
+
+## INTERACTION 
+
+This case follows F2a on the Coverage-Adaptive trajectory. The patch instructs the agent to use resource-lookup tools only for newly introduced references and to preserve existing identifiers that appear valid. The rule is locally plausible because it can avoid redundant lookups, but its effect depends on the instructions already active in the policy. 
+
+Shared-parent training estimate. F2a is evaluated against the iteration-start policy πk = π0 and receives ∆train = +0 .0465 , passing the positive-gain pre-filter. This estimate supports local utility under the shared parent; it does not test the patch after composition. 
+
+Advancing-prefix replay estimate. By promotion time, the accepted prefix is 
+
+(F3a , F6c , F6b , F6d) . Appending F2a yields the marginal replay effects in Table 20.             
+
+> Signal 4-patch policy After F2a Marginal
+> Composite reward 0.4426 0.2170 −0.2257
+> Workflow correctness 0.7761 0.6543 −0.1218
+> Service-validation success 0.354 0.000 −0.354
+
+Table 20: Marginal replay effect of appending F2a to the four-patch Coverage-Adaptive prefix. Both promotion conditions ( ∆gR ≥ − 0.05 and ∆gC ≥ − 0.10 ) fail, and service-validation success falls to zero. 32 Preprint. RIPPLE therefore rejects F2a before it enters the persistent checkpoint. 
+
+Interaction mechanism. F6c requires every referenced resource to be resolved to a concrete value. F2a narrows that instruction by exempting identifiers already present in the corrupted input. Such identifiers can be syntactically plausible yet stale in the evaluation environment; preserving them suppresses the revalidation that F6c would otherwise trigger, leading to publication failures. 
+
+What the case establishes. The logged trace shows that F2a’s estimated effect depends on policy context: it is positive under shared-parent training evaluation and destructive after the accepted prefix is active. An evaluation anchored to π0 would answer a different question and would not directly test this composition. The trace does not establish F2a’s isolated replay effect or the population frequency of the interaction; it demonstrates why commit-time evaluation should use the policy state in which the patch would persist. 
+
+## F FUTURE WORK 
+
+Stronger confirmation and gate analysis. The clearest extensions are a request-disjoint con-firmation pool, more ground-truth families, and repeated runs across independent environments. Harmonized reruns of Skill-Compact and the transfer backbones would permit paired uncertainty estimates. Threshold sweeps, leave-one-patch-out attribution, and cumulative replay budgets could separate proposal quality, marginal safety, and sequence-level regression; anytime-valid rules such as PACE (Shawn, 2026) could support sequential reuse of a development pool. 
+
+Broader tasks and full-system baselines. Flow-HO can be complemented by public execution-graded environments such as ALFWorld, τ -Bench, and SWE-bench Verified. Full comparisons with GRASP (Moll et al., 2026), SkillGen (Ma et al., 2026), and SkillOpt (Yang et al., 2026) would vary both proposer and acceptor beyond RQ4’s controlled acceptor swap. Comparisons with GEPA (Agrawal et al., 2025), MIPROv2 (Opsahl-Ong et al., 2024), OPRO (Yang et al., 2024a), and TextGrad (Yuksekgonul et al., 2024) would quantify the value of diagnosis, segmentation, and replay-constrained persistence. 
+
+Initialization and model migration. The study starts from one human-authored π0. Sweeps over minimal, generated, and expert initial policies could test dependence on initialization and convergence to similar fixed points. A deployment study could carry an adapted checkpoint across backbone upgrades and identify patches that transfer, become redundant, or require reversal. 
+
+Backbone-specific tuning. Our transfer runs reuse Haiku’s proposer, patch library, replay com-position, and gate tolerances without backbone-specific adaptation. The resulting Gemma and Ministral gains therefore reflect transfer under a shared configuration rather than tuned per-backbone performance, and the residual Haiku-to-transfer gap should not be interpreted as a method ceiling. Backbone-specific patch libraries, replay composition, and re-calibrated (εR, ε C ) tolerances may recover additional headroom; we leave this tuning budget unmeasured. 33

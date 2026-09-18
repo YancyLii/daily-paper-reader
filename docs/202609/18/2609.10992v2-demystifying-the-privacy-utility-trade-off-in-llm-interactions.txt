@@ -1,0 +1,1139 @@
+Title: Demystifying the Privacy-Utility Trade-off in LLM Interactions
+
+URL Source: https://arxiv.org/pdf/2609.10992v2
+
+Published Time: Mon, 14 Sep 2026 00:47:52 GMT
+
+Number of Pages: 28
+
+Markdown Content:
+# Demystifying the Privacy-Utility Trade-off in LLM Interactions 
+
+Zhenhua Liu 1∗, Zhanxu Xie 2∗, Junjie Yu 3,4 ∗, Tong Zhu 5, Lijun Li 5†, Wenliang Chen 1†
+
+> 1
+
+Soochow University, 2Beihang University, 3Suzhou City University, 
+
+> 4
+
+Shanghai Key Lab of Intelligent Information Processing, 5Shanghai AI Lab, 4065156@qq.com, wlchen@suda.edu.cn 
+
+Abstract 
+
+The integration of Large Language Models into daily tasks relies on context-rich instructions, inevitably exposing sen-sitive user information. Current privacy-preserving methods typically employ context-agnostic static rules, causing severe utility degradation. However, the specific mechanisms govern-ing how sanitization impacts downstream performance remain largely underexplored. To address this, we conduct a systematic analysis to deconstruct the privacy-utility trade-off, uncovering three underlying mechanisms: (1) Context-Dependent Utility ,which first establishes when to sanitize by revealing that data value shifts from critical constraints to dispensable noise based on user intent; (2) Strategic Adaptation , which subsequently determines how to sanitize by dictating that the choice between removal and replacement depends on the task’s reliance on factual integrity versus structural coherence; and (3) Combi-natorial Interplay , which finally extends the protection scope by demonstrating that attributes form a semantic web of syner-gistic dependencies or antagonistic redundancies. Guided by these insights, we introduce an intent-driven local protection framework. By distilling a lightweight model Veilmind-4B 
+
+to drive a dynamic extraction-sanitization-restoration pipeline, our approach reaches a low-leakage privacy point while pre-serving substantially higher response utility than existing privacy-oriented baselines, advancing the privacy-utility trade-off toward the Pareto frontier. 
+
+1 Introduction 
+
+Large Language Models (LLMs) have evolved into intelligent agents that seamlessly integrate into diverse user workflows (Brown et al. 2020; Xi et al. 2023). To elicit high-quality responses, users must inevitably provide granular instructions rich in personal context and specific constraints (Salemi et al. 2024; Ouyang et al. 2022). Such detailed disclosure serves as the cornerstone for agents to accurately interpret intent and deliver personalized assistance (Wei et al. 2023). However, high performance comes at a cost. To elicit precise assistance, users must disclose granular details that inevitably expose sensitive personal attributes. Crucially, data sensitivity is not static. It depends strictly on the user’s intent and the specific task context. This aligns with the theory of contextual integrity (Nissenbaum 2004, 2009). In 
+
+> ∗
+
+These authors contributed equally. 
+
+> †
+
+Corresponding author. Help me write a formal appeal letter to my health insurance provider. They denied coverage for my weekly psychotherapy sessions . I need to explain that I was diagnosed with severe clinical depression following my recent divorce , and I can no longer afford the $150 per session out-of-pocket . 
+
+> The user has been diagnosed with severe clinical depression. The user has recently gone through a divorce. The user is in
+> fi nancial distress Sensitive Statement User Prompt Potential Abuse MEDICAL RISK (PHARMACEUTICAL FRAUD) ROMANCE SCAM (EMOTIONAL MANIPULATION)
+> FINANCIAL PREDATORY RISK (ECONOMIC EXPLOITATION)
+
+Figure 1: An illustrative example demonstrating how a user prompt can inadvertently disclose sensitive personal attributes, which may subsequently be exploited for targeted real-world abuse. practice, even seemingly innocuous prompts can enable the reconstruction of detailed user profiles (Staab et al. 2023). As depicted in Figure 1, a routine task like drafting an insurance appeal necessitates the disclosure of clinical diagnoses and financial distress. Once transmitted to untrusted servers, this data risks being mined for detailed profiling and subsequently exploited for targeted real-world abuse (Carlini et al. 2021; Neel and Chang 2023; Wang et al. 2024). To mitigate these risks, prior research has primarily relied on static sanitization rules or generic heuristics (Lison et al. 2021; Edemacu and Wu 2025). While effective at reducing privacy risks, they frequently compromise the utility of the response (Feyisetan et al. 2020; Chowdhury et al. 2025). The critical limitation lies in their indiscriminate treatment of sensitive attributes. Such methods fail to evaluate the marginal contribution of specific details relative to the user’s goal, often stripping away essential context alongside non-essential noise (Mireshghallah et al. 2024). Consequently, arXiv:2609.10992v2 [cs.AI] 11 Sep 2026 the field lacks a granular understanding of how varying degrees of sanitization impact model performance, leaving the underlying mechanisms of the privacy-utility trade-off 
+
+largely unexplored. To address this gap, we conduct a systematic empirical analysis to deconstruct the privacy-utility trade-off. Unlike prior black-box approaches, we move beyond static heuristics to map the underlying decision boundaries, answering three fundamental questions: 
+
+• When to Sanitize? We reveal that the functional value of sensitive information is contingent on the task context. We observe distinct dynamics ranging from functional coupling where attributes act as critical constraints to informational redundancy where they serve as dispensable noise. Conse-quently, decisions on necessity must be grounded in this contextual utility. 
+
+• How to Sanitize? We demonstrate that optimal protection hinges on prioritizing either factual integrity or structural coherence. Objective tasks demand removal to prevent false premises while interactive scenarios require replacement to serve as conversational anchors. Thus, the choice of strategy is strictly dictated by the task’s reliance on factual versus structural validity. 
+
+• What Scope to Sanitize? We demonstrate that sensitive attributes do not function in isolation but form a complex semantic web. This structure creates either synergistic bundles essential for coherence or antagonistic redundancy capable of leaking information. Consequently, protection strategies must transcend individual evaluation to address the scope of these combinatorial dependencies. Guided by these insights, we propose an intent-driven local protection framework. To endow a lightweight local model with the advanced reasoning capabilities of state-of-the-art systems, we employ knowledge distillation to specialize it for privacy-centric tasks. This model drives a dynamic three-stage pipeline: extraction, strategic sanitization, and post-hoc context restoration. Crucially, to accommodate varying user tolerances, our framework provides flexible control via 
+
+Utility Priority and Privacy Priority modes. Experimental results show that our framework advances the privacy-utility Pareto frontier by reaching a low-leakage privacy point while preserving substantially stronger utility than existing privacy-oriented baselines. 
+
+2 Related Work 
+
+LLM Privacy-Preserving Techniques. Extensive research addresses the risk of LLMs memorizing sensitive informa-tion from their training corpora (Carlini et al. 2021; Liu et al. 2024b). The most direct approach is data sanitization, which entails detecting and redacting personally identifiable information (PII) from datasets (Lison et al. 2021; Kandpal, Wallace, and Raffel 2022). While heuristic-based filtering and named entity recognition (NER) models (Chen et al. 2023) can mitigate explicit leakage, they are prone to false negatives (Lukas et al. 2023) and can disrupt linguistic coherence. To provide formal privacy guarantees, researchers have alterna-tively integrated differential privacy (DP) into the training process (Abadi et al. 2016; Li et al. 2021). Recent works attempt to scale these methods to LLMs (Yu et al. 2022; Sinha et al. 2025). However, despite its theoretical robustness, DP often incurs a substantial "utility tax", where the injection of noise inevitably compromises the model’s capabilities. Complementing these preventative strategies, machine unlearning has emerged as a post-hoc remediation technique, particularly to comply with regulations like the "Right to be Forgotten" (Jang et al. 2023; Liu et al. 2024a, 2025b). The objective is to erase the influence of specific sensitive samples from a trained model without retraining. While promising, it faces the challenge of catastrophic forgetting, where the removal of specific knowledge inadvertently degrades the model’s general capabilities (Yao, Xu, and Liu 2024; Xu et al. 2025). 
+
+Privacy Protection in User-LLM Interactions. In contrast to training-side defenses, inference-phase protection focuses on safeguarding user input from third-party providers. Early attempts addressed this via representation perturbation or formal privacy mechanisms. Techniques such as adding noise to input embeddings (Feyisetan et al. 2020; Plant, Gkatzia, and Giuffrida 2021; Meehan, Mrini, and Chaudhuri 2022; Du et al. 2023) or employing differentially private decoding (Majmudar et al. 2022; Zhang et al. 2024; Zeng et al. 2025) aim to render inputs unreadable to humans or statistically secure. However, these methods face significant practical hurdles. Embedding-based approaches are incompatible with widespread text-only commercial APIs and remain vulnerable to inversion attacks (Song and Raghunathan 2020). Similarly, applying DP noise directly to text generation often disrupts semantic integrity, rendering prompts unintelligible to the downstream model and severely degrading task performance. Consequently, research shifts toward direct text-level san-itization. While standard rule-based or NER methods are computationally efficient, their context-agnostic nature often necessitates the removal of task-relevant details, leading to util-ity collapse (Microsoft 2025; Lison et al. 2021). To mitigate this, recent works leverage LLMs for more flexible protection. Approaches range from reformulating out-of-context informa-tion (Ngong et al. 2025) to dynamically adjusting sanitization strength based on leakage risk (Shen et al. 2024). Other strate-gies explore architectural or cryptographic solutions, such as delegating inference between local and remote models (Li et al. 2025) or employing format-preserving encryption for sensitive tokens (Chowdhury et al. 2025). Although superior to rigid rules, these methods often rely on static heuristics. Crucially, they overlook the combinatorial Interplay of sen-sitive attributes and fail to strategically adapt sanitization actions to user intent. Consequently, this lack of granularity yields suboptimal privacy-utility trade-offs. 
+
+3 Deconstructing the Privacy-Utility Trade-off 
+
+3.1 Data Collection and Annotation 
+
+Rigorous empirical analysis requires a high-quality dataset consisting of user prompts annotated with their inherent sensitive statements. Our data collection pipeline integrates real-world distributions with retrieval-augmented synthesis to ensure both diversity and contextual depth. Real-world and Synthetic Data. We adopt the ShareGPT-X (DeSULT 2025), LMSYS-Chat-1M (Zheng et al. 2024) and WildChat (Zhao et al. 2024a) dataset to capture diverse real-world user intents. To ensure sufficient coverage of sensi-tive attributes, we augment this corpus with synthetic data. Specifically, we inject personal profiles from the Nemotron-Personas dataset (Meyer and Corneil 2025) into user queries without sensitive information, creating samples that are both semantically coherent and rich in sensitive details. 
+
+Annotation and Validation. We define a sensitive state-ment as a discrete textual unit (e.g., a clause) that reveals specific personal attributes. We implement an automated extraction pipeline using a large reasoning model (LRM) to identify these statements. To guarantee label quality, we enforce a rigorous verification protocol. Manual inspection of a random subset ( N = 200 ) yields an error rate of 2.5%, confirming the reliability of our automated pipeline. The final dataset comprises 9,757 samples (5,928 real-world and 3,829 synthetic). The supplementary material provides additional implementation details. 
+
+3.2 Experimental Setup 
+
+To empirically quantify the marginal utility of sanitization, we design a controlled experimental framework. Unlike prior black-box approaches, we structure our analysis to isolate the effects of user intent, sanitization strategy, and attribute inter-action. The following subsections detail the data taxonomy and evaluation metrics operationalizing these dimensions. 
+
+Data Selection and Taxonomy To investigate combina-torial interplay while eliminating information volume as a confounding factor, we construct a controlled subset, Dmulti .We filter for prompts containing a fixed number of sensitive statements (specifically, N = 5 ), yielding 384 high-density samples. This standardization ensures that observed utility variations are driven by intent and content semantics rather than the quantity of disclosed attributes. We employ gemini-2.5-flash (Gemini Team 2025) to annotate this subset along two orthogonal dimensions. As detailed in the supplementary material, we categorize prompts into six Intent Types , ranging from open-ended Creation & Ideation to constrained Task Execution . Simultaneously, we classify sensitive statements into seven Privacy Types 
+
+aligned with standard PII definitions. Figure 2 visualizes the distribution across these categories. 
+
+Evaluation Pipeline We design a pipeline to quantify the marginal utility shift ( ∆U ) resulting from privacy sanitization. The pipeline consists of two core components: a response generator and a utility evaluator. 
+
+Remote Model. We adopt gemini-2.5-flash (Gem-ini Team 2025) as the remote model to generate responses for original and sanitized prompts. To ensure reproducibility, we configure the decoding parameters to deterministic values with temperature=0 and max_tokens=8192 .
+
+Utility Metric. We leverage Skywork-Reward-V2-Llama-3.1-8B (Liu et al. 2025a) as the proxy for util-ity evaluation. Given a prompt and a response, the model assigns a scalar quality score R. We quantify the utility im-pact as the difference in reward scores between the sanitized response and the original response. 
+
+3.3 Context-Dependent Utility: The Interplay of User Intent and Sensitive Information 
+
+We investigate how the removal of specific sensitive statements differentially impacts utility across varying user intents. To address this, we conduct a fine-grained ablation study on the subset Dmulti . We perform an ablation operation on each sample to remove one target statement while preserving the remaining context. We employ gemini-2.5-flash 
+
+to execute this targeted removal following the instruction template provided in the supplementary material. We then generate responses for both original and sanitized prompts via the remote model. We quantify the utility impact as 
+
+∆R = Rsanitized − Roriginal . A negative value indicates performance degradation. Figure 3 visualizes the resulting utility sensitivity matrix. Based on the empirical evidence from Figure 3, we sum-marize three findings: 
+
+• Finding 1: Intent-Dictated Utility Sensitivity. User in-tents strictly dictate the functional value of sensitive context. In constraint-driven tasks, specific details define the solution space. Consequently, removing Social and Relational Infor-mation during Task Execution causes severe performance degradation ( ∆R = −14 .25 ). Conversely, logic-driven tasks often treat personal attributes as orthogonal noise. Notably, removing Health and Wellness data in Task Exe-cution yields a utility gain ( ∆R = +0 .19 ). This indicates that unrelated privacy leakage can distract the model from the core objective. 
+
+• Finding 2: Attribute-Specific Functional Roles. Sensi-tive attributes display distinct utility profiles rather than uniform importance. Social and Relational Information 
+
+exhibits high context sensitivity. It acts as a critical prereq-uisite for collaborative execution yet plays a negligible role in Personalized Interaction (∆R = −2.07 ). In contrast, 
+
+Health and Wellness data demonstrates high specificity. It is vital for establishing empathy in Personalized Interaction 
+
+(∆R = −5.78 ) but serves as distractor noise in Analysis & Reasoning (∆R = +0 .12 ). 
+
+• Finding 3: Functional Coupling vs. Informational Re-dundancy. The interaction between user intent and sensitive content dictates the optimal protection strategy. We observe functional coupling where privacy leakage is a prerequi-site for utility. This is evident in the strong dependency of Problem Solving on Financial Information . In contrast, informational redundancy occurs when sensitive attributes provide no marginal value. The positive reward shift upon removing Financial Information from Information Acquisi-tion (∆R = +0 .56 ) confirms that privacy preservation in such contexts incurs no utility cost. 
+
+3.4 Strategic Adaptation: The Efficacy of Removal versus Replacement 
+
+Removal serves as the standard baseline for sanitization. How-ever, it often fractures the semantic coherence of the prompt. ECharts - Pie Chart with Border Radius  
+
+> ion/output/pie-1.html 1/1
+
+(a) Intent Type 2026/1/6 18:37 ECharts - Pie Chart with Border Radius   
+
+> fi le:///Users/zhliu/work/privacy/privacy/visualization/output/pie-2.html 1/1
+
+(b) Privacy Type Behavioral Financial Health Interests Demographics Professional Social                                       
+
+> Privacy Type
+> Reasoning Creation Knowledge Interaction Problem Solving Task Execution
+> Intent Type
+> 77 24 30 232 58 70 39 66 12 7153 32 77 28 40 812 50 16 23 16 26 920 99 36 29 31 153 45 13 95 35 77 17 26 5662 15 45 6
+> 050 100 150 200 Sample Count
+
+(c) Joint Distribution 
+
+Figure 2: Dataset statistics illustrating the marginal and joint distributions of intent types and privacy types. Behavioral Financial Health Interests Demographics Professional Social                                     
+
+> Privacy Type
+> Reasoning Creation Knowledge Interaction Problem Solving Task Execution
+> Intent Type
+> -2.72 -3.35 0.12 -1.83 -2.37 -3.45 0.16 -2.49 -0.61 -4.54 -2.28 -4.67 -2.07 -2.88 -2.91 0.56 -3.90 -0.54 -0.47 -1.60 -0.58 -1.16 -1.12 -5.78 -1.55 -2.07 -3.38 -2.08 -4.46 -7.32 -0.66 -2.28 -4.14 -2.70 -3.74 -5.46 -0.60 0.19 -5.97 -1.11 -3.87 -14.25
+> −14 −12 −10 −8 −6 −4 −2 0Marginal Utility Shift ( ΔR)
+
+Figure 3: The utility sensitivity matrix quantifying the impact of removing sensitive information across different user intents. To address this, we evaluate a Replacement strategy, which substitutes sensitive attributes with synthetic placeholders using the supplementary template, and visualize the resulting utility impact in Figure 4a. To rigorously compare the relative efficacy of these two approaches, we define the strategic differential as D = ∆ Rremove − ∆Rreplace . The distribution of this differential is presented in Figure 4b, where positive values (blue regions) indicate that removal preserves more utility, while negative values (red regions) favor replacement. Our comparative analysis reveals two distinct patterns driven by the functional role of the information: 
+
+• Finding 1: Factual Integrity and the Risk of False Premises. For tasks grounded in objective execution, accu-racy is paramount. In these scenarios, providing a fabricated value via replacement is significantly more damaging than omitting the data through removal. We observe that syn-thetic placeholders often function as false premises, caus-ing the model to hallucinate solutions based on incorrect pathologies or constraints. This is evident in the interaction between Task Execution and Health Information , where the strategic differential peaks at D = +14 .04 . Consequently, for logic-driven tasks, silence is superior to noise. 
+
+• Finding 2: Structural Coherence and Narrative An-choring. Conversely, replacement strategy demonstrates a comparative advantage when the user seeks structural guidance or empathy rather than factual precision. In these contexts, sensitive statements act as conversational anchors that maintain the dialogue flow. For instance, in Personal-ized Interaction , replacing Health data allows the model to preserve an empathetic tone, thereby outperforming re-moval ( D = −1.64 ). Similarly, in Problem Solving , using a dummy Financial figure ( D = −1.33 ) enables the model to demonstrate a correct calculation process. In such cases, the structural validity of the response outweighs the factual accuracy of the input. 
+
+3.5 Combinatorial Interplay: The Synergy and Antagonism of Sensitive Information 
+
+Sensitive statements rarely function in isolation; rather, they work in an interconnected manner where one attribute affects the utility of another. To measure these interactions, we con-duct pairwise removals on Dmulti using the prompt template provided in the supplementary material. For every pair of sensitive statements (A, B ), we remove both simultaneously and measure the utility shift ∆R(A, B ). We define the inter-action score ( IA,B ) as the difference between the joint impact and the sum of individual impacts: 
+
+IA,B = ∆ R(A, B ) − (∆ R(A) + ∆ R(B)) (1) A negative score ( I < 0) indicates synergy, where removing both attributes together causes a utility drop significantly larger than the sum of removing them individually. Conversely, a positive score ( I > 0) indicates antagonism, implying that the attributes are redundant and provide overlapping information. We visualize the global distribution of these effects in Figure 5; the supplementary material provides the user-intent breakdown. Behavioral Financial Health Interests Demographics Professional Social                                      
+
+> Privacy Type
+> Reasoning Creation Knowledge Interaction Problem Solving Task Execution
+> Intent Type
+> -4.35 -5.89 -1.60 -6.29 -3.81 -7.39 -6.51 -3.18 -0.47 -4.20 -4.51 -6.23 -3.44 -8.04 -3.84 0.64 -2.73 -1.38 -4.68 -3.70 -4.94 -7.50 -4.22 -4.14 -4.38 -1.96 -1.98 -1.06 -4.40 -5.99 -0.72 -3.13 -2.78 -3.52 -3.56 -6.53 -2.92 -13.85 -9.58 -7.34 -5.16 -19.06 −17.5 −15.0 −12.5 −10.0 −7.5 −5.0 −2.5 0.0 Marginal Utility Shift ( ΔR)
+
+(a) Impact of Replacement Strategy Behavioral Financial Health Interests Demographics Professional Social                                      
+
+> Privacy Type
+> Reasoning Creation Knowledge Interaction Problem Solving Task Execution
+> Intent Type
+> 1.63 2.54 1.72 4.45 1.44 3.94 6.66 0.69 -0.14 -0.34 2.23 1.55 1.37 5.16 0.93 -0.08 -1.17 0.84 4.21 2.10 4.35 6.33 3.10 -1.64 2.83 -0.11 -1.40 -1.02 -0.06 -1.33 0.06 0.86 -1.36 0.82 -0.18 1.06 2.32 14.04 3.61 6.23 1.29 4.81
+> −10 −5 0510 Difference (Remove - Replace)
+
+(b) Strategic Differential 
+
+Figure 4: Comparative utility analysis of sanitization strategies: (a) Quantifies the marginal utility shift caused by substituting sensitive attributes with synthetic placeholders. (b) Visualizes the strategic differential, where positive values (blue) indicate removal preserves more utility, while negative values (red) favor replacement. Behavioral Financial Health Interests Demographics Professional Social                                         
+
+> Privacy Type 2
+> Behavioral Financial Health Interests Demographics Professional Social
+> Privacy Type 1
+> -0.36 -4.12 -3.50 -0.08 0.65 0.45 4.14 -4.12 3.69 -5.82 -2.19 3.47 -3.88 -3.50 -6.05 -2.93 0.27 0.03 2.31 -0.08 -5.82 -2.93 -1.46 0.49 -1.71 0.81 0.65 -2.19 0.27 0.49 -0.82 2.59 -1.09 0.45 3.47 0.03 -1.71 2.59 1.14 -4.72 4.14 -3.88 2.31 0.81 -1.09 -4.72 -0.47
+> −6 −4 −2 0246Average Synergy Score (>0: Antagonism, <0: Synergy)
+
+Figure 5: The global interaction matrix illustrating the combi-natorial interplay of sensitive statements. Blank cells indicate no available data for that privacy type pair. Our analysis yields three findings: 
+
+• Finding 1: Narrative Cohesion Drives Synergy. Strong synergistic effects emerge when two statements are logically interlinked to construct a coherent user story. As evidenced by the deep blue regions in the global heatmap, we observe significant synergy between Health and Wellness and Inter-ests, Beliefs, and Opinions (I = −6.05 ). These pairs often establish a causal link, such as a health condition motivat-ing a specific lifestyle change. Consequently, severing both links destroys the causal chain, leaving the model with no basis to infer the user’s underlying motivation. 
+
+• Finding 2: Informational Redundancy Drives Antago-nism. Conversely, antagonistic effects appear when state-ments provide overlapping signals. In the global view, 
+
+Behavioral Data and Social Information exhibit high an-tagonism ( I = +4 .14 ). For example, a social status like "Student" inherently implies behavioral patterns such as "Studying," rendering the explicit statement of behavior redundant. In this case, removing only one attribute fails to protect privacy, as the model can reconstruct the missing context from its counterpart. 
+
+• Finding 3: User Intent Dictates Interaction Patterns. 
+
+The nature of interaction is strictly determined by user intent rather than being inherent to the data categories. In 
+
+Task Execution , we observe extreme antagonism where eliminating both Social Information and Interests yields a peak score of I = +47 .8. This confirms that simulta-neously removing unrelated noise significantly amplifies model focus. Distinctly, Personalized Support demonstrates a selective anchoring effect, where the presence of critical 
+
+Health context renders Professional Background function-ally redundant ( I = +28 .2). 
+
+4 Framework Implementation and Evaluation 
+
+Section 3 established three key insights regarding the privacy-utility trade-off: context-dependent utility, strategic adapta-tion, and combinatorial interplay. Existing methods relying on static rules cannot address these complexities. In this section, we propose an Intent-Driven Local Protection Framework that directly applies these insights. Instead of using rigid heuristics, we formulate our empirical findings into explicit reasoning instructions. Through knowledge distillation, we embed this logic into a lightweight local model, teaching it to evaluate data sensitivity based on user intent. This en-ables the framework to execute a precise three-stage pipeline: Extraction, Sanitization, and Restoration. 
+
+4.1 Architecture Design 
+
+The inference workflow of our framework consists of three sequential modules. 
+
+Stage 1: Sensitive Information Extraction. Given a user prompt P , the local model first identifies and extracts the set of sensitive statements S = {s1, s 2, . . . , s n}. This process re-quires precise entity recognition and contextual understanding to capture both explicit PII and implicit attribute disclosure. 
+
+Stage 2: Strategic Planning and Sanitization. This mod-ule constitutes the core decision-making engine. Guided by the principles derived in Section 3, the model evaluates each statement si ∈ S based on the user’s intent and the privacy category. It generates a protection plan π that assigns an action ai ∈ { Keep , Remove , Replace } to each statement. Simultaneously, the model executes this plan to transform the original prompt P into a sanitized version P ′.
+
+P ′, π = Mlocal (P, S) (2) Crucially, the decision logic accounts for the interaction effects between statements. The model removes antagonistic pairs to prevent redundancy leakage and preserves synergistic pairs when necessary for task utility. 
+
+Stage 3: Response Restoration. The sanitized prompt P ′
+
+is transmitted to the untrusted remote model, which returns a generic response R′. To ensure the final output remains personalized and relevant, our local model performs a post-processing step. It utilizes the stored plan π and the original sensitive statements S to re-inject necessary context into R′.
+
+Rfinal = Mlocal (R′, π, S) (3) This ensures that the user receives a high-utility response without ever exposing raw sensitive data to the remote server. 
+
+4.2 Model Distillation 
+
+To enable a lightweight local model to perform these complex reasoning tasks, we employ knowledge distillation. We lever-age Deepseek-V4-Flash (DeepSeek-AI 2026) as the teacher to synthesize high-quality training data, and fine-tune a compact Qwen3-4B (Qwen Team 2025) student model. We refer to the resulting privacy-specialized student model as Veilmind-4B . The training data synthesis covers three aspects: 
+
+Synthesis 1: Reasoning-Enhanced Extraction. Although our dataset from Section 3.1 already contains prompt-statement pairs (P, S), direct supervision is insufficient for handling ambiguous cases. We prompt the teacher model to generate a detailed reasoning chain that explains why specific segments are classified as sensitive. This helps the student model learn the criteria for sensitivity detection. The prompt template is provided in the supplementary material. 
+
+Synthesis 2: Sanitization. Users exhibit varying tolerances for the privacy-utility trade-off. To accommodate this, we introduce two distinct operating modes: 
+
+• Utility Priority Mode: The model prioritizes task per-formance. It retains sensitive information if it serves as a critical constraint (e.g., financial data in problem-solving). The corresponding prompt template is provided in the supplementary material. 
+
+• Privacy Priority Mode: The model minimizes leakage. It aggressively sanitizes information unless it renders the prompt incoherent. The corresponding prompt template is provided in the supplementary material. We instruct the teacher model to simulate both perspectives. For each prompt, we generate reasoning traces and revised prompts under both modes. This exposes the student model to the decision boundaries of different protection strategies. 
+
+Synthesis 3: Restoration. Finally, we synthesize the restora-tion phase. We feed the teacher model the sanitized prompt 
+
+P ′, the execution plan π, and the remote response R′. The teacher generates a restored response Rfinal that seamlessly integrates the withheld information. The restoration template is provided in the supplementary material. 
+
+4.3 Evaluation 
+
+We evaluate our framework on Uprise, the manually veri-fied subset of our dataset Uprise ( N = 200 ) described in Section 3.1. We additionally evaluate our framework on Pupa-tnb (Li et al. 2025), a benchmark of real-world user queries containing personally identifiable information (PII), the re-sults of which are provided in the supplementary material. 
+
+Baselines. We benchmark against two representative meth-ods. Papillon (Li et al. 2025) employs a multi-stage delegation framework where a local proxy synthesizes sanitized queries and aggregates responses. We evaluate its zero-shot Base 
+
+variant and the DSPy-tuned Optimized variant (Khattab et al. 2023). PUFT (Ngong et al. 2025) utilizes Contextual Integrity to reformulate prompts by retaining only task-essential details. We examine both its Static variant relying on predefined attribute lists and the Dynamic variant that adapts to specific interaction contexts. 
+
+Metrics. We employ Deepseek-V4-Flash (DeepSeek-AI 2026) as an impartial judge to compute two core metrics. For Utility Score , we adopt a pairwise comparison approach, reporting the win/tie rate where the sanitized response is deemed comparable to or better than the original. For Privacy Score , we quantify leakage by calculating the retention rate of sensitive statements in the revised prompt, where a lower score indicates stronger protection. 
+
+Main Results. Figure 6 illustrates the superior privacy-utility trade-off achieved by our framework. In Privacy Prior-ity Mode , our method achieves a significantly higher utility score while maintaining only a slightly higher privacy score than Papillon Optimized, and outperforms other baselines in both privacy and utility, validating the efficacy of adaptive sanitization driven by user intent. Conversely, the Utility Pri-ority Mode preserves critical constraints to yield exceptional Model Extraction Success Rate Privacy-Mode Sanitization Utility-Mode Sanitization Restoration Utility Gain Remove Replace Keep Remove Replace Keep 
+
+Qwen3-4B 52.4 54.5 37.4 8.1 34.7 40.8 24.5 +3.5 Veilmind-4B 72.7 33.6 48.6 17.9 11.8 25.4 62.8 +7.0 DeepSeek-V4-Flash 77.4 41.0 36.3 22.8 10.0 27.6 62.5 +10.0 
+
+Table 1: Strategy-level effect of fine-tuning on privacy extraction, sanitization action, and restoration. All values are percentages. Privacy Score (Lower is better)       
+
+> Utility Score (higher is better)
+> 30% 40% 50% 60% 70% 80%
+> 20%
+> 30%
+> 40%
+> 50%
+> 60%
+> 70%
+> 80%
+> 90%
+> Privacy Policy
+> Utility Policy
+> Privacy Policy
+> Utility Policy
+> Dynamic
+> Static
+> Base
+> Optimized Veilmind-4B
+> Qwen3-4B
+> PUFT
+> Papillon
+
+Figure 6: The privacy-utility trade-off comparison on Uprise. response quality. These results confirm that our framework not only advances the Pareto frontier but also provides users with flexible control to balance protection requirements against task performance. 
+
+Impact of Model Distillation. To assess the necessity of fine-tuning, we directly apply our three-stage framework to the base Qwen3-4B model. The main results show that the base model is weaker than Veilmind-4B , but still outperforms PUFT and Papillon, indicating that the extraction-sanitization-restoration design is effective even before distillation. Fine-tuning further turns this strong initialization into a state-of-the-art privacy-utility trade-off: on Uprise, utility-mode utility improves from 75.5% to 86.8%, while privacy-mode leakage decreases from 52.6% to 40.5%. Table 1 explains this gain at the strategy level. First, privacy extraction coverage increases from 52.4% to 72.7%, approaching DeepSeek-V4-Flash 
+
+model at 77.4%. Second, fine-tuning makes sanitization less deletion-heavy and more discriminative. In Privacy Prior-ity Mode, the removal rate drops from 54.5% to 33.6%, while replacement becomes the dominant action at 48.6%; in Utility Priority Mode, the keep rate rises from 24.5% to 62.8%, preserving more low-risk information that supports answer quality. Third, restoration also improves, with the utility gain increasing from +3.5% to +7.0%. These changes suggest that fine-tuning transfers the handling strategy of 
+
+Model No Extraction Privacy ↓ Utility ↑
+
+w/o Extract 81 71.6% (+19.0) 82.00% (+16.5) w/o Sani. Guide 26 60.7% (+8.1) 71.5% (+6.0) w/o Restore 30 52.6% (+0.0) 62.0% (-3.5) Qwen3-4B 30 52.6% 65.5% 
+
+Table 2: Ablation study of the three-stage framework. No Extraction counts prompts for which the model outputs no extracted privacy item. 
+
+DeepSeek-V4-Flash to the Qwen3-4B model, yielding stronger extraction, more balanced sanitization, and more effective utility recovery. 
+
+Stage Ablation. Table 2 validates the necessity of the Extraction, Sanitization, and Restore stages on Qwen3-4B 
+
+model. Sanitization without Extraction causes the largest privacy degradation: leakage increases from 52.6% to 71.6%, while the number of prompts with no privacy extracted rises from 30 to 81. The higher utility of this variant therefore reflects insufficient privacy identification before Sanitization rather than a better privacy-utility trade-off. Removing the Sanitization Guideline also weakens protection, increasing leakage to 60.7%, which shows that extracted privacy items must be converted into reliable removal or replacement deci-sions. Finally, removing Restoration leaves privacy unchanged but reduces utility to 62.0%, isolating the role of Restore in recovering answer quality after sanitization. Together, these ablations show that Extraction provides privacy coverage, San-itization controls leakage through concrete edit decisions, and Restore recovers utility without increasing privacy exposure. 
+
+5 Conclusion 
+
+In this paper, we investigate the trade-off between privacy and utility in LLM interactions. Our analysis indicates that the marginal utility of sensitive information is highly context-dependent. It relies on specific user intents and the combi-natorial interplay of privacy attributes. We demonstrate that optimal sanitization requires adaptive strategies. Guided by these insights, we propose a local framework that dynamically adjusts sanitization strategies via a distill-and-deploy pipeline. Experiments demonstrate that our approach effectively bal-ances privacy protection with response quality compared to static baselines. Future work will extend this intent-centric paradigm to multi-turn interactions, where user goals and pri-vacy boundaries evolve progressively across the conversation history. References 
+
+Abadi, M.; Chu, A.; Goodfellow, I.; McMahan, H. B.; Mironov, I.; Talwar, K.; and Zhang, L. 2016. Deep learn-ing with differential privacy. In Proceedings of the 2016 ACM SIGSAC conference on computer and communications security , 308–318. Brown, T. B.; Mann, B.; Ryder, N.; Subbiah, M.; Kaplan, J.; Dhariwal, P.; Neelakantan, A.; Shyam, P.; Sastry, G.; Askell, A.; Agarwal, S.; Herbert-Voss, A.; Krueger, G.; Henighan, T.; Child, R.; Ramesh, A.; Ziegler, D. M.; Wu, J.; Winter, C.; Hesse, C.; Chen, M.; Sigler, E.; Litwin, M.; Gray, S.; Chess, B.; Clark, J.; Berner, C.; McCandlish, S.; Radford, A.; Sutskever, I.; and Amodei, D. 2020. Language Models are Few-Shot Learners. arXiv:2005.14165. Carlini, N.; Tramer, F.; Wallace, E.; Jagielski, M.; Herbert-Voss, A.; Lee, K.; Roberts, A.; Brown, T.; Song, D.; Erlingsson, U.; Oprea, A.; and Raffel, C. 2021. Extracting Training Data from Large Language Models. arXiv:2012.07805. Chen, Y.; Li, T.; Liu, H.; and Yu, Y. 2023. Hide and seek (has): A lightweight framework for prompt privacy protection. 
+
+arXiv preprint arXiv:2309.03057 .Chowdhury, A. R.; Glukhov, D.; Anshumaan, D.; Chalasani, P.; Papernot, N.; Jha, S.; and Bellare, M. 2025. Pr ϵϵ mpt: Sanitizing Sensitive Prompts for LLMs. arXiv:2504.05147. DeepSeek-AI. 2026. DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence. DeSULT. 2025. ShareGPT-X. Du, M.; Yue, X.; Chow, S. S.; and Sun, H. 2023. Sanitizing sentence embeddings (and labels) for local differential privacy. In Proceedings of the ACM Web Conference 2023 , 2349–2359. Edemacu, K.; and Wu, X. 2025. Privacy preserving prompt engineering: A survey. ACM Computing Surveys , 57(10): 1–36. Feyisetan, O.; Balle, B.; Drake, T.; and Diethe, T. 2020. Privacy-and utility-preserving textual analysis via calibrated multivariate perturbations. In Proceedings of the 13th interna-tional conference on web search and data mining , 178–186. Gemini Team. 2025. Gemini 2.5: Pushing the Frontier with Advanced Reasoning, Multimodality, Long Context, and Next Generation Agentic Capabilities. arXiv:2507.06261. Jang, J.; Yoon, D.; Yang, S.; Cha, S.; Lee, M.; Logeswaran, L.; and Seo, M. 2023. Knowledge unlearning for mitigating privacy risks in language models. In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 14389–14408. Kandpal, N.; Wallace, E.; and Raffel, C. 2022. Deduplicating training data mitigates privacy risks in language models. In International Conference on Machine Learning , 10697– 10707. PMLR. Khattab, O.; Singhvi, A.; Maheshwari, P.; Zhang, Z.; San-thanam, K.; Vardhamanan, S.; Haq, S.; Sharma, A.; Joshi, T. T.; Moazam, H.; Miller, H.; Zaharia, M.; and Potts, C. 2023. DSPy: Compiling Declarative Language Model Calls into Self-Improving Pipelines. arXiv:2310.03714. Li, S.; Raghuram, V. C.; Khattab, O.; Hirschberg, J.; and Yu, Z. 2025. Papillon: Privacy preservation from internet-based and local language model ensembles. In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) , 3371–3390. Li, X.; Tramer, F.; Liang, P.; and Hashimoto, T. 2021. Large language models can be strong differentially private learners. 
+
+arXiv preprint arXiv:2110.05679 .Lison, P.; Pilán, I.; Sanchez, D.; Batet, M.; and Øvrelid, L. 2021. Anonymisation models for text data: State of the art, challenges and future directions. In Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Language Processing (Volume 1: Long Papers) , 4188– 4203. Liu, C. Y.; Zeng, L.; Xiao, Y.; He, J.; Liu, J.; Wang, C.; Yan, R.; Shen, W.; Zhang, F.; Xu, J.; Liu, Y.; and Zhou, Y. 2025a. Skywork-Reward-V2: Scaling Preference Data Curation via Human-AI Synergy. arXiv preprint arXiv:2507.01352 .Liu, S.; Yao, Y.; Jia, J.; Casper, S.; Baracaldo, N.; Hase, P.; Yao, Y.; Liu, C. Y.; Xu, X.; Li, H.; Varshney, K. R.; Bansal, M.; Koyejo, S.; and Liu, Y. 2024a. Rethinking Machine Unlearning for Large Language Models. arXiv:2402.08787. Liu, Z.; Zhu, T.; Tan, C.; and Chen, W. 2025b. Learning to refuse: Towards mitigating privacy risks in llms. In Proceed-ings of the 31st International Conference on Computational Linguistics , 1683–1698. Liu, Z.; Zhu, T.; Tan, C.; Liu, B.; Lu, H.; and Chen, W. 2024b. Probing language models for pre-training data detection. In 
+
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,1576–1587. Lukas, N.; Salem, A.; Sim, R.; Tople, S.; Wutschitz, L.; and Zanella-Béguelin, S. 2023. Analyzing leakage of personally identifiable information in language models. In 2023 IEEE Symposium on Security and Privacy (SP) , 346–363. IEEE. Majmudar, J.; Dupuy, C.; Peris, C.; Smaili, S.; Gupta, R.; and Zemel, R. 2022. Differentially private decoding in large language models. arXiv preprint arXiv:2205.13621 .Meehan, C.; Mrini, K.; and Chaudhuri, K. 2022. Sentence-level Privacy for Document Embeddings. In Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 3367–3380. Meyer, Y.; and Corneil, D. 2025. Nemotron-Personas-USA: Synthetic Personas Aligned to Real-World Distributions. Microsoft. 2025. Home - Microsoft Presidio. Mireshghallah, N.; Kim, H.; Zhou, X.; Tsvetkov, Y.; Sap, M.; Shokri, R.; and Choi, Y. 2024. Can llms keep a secret? testing privacy implications of language models via contextual integrity theory. In International Conference on Learning Representations , volume 2024, 1892–1915. Neel, S.; and Chang, P. 2023. Privacy issues in large language models: A survey. arXiv preprint arXiv:2312.06717 .Ngong, I. C.; Kadhe, S. R.; Wang, H.; Murugesan, K.; Weisz, J. D.; Dhurandhar, A.; and Ramamurthy, K. N. 2025. Protect-ing users from themselves: Safeguarding contextual privacy in interactions with conversational agents. In Findings of the Association for Computational Linguistics: ACL 2025 ,26196–26220. Nissenbaum, H. 2004. Privacy as contextual integrity. Wash. L. Rev. , 79: 119. Nissenbaum, H. 2009. Privacy in context: Technology, policy, and the integrity of social life. In Privacy in context . Stanford University Press. Ouyang, L.; Wu, J.; Jiang, X.; Almeida, D.; Wainwright, C. L.; Mishkin, P.; Zhang, C.; Agarwal, S.; Slama, K.; Ray, A.; Schulman, J.; Hilton, J.; Kelton, F.; Miller, L.; Simens, M.; Askell, A.; Welinder, P.; Christiano, P.; Leike, J.; and Lowe, R. 2022. Training language models to follow instructions with human feedback. arXiv:2203.02155. Plant, R.; Gkatzia, D.; and Giuffrida, V. 2021. CAPE: Context-Aware Private Embeddings for Private Language Learning. In Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing , 7970–7978. Qwen Team. 2025. Qwen3 Technical Report. arXiv:2505.09388. Salemi, A.; Mysore, S.; Bendersky, M.; and Zamani, H. 2024. Lamp: When large language models meet personalization. In 
+
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,7370–7392. Shen, Z.; Xi, Z.; He, Y.; Tong, W.; Hua, J.; and Zhong, S. 2024. The fire thief is also the keeper: Balancing usability and privacy in prompts. arXiv preprint arXiv:2406.14318 .Sinha, A.; Mesnard, T.; McKenna, R.; Liu, D.; Choquette-Choo, C. A.; Huang, Y.; Yu, D.; Kaissis, G.; Charles, Z.; Liu, R.; Chua, L.; Kamath, P.; Manurangsi, P.; He, S.; Zhang, C.; Ghazi, B.; Pigem, B. D. B.; Eruvbetine, P.; Warkentin, T.; Joulin, A.; and Kumar, R. 2025. VaultGemma: A Differentially Private Gemma Model. arXiv:2510.15001. Song, C.; and Raghunathan, A. 2020. Information leakage in embedding models. In Proceedings of the 2020 ACM SIGSAC conference on computer and communications security , 377– 390. Staab, R.; Vero, M.; Balunović, M.; and Vechev, M. 2023. Beyond memorization: Violating privacy via inference with large language models. arXiv preprint arXiv:2310.07298 .Wang, B.; Chen, W.; Pei, H.; Xie, C.; Kang, M.; Zhang, C.; Xu, C.; Xiong, Z.; Dutta, R.; Schaeffer, R.; Truong, S. T.; Arora, S.; Mazeika, M.; Hendrycks, D.; Lin, Z.; Cheng, Y.; Koyejo, S.; Song, D.; and Li, B. 2024. DecodingTrust: A Comprehensive Assessment of Trustworthiness in GPT Models. arXiv:2306.11698. Wei, J.; Wang, X.; Schuurmans, D.; Bosma, M.; Ichter, B.; Xia, F.; Chi, E.; Le, Q.; and Zhou, D. 2023. Chain-of-Thought Prompting Elicits Reasoning in Large Language Models. arXiv:2201.11903. Xi, Z.; Chen, W.; Guo, X.; He, W.; Ding, Y.; Hong, B.; Zhang, M.; Wang, J.; Jin, S.; Zhou, E.; Zheng, R.; Fan, X.; Wang, X.; Xiong, L.; Zhou, Y.; Wang, W.; Jiang, C.; Zou, Y.; Liu, X.; Yin, Z.; Dou, S.; Weng, R.; Cheng, W.; Zhang, Q.; Qin, W.; Zheng, Y.; Qiu, X.; Huang, X.; and Gui, T. 2023. The Rise and Potential of Large Language Model Based Agents: A Survey. arXiv:2309.07864. Xu, X.; Du, M.; Ye, Q.; and Hu, H. 2025. OBLIVIATE: Robust and Practical Machine Unlearning for Large Language Models. arXiv preprint arXiv:2505.04416 .Yao, Y.; Xu, X.; and Liu, Y. 2024. Large language model unlearning. Advances in Neural Information Processing Systems , 37: 105425–105475. Yu, D.; Naik, S.; Backurs, A.; Gopi, S.; Inan, H. A.; Kamath, G.; Kulkarni, J.; Lee, Y. T.; Manoel, A.; Wutschitz, L.; Yekhanin, S.; and Zhang, H. 2022. Differentially Private Fine-tuning of Language Models. arXiv:2110.06500. Zeng, Z.; Wang, J.; Yang, J.; Lu, Z.; Li, H.; Zhuang, H.; and Chen, C. 2025. Privacyrestore: Privacy-preserving inference in large language models via privacy removal and restoration. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,10821–10855. Zhang, X.; Xu, H.; Ba, Z.; Wang, Z.; Hong, Y.; Liu, J.; Qin, Z.; and Ren, K. 2024. Privacyasst: Safeguarding user privacy in tool-using large language model agents. IEEE Transactions on Dependable and Secure Computing , 21(6): 5242–5258. Zhang, Y.; Li, M.; Long, D.; Zhang, X.; Lin, H.; Yang, B.; Xie, P.; Yang, A.; Liu, D.; Lin, J.; Huang, F.; and Zhou, J. 2025. Qwen3 Embedding: Advancing Text Embedding and Reranking Through Foundation Models. arXiv preprint arXiv:2506.05176 .Zhao, W.; Ren, X.; Hessel, J.; Cardie, C.; Choi, Y.; and Deng, Y. 2024a. Wildchat: 1m chatgpt interaction logs in the wild. 
+
+arXiv preprint arXiv:2405.01470 .Zhao, Y.; Huang, J.; Hu, J.; Wang, X.; Mao, Y.; Zhang, D.; Jiang, Z.; Wu, Z.; Ai, B.; Wang, A.; Zhou, W.; and Chen, Y. 2024b. SWIFT:A Scalable lightWeight Infrastructure for Fine-Tuning. arXiv:2408.05517. Zheng, L.; Chiang, W.-L.; Sheng, Y.; Li, T.; Zhuang, S.; Wu, Z.; Zhuang, Y.; Li, Z.; Lin, Z.; Xing, E. P.; Gonzalez, J. E.; Sto-ica, I.; and Zhang, H. 2024. LMSYS-Chat-1M: A Large-Scale Real-World LLM Conversation Dataset. arXiv:2309.11998. 
+
+A Data Collection Details 
+
+This appendix provides the implementation details for the data collection and annotation pipeline. 
+
+A.1 Real-world Data Filtering 
+
+We sourced real-world prompts from three public dia-logue corpora: ShareGPT-X (DeSULT 2025), LMSYS-Chat-1M (Zheng et al. 2024), and WildChat (Zhao et al. 2024a). The data synthesis code normalizes the user-turn fields across these sources and filters the resulting prompt pool by lan-guage, length, and duplication. Specifically, we applied the following criteria: • Language: Retained prompts whose dataset-level lan-guage tags fall into the configured multilingual allowlist. During balanced collection, prompts are grouped into En-glish, Chinese, and Other with a target ratio of 60:20:20. 
+
+• Length constraints: Restricted the token length L of user prompts to the range 16 < L < 4096 , and bucketed the retained prompts into four ranges: L < 64 , 64 ≤ L < 256 ,
+
+256 ≤ L < 1024 , and L ≥ 1024 .
+
+• Quota-aware balancing: Deduplicated exact prompt text and then balanced sampling by source, language group, length bucket, and domain bucket. When a language-domain bucket exceeded its quota, we applied stride-based weighted subsampling rather than simply truncating the earliest examples, which limits overrepresented buckets while preserving diversity. This filtering process yielded an initial corpus of 61,275 candidate prompts. 
+
+A.2 Synthetic Data Generation Pipeline 
+
+To enhance the diversity and scale of the dataset, we employ a multi-stage injection pipeline: 
+
+Persona Retrieval. We utilize Qwen3-Embedding-8B 
+
+(Zhang et al. 2025) to encode both candidate prompts and personas from the Nemotron-Personas dataset (Meyer and Corneil 2025). For each prompt, we retrieve the top-8 can-didate personas based on cosine similarity and re-rank them using Qwen3-Reranker-8B (Zhang et al. 2025) to select the single most contextually relevant persona. 
+
+Suitability Assessment. Not all prompts are suit-able for privacy injection. We utilize Deepseek-V4-Flash (DeepSeek-AI 2026) to score the injection suitability of each prompt on a scale of 1 to 5, employing the instruction template provided in Table 8. Only candidates with a score 
+
+≥ 3 were selected for processing. 
+
+Injection and Extraction. The selected persona was injected into the prompt using the instruction template shown in Table 9. Subsequently, we employed Deepseek-V4-Flash (DeepSeek-AI 2026) to extract the lists of sen-sitive statements I from both real and synthetic prompts, following the extraction criteria detailed in Table 10. 
+
+A.3 Quality Assurance 
+
+To ensure quality, we implemented an double-check process where the model re-evaluates its extracted sensitive statements using the prompt presented in Table 11. From the final corpus, we reserved 200 manually validated samples as the benchmark for final evaluation, while the remaining samples are used for the empirical study. 
+
+B Taxonomy Definitions 
+
+Table 7 summarizes the taxonomy definitions used in our analysis. We categorize user requests into six intent types and sensitive attributes into seven privacy types. These categories provide the shared vocabulary for the distribution analysis, interaction analysis, and qualitative case studies.                   
+
+> Language Count Ratio
+> English 6,232 63.87% Chinese 1,691 17.33% Portuguese 367 3.76% Spanish 247 2.53% Russian 234 2.40% French 213 2.18% Other 773 7.92% Total 9,757 100.00%
+
+Table 3: Language composition of the prompt data used for distillation. All languages outside the top six are grouped as Other.                 
+
+> Intent Count Ratio
+> Creation 2,141 21.94% Problem Solving 2,005 20.55% Knowledge 1,922 19.70% Task Execution 1,716 17.59% Reasoning 1,083 11.10% Interaction 890 9.12% Total 9,757 100.00%
+
+Table 4: Intent composition of the prompt data used for distillation.                   
+
+> Privacy Type Count Ratio
+> Interests 14,043 26.21% Professional 13,083 24.42% Demographics 10,469 19.54% Behavioral 9,939 18.55% Social 3,106 5.80% Health 1,666 3.11% Financial 1,266 2.36% Total 53,572 100.00%
+
+Table 5: Privacy-type composition of the prompt data used for distillation. Ratios are computed over extracted claims. 
+
+C Experiment Details and Additional Results 
+
+C.1 Privacy-Attribute Interactions Across Intents 
+
+Figure 8 reports the synergy and antagonism patterns among privacy-attribute combinations under different user intents. The result shows that privacy interactions are task-dependent: the same pair of attributes can have different utility and leakage effects when the underlying intent changes. 
+
+C.2 Distillation Details 
+
+All distillation experiments were conducted on a single NVIDIA H200 GPU. We use Qwen3-4B as the backbone model and train Veilmind-4B with full-parameter super-vised fine-tuning through the ms-swift framework (Zhao et al. 2024b). The teacher annotations used for distillation are generated by Deepseek-V4-Flash , while the student model learns to perform privacy extraction, sanitization, and Method Uprise Pupa-tnb Utility (↑) Privacy (↓) Utility (↑) Privacy (↓)PUFT - Static 60.50 53.95 28.81 13.53 PUFT - Dynamic 48.00 42.40 25.00 6.10 Papillon - Base 17.50 40.63 27.12 10.00 Papillon - Optimized 24.00 32.31 24.89 2.75 Qwen3-4B - Privacy Priority 65.50 52.57 56.96 15.99 Qwen3-4B - Utility Priority 75.50 62.86 64.98 27.14 
+
+Veilmind-4B - Privacy Priority 66.00 40.50 58.05 14.76 Veilmind-4B - Utility Priority 87.00 72.78 77.12 49.14 
+
+Table 6: Detailed numerical results for privacy-utility trade-off comparison. All values are reported as percentages. Privacy Score (Lower is better)       
+
+> Utility Score (higher is better)
+> 010% 20% 30% 40% 50%
+> 20%
+> 30%
+> 40%
+> 50%
+> 60%
+> 70%
+> 80%
+> Privacy Policy
+> Utility Policy
+> Privacy Policy
+> Utility Policy
+> Dynamic
+> Static
+> Base
+> Optimized Veilmind-4B
+> Qwen3-4B
+> PUFT
+> Papillon
+
+Figure 7: Additional results on the Pupa-tnb benchmark. restoration locally. Tables 3, 4, and 5 summarize the language, intent, and privacy-type composition of the final prompts used for distillation. 
+
+C.3 Additional Benchmark Results 
+
+We evaluate on two benchmarks. Uprise contains privacy-sensitive real-world user requests for measuring the privacy-utility trade-off under user-facing interactions. Pupa-tnb pro-vides a complementary benchmark with privacy units and transformed prompts, allowing us to test whether the frame-work generalizes beyond the Uprise setting. Table 6 reports the overall numerical comparison on both datasets, and Figure 7 further visualizes the Pupa-tnb results. 
+
+D Case Study 
+
+We provide qualitative examples in Figure 9, 10, 11, and 12. These cases cover task execution, professional problem solv-ing, interaction, and financial problem solving. They illustrate how Veilmind-4B identifies sensitive statements, applies explicit remove or replace operations before remote inference, and restores task-relevant details when they are needed for utility. 
+
+E Prompt Templates 
+
+We provide the templates used throughout the data construc-tion, diagnostic analysis, and distillation pipeline. Tables 8, 9, 10, and 11 define synthetic privacy data construction and verification; Tables 12, 13, and 14 define analysis prompts for privacy-interaction studies; and Tables 15, 16, 17, 18, 19, and 20 define the framework prompts and guidelines used for distillation. Taxonomy Domain Category Description Abbreviation Intent Type 
+
+Information & Knowledge Acquisition Seeking factual answers or learning new concepts. Knowledge Creation & Ideation Generating content, brainstorming, creative writing, or drafting. Creation Problem Solving & Guidance Seeking solutions to specific problems or step-by-step guides. Problem Solving Analysis & Reasoning Requesting logical deduction, data interpretation, or critical analysis. Reasoning Personalized Interaction & Support Engaging in casual chat, role-play, or seeking emotional support. Interaction Task Execution & Collaboration Delegating specific actions, coding tasks, or formatting requests. Task Execution 
+
+Privacy Type 
+
+Personal Identifiers & Demographics PII such as names, addresses, IDs, phone numbers, and age. Demographics Professional & Educational Background Occupation, employer, university, degree, work history, and skills. Professional Financial Information Income level, assets, debts, transaction history, and credit status. Financial Health & Wellness Medical conditions, medications, fitness habits, and mental health status. Health Interests, Beliefs, & Opinions Hobbies, political views, religious beliefs, and lifestyle choices. Interests Behavioral & Activity Data Daily routines, travel patterns, purchasing habits, and digital footprint. Behavioral Social & Relational Information Family members, friends, colleagues, relationships, and connections. Social 
+
+Table 7: The taxonomy definitions used in our analysis. We categorize user prompts into six distinct intents and privacy attributes into seven categories. Behavioral Financial Health Interests Demographics Professional Social Behavioral Financial Health Interests Demographics Professional Social 
+
+1.0 -8.3 -4.8 -0.1 3.4 2.9 -2.3 -8.3 -6.4 -6.0 1.4 10.3 9.7 -4.8 -10.2 -9.5 -0.3 -6.3 -0.2 -0.1 -6.0 -9.5 -0.2 0.1 -0.6 -4.1 3.4 1.4 -0.3 0.1 -5.8 -0.1 -3.8 2.9 10.3 -6.3 -0.6 -0.1 2.7 -3.4 -2.3 9.7 -0.2 -4.1 -3.8 -3.4 -0.4 
+
+Reasoning 
+
+> Behavioral Financial Health Interests Demographics Professional Social
+
+Behavioral Financial Health Interests Demographics Professional Social 
+
+-1.8 -3.0 -0.4 0.3 2.8 -2.3 -3.6 -3.0 5.4 -1.8 -5.7 0.5 -1.7 -0.4 -14.2 3.5 -1.0 -4.8 4.6 0.3 -1.8 3.5 -2.8 0.1 -2.7 0.4 2.8 -5.7 -1.0 0.1 6.3 8.9 -10.3 -2.3 0.5 -4.8 -2.7 8.9 2.9 1.4 -3.6 -1.7 4.6 0.4 -10.3 1.4 4.0 
+
+Creation 
+
+> Behavioral Financial Health Interests Demographics Professional Social
+
+Behavioral Financial Health Interests Demographics Professional Social 
+
+-3.4 -17.2 -3.8 -5.5 -6.7 -6.6 -17.2 -5.8 -1.9 -6.6 -4.7 -8.6 -0.5 -3.0 2.1 -11.8 -1.5 -3.8 -1.9 -3.0 -1.5 -0.6 0.8 -1.7 -5.5 -6.6 2.1 -0.6 -2.0 0.2 -5.9 -6.7 -4.7 -11.8 0.8 0.2 -1.2 -32.0 -6.6 -8.6 -1.5 -1.7 -5.9 -32.0 -7.9 
+
+Knowledge 
+
+> Behavioral Financial Health Interests Demographics Professional Social
+
+Behavioral Financial Health Interests Demographics Professional Social 
+
+-5.3 -2.3 0.1 -0.2 -1.0 -5.5 8.2 -2.3 -5.8 -14.8 1.5 6.0 -3.4 0.1 1.5 -2.1 3.4 26.2 12.4 -0.2 -14.8 -2.1 -1.7 -0.7 -1.9 0.2 -1.0 1.5 3.4 -0.7 -0.4 2.3 -1.7 -5.5 6.0 26.2 -1.9 2.3 -3.2 -0.3 8.2 -3.4 12.4 0.2 -1.7 -0.3 1.1 
+
+Interaction 
+
+> Behavioral Financial Health Interests Demographics Professional Social
+
+Behavioral Financial Health Interests Demographics Professional Social 
+
+-0.1 -1.8 -14.6 -2.0 -1.1 3.7 -2.4 -1.8 8.2 -7.5 -3.6 -3.5 -12.1 -14.6 -11.4 2.4 -1.7 -8.7 -2.0 -7.5 2.4 -5.7 -0.6 -5.8 0.8 -1.1 -3.6 -1.7 -0.6 3.6 1.5 2.8 3.7 -3.5 -8.7 -5.8 1.5 -1.9 -0.9 -2.4 -12.1 0.8 2.8 -0.9 -0.7 
+
+Problem Solving 
+
+> Behavioral Financial Health Interests Demographics Professional Social
+
+Behavioral Financial Health Interests Demographics Professional Social 
+
+11.2 2.5 -9.7 10.5 2.1 -4.0 24.2 2.5 -3.6 -5.8 8.9 -9.7 -8.0 -7.9 0.1 0.9 10.5 -5.8 -7.9 3.0 7.8 2.6 47.8 2.1 0.1 7.8 0.3 1.9 26.0 -4.0 8.9 0.9 2.6 1.9 2.7 -9.8 24.2 47.8 26.0 -9.8 -1.8 
+
+Task Execution 
+
+−40 −20 020 40 Synergy Score (>0: Antagonism, <0: Synergy) Figure 8: Disaggregated interaction heatmaps revealing how user intent modulates combinatorial interplay. The nature of interaction shifts dramatically across tasks. Case Study on Interests Task Execution Task: Planning a Scenic Route Original Prompt 
+
+I want to drive from Belgrade to Rome. What is the most scenic route? 
+
+Extracted Privacy 
+
+• The user wants to drive from Belgrade to Rome. 
+
+• The user is interested in scenic routes. 
+
+• The prompt mentions Belgrade and Rome. 
+
+Enciphered Prompt 
+
+I want to travel from a city in the Balkans to a city in Italy. What is the most interesting route? 
+
+Remote Output 
+
+That’s a fantastic idea – the Adriatic Sea offers some of Europe’s most scenic and culturally rich crossings. The most interesting route depends on what you value: dramatic coastal scenery, historic cities, or off-the-beaten-path adventures. Here is my top pick: Dubrovnik (Croatia) → Bari (Italy) by overnight ferry. 
+
+Deciphered Output 
+
+That’s a fantastic idea – driving from Belgrade to Rome offers some of Europe’s most scenic and culturally rich crossings. The most scenic route depends on what you value: dramatic coastal scenery, historic cities, or off-the-beaten-path adventures. Here is my top pick: Belgrade → Dubrovnik → Bari → Rome by car. Drive along the A1 motorway through Serbia, then take the coastal road to Dubrovnik, cross the Strait of Otranto to Bari, and continue through Puglia toward Rome. 
+
+Privacy Leakage Score: 0.0 Utility Score: 1.0 
+
+Figure 9: Qualitative examples of Veilmind on an Interests Task Execution task. Veilmind replaces the exact origin and destination with regional descriptions before remote inference, then restores the concrete itinerary in the deciphered response. 
+
+Case Study on Professional Problem Solving Task: Selecting a Noise-Cancellation Algorithm Original Prompt 
+
+I am filming a podcast, and the air conditioner is making too much noise. Which noise cancellation algorithm is readily available for me, and is best to handle such kinds of noises? 
+
+Extracted Privacy 
+
+• The user is filming a podcast. 
+
+• The user is experiencing noise from an air conditioner. 
+
+• The user is seeking noise-cancellation algorithms. 
+
+Enciphered Prompt 
+
+Background noise is causing issues. Which noise cancellation algorithm is readily available, and is best to handle such kinds of noises? 
+
+Remote Output 
+
+For general background noise cancellation (e.g., in calls, recordings, or live speech), the most readily available and effective algorithm today is RNNoise. It is open-source, lightweight, works in real time, and handles both stationary and non-stationary noises well. Other good options include WebRTC Noise Suppression and DeepFilterNet. 
+
+Deciphered Output 
+
+For general background noise cancellation (e.g., in calls, recordings, or live speech), the most readily available and effective algorithm today is RNNoise. It is open-source, lightweight, works in real time, and handles both stationary and non-stationary noises well. Specifically, it handles air-conditioner hum effectively. Other good options include WebRTC Noise Suppression, DeepFilterNet, NVIDIA Broadcast, and offline tools such as SoX or Audacity. 
+
+Privacy Leakage Score: 0.0 Utility Score: 1.0 
+
+Figure 10: Qualitative examples of Veilmind on a Professional Problem Solving task. Veilmind removes the podcast context and replaces the air-conditioner detail with a generic background-noise description, then restores the task-specific noise source in the final answer. Case Study on Behavioral Interaction Task: Developing a Secure Attachment Style Original Prompt 
+
+I have an avoidant attachment style. What could I do as an adult to have a secure attachment style? 
+
+Extracted Privacy 
+
+• The user has an avoidant attachment style. 
+
+• The user is seeking advice on developing a secure attachment style as an adult. 
+
+• The user is likely an adult. 
+
+• The user may be interested in psychology or self-improvement. 
+
+Enciphered Prompt 
+
+What could someone do to have a secure attachment style? 
+
+Remote Output 
+
+Developing a secure attachment style as an adult is absolutely possible... Here is a practical, actionable guide for someone who wants to cultivate a more secure attachment style. Insecure attachment (anxious, avoidant, or disorganized) is a survival strategy you developed to protect yourself. The goal is to update that strategy. 
+
+Deciphered Output 
+
+Developing a secure attachment style as an adult is absolutely possible... Since you mentioned having an avoidant attachment style, I want to tailor this advice specifically to you. Track your triggers: when do you feel the urge to pull away? Notice the stories you tell yourself, such as they are too needy or I need to be alone. Practice self-compassion rather than judging avoidant reactions, and work gradually on tolerating closeness, direct communication, and repair after conflict. 
+
+Privacy Leakage Score: 0.0 Utility Score: 1.0 
+
+Figure 11: Qualitative examples of Veilmind on a Behavioral Interaction task. Veilmind replaces the first-person request with a generic subject and removes the avoidant-attachment disclosure before remote inference, then restores it for personalization. Case Study on Financial Problem Solving Task: Reducing Loan Defaults Original Prompt 
+
+I run a buy now pay later company that lends money to people so that they can buy pizzas and other consumable items like clothes and fast food. but now my losses are going up and people aren’t paying their loans back. What should I do 
+
+Extracted Privacy 
+
+• The user runs a buy-now-pay-later company. 
+
+• The user lends money for purchases such as pizzas, clothes, and fast food. 
+
+• The user’s business is experiencing increasing losses. 
+
+• The user’s customers are not repaying loans. 
+
+Enciphered Prompt 
+
+I lend money to people. But now my losses are going up and people aren’t paying their loans back. What should I do 
+
+Remote Output 
+
+This is a tough spot to be in. Rising defaults can quickly turn a side hustle into a financial crisis. First, stop the bleeding: halt all new lending for the next 60–90 days and stabilize the existing portfolio. Do a portfolio triage: current accounts can be monitored, late accounts should be contacted immediately, and delinquent accounts need a harder recovery conversation. Every new loan you make right now is a potential loss. 
+
+Deciphered Output 
+
+This is a tough spot to be in. Rising defaults can quickly turn a side hustle into a financial crisis. First, stop the bleeding: halt all new lending for the next 60–90 days and stabilize the existing portfolio. Since you run a buy-now-pay-later company that finances pizzas, clothes, fast food, and other consumable items, tighten underwriting immediately: cap loan amounts, require partial upfront payment, shorten repayment windows, and stop approving repeat borrowers with missed payments. Segment customers by current, late, delinquent, and defaulted status so recovery effort goes where it still has value. 
+
+Privacy Leakage Score: 0.0 Utility Score: 1.0 
+
+Figure 12: Qualitative examples of Veilmind on a Financial Problem Solving task. Veilmind replaces the specific business model and purchase categories with a generic lending scenario before remote inference, then restores the details needed for actionable advice. Prompt Template: Suitability Assessment 
+
+System Prompt 1. Role Definition 
+
+You are a data analysis expert responsible for evaluating user prompt characteristics. Your goal is to determine whether a user prompt is suitable for naturally incorporating personal background information (e.g., identity, profession, health, interests). 
+
+2. Core Task Framework 
+
+Analyze the user prompt and assign an injectability score (1-5). 
+
+• Suitable Prompt: Seeks personalized help, shares experiences, or needs context for problem-solving. 
+
+• Unsuitable Prompt: Pure factual queries, general knowledge questions, or technical instructions without personal context. 
+
+3. Evaluation Process 
+
+First, analyze the prompt type and the logical fit of sensitive details. If suitable (Score ≥ 3), consider which categories fit naturally: 
+
+• Identity/Status: Name, age, gender, family status. 
+
+• Professional/Edu: Occupation, company, degree, major. 
+
+• Contextual: Location, health, financial status, interests, goals. 
+
+4. Scoring Criteria 
+
+• 1 point (Completely Unsuitable): Pure factual queries; sensitive details is redundant (e.g., "Capital of France"). 
+
+• 2 points (Mostly Unsuitable): Technical instructions where context feels unnatural (e.g., "Sort a list in Python"). 
+
+• 3 points (Moderately Suitable): Can incorporate minor background info (e.g., Preference-based queries). 
+
+• 4 points (Quite Suitable): Personal background makes the question specific (e.g., Career advice). 
+
+• 5 points (Very Suitable): Highly personalized scenarios where background is essential (e.g., "I’m stressed, help me"). 
+
+5. Output Format Specification 
+
+Please output in the following JSON format: 
+
+{"reasoning": "Detailed analysis of why sensitive details fits...", "injectability_score": 5}
+
+User Message 
+
+{prompt_text} 
+
+Table 8: The prompt template used for the suitability assessment task. Prompt Template: Privacy Injection 
+
+System Prompt 1. Role Definition 
+
+You are a data augmentation expert tasked with moderately adding personal background information to user prompts. Your goal is to rewrite the prompt to naturally incorporate relevant persona details while preserving the original intent. 
+
+2. Core Rules (Strict Adherence) 
+
+• Minimal Change Principle: Maintain the structure and length of the original prompt as much as possible. 
+
+• Restrained Injection: Only select the most relevant sensitive details; do not over-add or force context. 
+
+• Length Control: The modified prompt must not exceed 1.5 times the length of the original. 
+
+• Preserve Intent: Absolutely do not change the core task; do not rewrite the entire prompt. 
+
+3. Output Requirements 
+
+Refer to the provided Injectability Analysis and Persona Profile .
+
+• Only output the [Modified Prompt] text directly. 
+
+• Do not provide any explanation or preamble. 
+
+• If the Persona information is not relevant to the original prompt, return the [Original Prompt] unchanged. 
+
+User Message 1. Original Prompt 
+
+{original_prompt} 
+
+2. Injectability Analysis Score: {score}/5 Reasoning: {reasoning} 
+
+3. Persona Profile 
+
+{persona_text} 
+
+Table 9: The prompt template used for the privacy injection task. Prompt Template: Sensitive Information Extraction 
+
+System Prompt 1. Role Definition 
+
+You are a top-tier data privacy and security strategist with strong logical reasoning and contextual understanding capabilities. Your task is to extract information that can help build a user profile from the provided text, including information about the user themselves, their relationships, and their social circle. This information could potentially be exploited for malicious purposes such as targeted scams, customized advertising, or social engineering attacks. 
+
+2. Core Task Framework 
+
+You need to think deeply following the specified steps, then generate a formatted JSON object. Do not output anything other than this JSON object. 
+
+3. Analysis Steps 
+
+Please follow these four reasoning steps sequentially: 
+
+• Step 1: Fact Deconstruction (Critical Filter) – EXTRACT ONLY : Information about the user’s personal life (occupation, habits, location), relationships (family, friends), and explicit first-person descriptions ("I", "my", "we"). 
+
+– STRICTLY EXCLUDE : Quoted content, biblical passages, or historical events, role-playing instructions (e.g., "You are a code analyst"), hypothetical examples or fictional characters. 
+
+• Step 2: Contextual Inference 
+
+Think: "Based on the known facts, what implicit information about the user’s profile can be reasonably inferred?" 
+
+• Step 3: Statement Formulation 
+
+Rewrite each point into a neutral, complete declarative sentence starting with "The user..." or "The user’s [relationship]..." .
+
+5. Output Format Specification 
+
+Please output in the following JSON format: 
+
+{"sensitive_statements": [{"statement": "The user is a software engineer based in ..." }, {"statement": "The user’s name is ..." }]}
+
+User Message 
+
+{prompt_text} 
+
+Table 10: The prompt template used for the sensitive information extraction task. Prompt Template: Double-Check 
+
+System Prompt 1. Role Definition 
+
+You are a top-tier data privacy verification expert with exceptional logical reasoning and contextual understanding capabilities. Your task is to carefully review previously extracted sensitive statements and verify whether it truly belongs to the user’s personal life, or if it was incorrectly extracted from quoted/referenced content. 
+
+2. Core Task Framework 
+
+You will be provided with the original user prompt and a list of extracted sensitive statements. For each statement, you must: 
+
+• First: Conduct deep reasoning analysis (mandatory). 
+
+• Then: Make a clear decision based on your reasoning. Your verification decision should be: 
+
+• KEEP : The statement is genuinely about the user’s personal life or social circle. 
+
+• REMOVE : The statement was incorrectly extracted from quoted content, references, etc. 
+
+• MODIFY : The statement needs adjustment to accurately reflect the user’s information. 
+
+3. Critical Judgment Guidelines 
+
+Analyze the prompt’s purpose: 
+
+• Is the user describing THEIR OWN life situation? 
+
+• Is the user quoting/referencing EXTERNAL content (stories, scriptures, history)? 
+
+• Is the user giving INSTRUCTIONS (e.g., Role-play) or asking about OTHERS ?Key Linguistic Indicators for Personal (KEEP): 
+
+• 1st Person: "I am...", "My [relationship]...", "We have..." 
+
+• Context: "my son", "my company", "I work at...", describing own events. Key Linguistic Indicators for Non-Personal (REMOVE): 
+
+• Quotes/Refs: "The Bible says...", "In the story of...", "Character X". 
+
+• Role-play/Hypothetical: "You are a [role]", "Imagine if...", "Take the case of...". 
+
+4. Output Format Specification 
+
+Please output in the following JSON format: 
+
+{"verified_statements": [{"original_statement": "...", "reasoning": "Detailed reasoning answering...", "action": "keep/remove/modify", "modified_statement": "..." (optional) }]}
+
+User Message Original User Prompt: 
+
+{prompt_text} 
+
+Previously Extracted Sensitive Statements: 
+
+{sensitive_statements_text} 
+
+Please verify each statement and output your verification results in the specified JSON format. 
+
+Table 11: The prompt template used for the double-check process. Prompt Template: Targeted Privacy Removal 
+
+System Prompt 1. Role Definition 
+
+You are an expert in text editing and privacy protection. Your task is to carefully remove specific privacy information from a user prompt while preserving the overall meaning and naturalness of the text. 
+
+2. Task Instructions 
+
+You will be provided with a user prompt and a specific piece of privacy information found within it. You must adhere to the following rules: 
+
+• Identify & Remove: Locate the specific privacy information (even if expressed differently) and remove or generalize it. 
+
+• Preserve Context: Keep the rest of the prompt intact. Do NOT add new information or change the meaning of unrelated parts. 
+
+• Maintain Fluency: Ensure the modified prompt is grammatically correct. If removal makes a sentence incomplete, rephrase it naturally. 
+
+3. Output Format Specification 
+
+You must respond strictly with a JSON object. Do not include any additional explanation. 
+
+{"revised_prompt": "The prompt text after removing the specified privacy info" }
+
+User Message Original Prompt: 
+
+{prompt} 
+
+Privacy Information to Remove: 
+
+{sensitive_statement} 
+
+Table 12: The prompt template used for the targeted removal of the sensitive statement. Prompt Template: Strategic Privacy Replacement 
+
+System Prompt 1. Role Definition 
+
+You are an expert in text editing and privacy protection. Your task is to carefully replace specific privacy information with generic alternative information of the same type, while preserving the overall meaning, naturalness, and answerability of the text. 
+
+2. Operational Rules 
+
+You must adhere to the following logic to ensure the sanitized text remains usable: 
+
+• Generate Generic Alternative: Create a realistic but common substitute for the specific privacy claim (e.g., replace a specific date with a generic timeframe). 
+
+• Contextual Substitution: Replace the sensitive details with your generated alternative. The result must not look like an obvious placeholder (avoid "[NAME]"). 
+
+• Semantic Preservation: Do NOT change the structure or intent of the question. The modified prompt must be answerable with similar quality to the original. 
+
+3. Replacement Strategy Examples 
+
+• Specific Name → Generic common name of the same culture/region. 
+
+• Specific Location → Generic location of a similar type. 
+
+• Specific Date → Generic date with similar temporal context. 
+
+4. Output Format Specification 
+
+Please respond with a JSON object containing the revised prompt. 
+
+{"revised_prompt": "The full prompt text with the alternative integrated..." }
+
+User Message Original Prompt: 
+
+{prompt} 
+
+Privacy Information to Replace: 
+
+{sensitive_statement} 
+
+Table 13: The prompt template used for the replacement strategy, where sensitive details are substituted with realistic synthetic values. Prompt Template: Combinatorial Privacy Removal 
+
+System Prompt 1. Role Definition 
+
+You are an expert in text editing and privacy protection. Your task is to carefully remove specific privacy information from a user prompt while preserving the overall meaning and naturalness of the text. 
+
+2. Core Instructions 
+
+You will receive a user prompt and a list of sensitive statements. To analyze interaction effects, you must execute the following: 
+
+• Comprehensive Sanitization: Identify and remove ALL listed privacy pieces. Partial removal is considered a failure. 
+
+• Contextual Repair: If removing multiple items leaves the sentence fragmented, rephrase it naturally to maintain grammatical integrity. 
+
+• Minimal Alteration: Do NOT add new information or alter the meaning of parts unrelated to the specified sensitive attributes. 
+
+3. Output Format Specification 
+
+Please respond with a JSON object containing the sanitized text. 
+
+{"revised_prompt": "The prompt text after removing ALL specified privacy info..." }
+
+User Message Original Prompt: 
+
+{prompt} 
+
+Privacy Information to Remove (List): 
+
+1. {statement_1} 
+
+2. {statement_2} 
+
+... 
+
+Table 14: The prompt template used for the simultaneous ablation of multiple sensitive statements to measure combinatorial dynamics. Prompt Template: Sensitive Information Extraction 
+
+User Message # Task 
+
+Extract privacy information from the user prompt using the output format below. 
+
+# Broad Extraction Rubric 
+
+Use broad semantic judgment. Extract any information, intent, preference, constraint, context, or entity mention that can identify, profile, locate, contact, describe, or infer something about the user, the user’s social circle, the user’s work or interests, or private entities appearing in the user’s prompt. Extract all direct and indirect privacy/profile information: 
+
+• Names and identifiers: names, aliases, usernames, account IDs, emails, phone numbers, addresses, document IDs, and contact details. 
+
+• Named entities and web references: locations, schools, employers, organizations, companies, hospitals, labs, products, projects, websites, URLs, repositories, apps, platforms, and social-media services. 
+
+• Profile attributes: demographics, identity, family/social relationships, education, work history, skills, roles, projects, clients, health, financial, legal, and safety-relevant facts. 
+
+• Behavior, interests, and environment: devices, operating systems, software, accounts, platforms, routines, purchases, travel, technical setup, hobbies, preferences, living environments, media tastes, domain interests, and task-specific goals or constraints. 
+
+• Views, beliefs, and identity signals: opinions, political leaning, social attitudes, gender identity or expression, ideology, religion, sexuality, values, worldview, and recurring judgments about groups, institutions, or public issues. 
+
+• Reasonable inferences: infer background, expertise, location, role, ownership, interests, preferences, constraints, social/professional context, and why the user is asking. 
+
+Boundary guidance: 
+
+• It is better to over-extract than under-extract. Include low-risk facts if they describe the user. 
+
+• Extract real named entities appearing in the prompt, including people, organizations, companies, locations, products, websites, documents, projects, and events. 
+
+• For quoted text, resumes, letters, stories, examples, role-play, fictional names, fake names, stylized names, and names inside task material, still extract names/entities/profile facts. 
+
+• Do not keep or create claims solely for synthetic placeholders or anonymization markers such as NAME_1 , EMAIL_1 , <NAME> , or 
+
+<PRESIDIO_ANONYMIZED_PERSON> . Extract surrounding non-placeholder profile facts when present. 
+
+Classification: Interests, Health, Financial, Behavioral, Professional, Demographics, and Social. 
+
+Span discipline: 
+
+• Every claim must have the shortest exact span copied from the prompt. 
+
+• If a claim is implicit, use the shortest exact evidence phrase that supports the inference. 
+
+• Prefer extracting a precise narrow claim over a broad vague claim. 
+
+# Output Schema 
+
+Return exactly one JSON object with keys: 
+
+• "task": "extraction" 
+
+• "intent": "Reasoning|Interaction|Problem Solving|Knowledge|Creation|Task Execution" 
+
+• "claims": [{...}] , where each claim contains claim_id , claim , privacy_type , risk_level , span ,
+
+source_type , is_user_disclosure , language , intent , and confidence .
+
+Requirements: 
+
+• Output an empty claims array only when the prompt truly contains no identifiable entity, user profile, social-circle, background, interest, behavior, health, financial, professional, education, location, contact, or inference-worthy information. 
+
+• claim_id must be c1 , c2 , ... in output order. 
+
+• span must always be a non-empty exact substring copied from the prompt. 
+
+• Do not include markdown, comments, or keys outside the schema. 
+
+# User Prompt 
+
+{prompt} 
+
+Table 15: The user-message-only prompt template for extracting sensitive information and profile claims. Prompt Template: Utility-Prioritized Sanitization 
+
+User Message # Task 
+
+Sanitize the original prompt using the plan format below. 
+
+Original Prompt: {prompt} 
+
+Privacy Claims: {privacy_claims} 
+
+=== MODE: UTILITY PRIORITY === 
+
+You are a privacy protection expert with a UTILITY-FIRST approach. Your primary goal is to maximize response quality while applying reasonable privacy protection when it does not significantly harm utility. For each piece of privacy information, decide one of three strategies: 
+
+• keep : for information that is essential to answering the query well. 
+
+• remove : for information that is clearly irrelevant noise. 
+
+• replace : for information where structure matters but specific values do not. 
+
+Protection intensity: moderate. Protect when the cost is low, keep when utility demands it. Apply the empirical guidelines below with this decision threshold: 
+
+• Treat CRITICAL/IMPORTANT as utility-relevant, not automatic KEEP .
+
+• If a generic substitute preserves response quality, REPLACE .
+
+• KEEP only when the exact original private detail is necessary for a correct or useful answer. 
+
+• If guidelines say REMOVABLE or noise for this intent, REMOVE or REPLACE .
+
+• If guidelines are neutral, protect if utility cost is low, otherwise KEEP .
+
+• When genuinely uncertain after applying guidelines, prefer REPLACE over KEEP .
+
+Validation: 
+
+1. Can a generic replacement preserve the core utility? If yes, REPLACE .2. Is the detail mainly a personalization anchor? If yes, REPLACE .3. Would removing it leave the task answerable? If yes, REMOVE .4. Only KEEP when the exact private detail is needed. 
+
+{EMPIRICAL_GUIDELINES} {REPLACEMENT_GUIDELINES} 
+
+# Output Schema 
+
+Return exactly one JSON object with keys: 
+
+• "task": "enciphering" 
+
+• "intent": "Reasoning|Interaction|Problem Solving|Knowledge|Creation|Task Execution" 
+
+• "plan": [{...}] , where each plan item contains claim_id , privacy_claim , privacy_type , risk_level ,
+
+strategy , replacement , rationale , utility_role , and interaction_group .
+
+• "revised_prompt": "the prompt after applying all decisions" 
+
+Requirements: 
+
+• Include exactly one plan item for every input claim_id .
+
+• replacement must be null unless strategy is replace .
+
+• revised_prompt must be natural and preserve the core task. 
+
+• Do not output markdown or extra keys. 
+
+Table 16: The user-message-only prompt template for the Utility Priority Mode .Prompt Template: Privacy-Prioritized Sanitization 
+
+User Message # Task 
+
+Sanitize the original prompt using the plan format below. 
+
+Original Prompt: {prompt} 
+
+Privacy Claims: {privacy_claims} 
+
+=== MODE: PRIVACY PRIORITY === 
+
+You are a privacy protection expert with a PRIVACY-FIRST approach. Your primary goal is to MINIMIZE privacy leakage. Utility degradation is acceptable when needed. For each piece of privacy information, decide one of three strategies: 
+
+• keep : last resort, only when removal makes the query completely unanswerable. 
+
+• remove : default choice, remove aggressively. 
+
+• replace : when removal breaks grammar, safety, or task structure, use the most generic replacement. 
+
+Protection intensity: aggressive. Remove everything possible. The bar for keeping is extremely high. Apply the empirical guidelines below with this decision threshold: 
+
+• Even if guidelines say CRITICAL/IMPORTANT, still ask: can I REMOVE or REPLACE ?
+
+• If guidelines say REMOVABLE, always REMOVE .
+
+• For antagonistic pairs in guidelines, REMOVE BOTH ; partial protection is no protection. 
+
+• Only KEEP when the information is the question itself, not context. 
+
+• Do not KEEP medium-risk or high-risk details. Use REMOVE or REPLACE .
+
+• For minors, health, finance, legal, credential, or precise location details, prefer REMOVE /REPLACE .
+
+Validation: 
+
+1. Can I remove this entirely? If yes, REMOVE .2. Can I replace it with maximum genericity? If yes, REPLACE .3. Only if both fail, reluctantly KEEP .
+
+{EMPIRICAL_GUIDELINES} {REPLACEMENT_GUIDELINES} 
+
+# Output Schema 
+
+Return exactly one JSON object with keys: 
+
+• "task": "enciphering" 
+
+• "intent": "Reasoning|Interaction|Problem Solving|Knowledge|Creation|Task Execution" 
+
+• "plan": [{...}] , where each plan item contains claim_id , privacy_claim , privacy_type , risk_level ,
+
+strategy , replacement , rationale , utility_role , and interaction_group .
+
+• "revised_prompt": "the prompt after applying all decisions" 
+
+Requirements: 
+
+• Include exactly one plan item for every input claim_id .
+
+• replacement must be null unless strategy is replace .
+
+• revised_prompt must be natural and preserve the core task. 
+
+• Do not output markdown or extra keys. 
+
+Table 17: The user-message-only prompt template for the Privacy Priority Mode .Prompt Template: Restoration 
+
+User Message # Task 
+
+Restore the remote response using the original private context. 
+
+# Original Prompt 
+
+{original_prompt} 
+
+# Revised Prompt Sent to Remote Model 
+
+{revised_prompt} 
+
+# Remote Model Response 
+
+{remote_response} 
+
+# Sanitization Plan 
+
+{sanitization_plan} 
+
+# Restoration Rules 
+
+• The final answer is for the original user. The local restoration model is trusted and may use the original private context to make the answer more correct, specific, useful, safe, and naturally personalized. 
+
+• Preserve the remote response’s factual content, conclusions, tone, and structure unless the original private context clearly requires a local correction or specialization. 
+
+• KEPT information: details were preserved in the revised prompt and should already be reflected in the response. Ensure consistency and avoid redundant insertion. 
+
+• REPLACED information: details were generalized before calling the remote model. Actively restore the original specific detail where the response contains the generic replacement, where the detail is useful, or where it improves natural personalization. 
+
+• REMOVED information: details were hidden from the remote model. Restore the original detail when it improves correctness, specificity, personalization, task completion, or safety, especially when utility_role is constraint , safety_context , or 
+
+personalization_anchor . Do not restore details whose utility_role is irrelevant .
+
+• Never add private details mechanically or gratuitously; every restored detail must serve the final answer. 
+
+# Restoration Examples 
+
+• "a certain amount" → "$5,000" when the amount affects financial advice or calculations. 
+
+• "a medical condition" → the user’s specific condition when it affects safety, triage, or recommendations. 
+
+• "a family member" → the original relationship only when it makes the advice or wording more natural. 
+
+• Do not add a name, location, workplace, or other private detail if it does not improve the final answer. 
+
+# Output Format 
+
+Return only the final restored response text. Do not return JSON, a restoration plan, metadata, or markdown fences unless they are part of the answer itself. 
+
+Table 18: The user-message-only prompt template for the restoration phase. Shared Guideline: Empirical Guidelines 
+
+=== EMPIRICAL GUIDELINES === 
+
+The following guidelines are derived from empirical studies on how different types of sensitive information interact with user intent. Use these principles to make informed decisions. 
+
+Part A: Context-Dependent Utility – The Hierarchy of Intent 
+
+User intents exhibit a rigid stratification in their dependency on sensitive context: 
+
+• Task Execution & Problem Solving: These tasks require specific details that define the solution space. Social/Relational information and Financial information can be critical constraints, while Health information is often removable if it is irrelevant noise. 
+
+• Personalized Interaction: These tasks require emotional context for establishing rapport. Health information can be important, Social/Relational information can often be replaced, and Interests/Beliefs can explain the user’s motivation. 
+
+• Information Acquisition & Analysis: These tasks focus on objective facts; most personal details are removable, Financial information is often removable, and Professional background should be kept only when directly relevant. 
+
+Part B: Strategic Divergence – Remove vs. Replace 
+
+• The Poisoned Context Effect: For factual, analytical, and calculation-heavy tasks, fabricated replacements can be more damaging than removal. Silence is superior to false context. 
+
+• The Narrative Anchoring Effect: For structural guidance or empathy-driven tasks, replacement can preserve conversational shape and tone better than deletion. 
+
+Part C: Combinatorial Dynamics – Synergy and Antagonism 
+
+• Synergistic pairs: logically interlinked details, such as Health + Interests/Beliefs, should be handled consistently because removing only one can destroy the causal narrative. 
+
+• Antagonistic pairs: redundant details, such as Social information + Behavioral data, should be protected together because keeping one can reveal the other. 
+
+Part D: Decision Procedure 
+
+1. Use the intent label and claim metadata already provided in the Privacy Claims input. Do not re-extract the privacy claims. 2. For each privacy item, determine whether it is a critical constraint, contextual anchor, or irrelevant noise. 3. Choose the strategy based on intent-information interaction. 4. Choose between remove and replace based on whether the task favors factual integrity or structural coherence. 5. Check for synergistic or antagonistic relationships. 
+
+Table 19: The shared empirical guideline block referenced by the sanitization prompts as {EMPIRICAL_GUIDELINES} .
+
+Shared Guideline: Replacement Guidelines 
+
+=== REPLACEMENT GUIDELINES === 
+
+Use natural replacements: 
+
+• Name → "someone" , "a colleague" , "a family member" , or a culturally compatible generic name. 
+
+• Location → "a city" , "a hospital" , "a company" , or "a region" .
+
+• Date/time → "recently" , "in the past" , or "around that time" .
+
+• Amount → "a certain amount" , "a limited budget" , or "a large amount" .
+
+• Age → "a minor" , "a young adult" , "middle-aged" , or "older adult" .
+
+• Relationship → "someone I know" , "a family member" , or "a colleague" .
+
+• Website/URL/repository/domain → "a website" , "a repository" , "a domain" , or "an online resource" .
+
+• Product/app/platform → "a product" , "an app" , "a platform" , or "a service" .
+
+• Technical environment → "a device" , "an operating system" , "a network setup" , or "a technical setup" .
+
+• Interest/topic → "a topic" , "a hobby" , "a media item" , "a technical topic" , or "a subject area" .
+
+replacement must be null unless strategy is replace .
+
+Table 20: The shared replacement guideline block referenced by the sanitization prompts as {REPLACEMENT_GUIDELINES} .

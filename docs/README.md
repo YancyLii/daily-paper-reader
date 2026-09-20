@@ -41,7 +41,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-19</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-20</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 19 篇</strong>
@@ -51,7 +51,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>7</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>12</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-19 19:57:27 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-20 19:00:22 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -63,8 +63,8 @@
   </div>
   <div class="dpr-home-dashboard-body">
 <p>今日共生成 19 篇推荐（精读 7 篇，速读 12 篇）</p>
-<p>精读：《Universal Defenses for Tool-Integrated LLM Agents Against Adversarial Attacks》（9.0/10）, 《Cognitive Admission Control: Risk-Conditioned Assurance for Consequential Actions in Agentic Distributed Systems》（9.0/10）</p>
-<p>速读：《AcquireBound: Runtime Authorization for Resources Acquired by AI Agents》（8.0/10）, 《The Stochastic Deputy: Structural Tenant Isolation for Tool-Using LLM Agents》（8.0/10）, 《Empirical Evaluation of Task-Based Permission Scoping Architecture for AI Agents》（8.0/10）</p>
+<p>精读：《Exo-GPU: Safe, Imperative, User-schedulable Programming for Tensor Cores》（9.0/10）, 《Toward Secure AI-Powered Penetration Testing Agents: Security Threats, Guardrails, and Architectural Perspectives》（9.0/10）</p>
+<p>速读：《SPARK: Representation-Level KV Memory Alignment for Safer Vision-Language Models》（8.0/10）, 《Adversarial Testing of Automated Program Repair Agents for Security Vulnerabilities》（8.0/10）, 《AgentGuard: Learning Execution Guardrails from Anomalous Coding-Agent Trajectories》（8.0/10）</p>
 <p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
   </div>
 </section>
@@ -77,7 +77,7 @@
     <strong class="dpr-home-dashboard-count">7 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Universal Defenses for Tool-Integrated LLM Agents Against Adversarial Attacks">Universal Defenses for Tool-Integrated LLM Agents Against Adversarial Attacks</span></li><li><span class="dpr-home-dashboard-paper-title" title="Cognitive Admission Control: Risk-Conditioned Assurance for Consequential Actions in Agentic Distributed Systems">Cognitive Admission Control: Risk-Conditioned Assurance for Consequential Actions in Agentic Distributed Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="Symbolic Temporal Supervision of LLM Agents Using Contracts">Symbolic Temporal Supervision of LLM Agents Using Contracts</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Exo-GPU: Safe, Imperative, User-schedulable Programming for Tensor Cores">Exo-GPU: Safe, Imperative, User-schedulable Programming for Tensor Cores</span></li><li><span class="dpr-home-dashboard-paper-title" title="Toward Secure AI-Powered Penetration Testing Agents: Security Threats, Guardrails, and Architectural Perspectives">Toward Secure AI-Powered Penetration Testing Agents: Security Threats, Guardrails, and Architectural Perspectives</span></li><li><span class="dpr-home-dashboard-paper-title" title="Measuring and Exploiting Implicit Trust in LLM Tool-Calling Pipelines">Measuring and Exploiting Implicit Trust in LLM Tool-Calling Pipelines</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>6</strong></span><span class="dpr-home-dashboard-tag">ai-infra-sec <strong>1</strong></span></div>
 </section>
@@ -90,7 +90,7 @@
     <strong class="dpr-home-dashboard-count">12 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="AcquireBound: Runtime Authorization for Resources Acquired by AI Agents">AcquireBound: Runtime Authorization for Resources Acquired by AI Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="The Stochastic Deputy: Structural Tenant Isolation for Tool-Using LLM Agents">The Stochastic Deputy: Structural Tenant Isolation for Tool-Using LLM Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Empirical Evaluation of Task-Based Permission Scoping Architecture for AI Agents">Empirical Evaluation of Task-Based Permission Scoping Architecture for AI Agents</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SPARK: Representation-Level KV Memory Alignment for Safer Vision-Language Models">SPARK: Representation-Level KV Memory Alignment for Safer Vision-Language Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Adversarial Testing of Automated Program Repair Agents for Security Vulnerabilities">Adversarial Testing of Automated Program Repair Agents for Security Vulnerabilities</span></li><li><span class="dpr-home-dashboard-paper-title" title="AgentGuard: Learning Execution Guardrails from Anomalous Coding-Agent Trajectories">AgentGuard: Learning Execution Guardrails from Anomalous Coding-Agent Trajectories</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agsec <strong>10</strong></span><span class="dpr-home-dashboard-tag">ai-infra-sec <strong>2</strong></span></div>
 </section>

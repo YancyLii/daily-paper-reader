@@ -1,0 +1,4591 @@
+Local Sparsity Enables
+Unsupervised LLM Safety Detection
+Xin Chen
+Gil Kur∗
+Alexander Shevchenko*
+Andreas Krause
+ETH Zürich
+Abstract
+Deployment-time safety methods for large language models (LLMs) are predomi-
+nantly supervised and assume access to unsafe training data. Nevertheless, new
+attacks and harm categories regularly arise, not captured by models trained in such
+a supervised fashion. An alternative approach is to view this problem through the
+lens of anomaly detection, namely, to rely solely on modeling safe data and flagging
+out-of-distribution inputs. However, LLM activations lie in a high-dimensional
+space, raising concerns about whether anomaly detection is statistically feasible.
+We show that, under the linear representation hypothesis (LRH), there may indeed
+be hope. In the LRH concept space, which is typically recovered via a sparse
+autoencoder (SAE), nearby points share a small common active support. Using
+this local sparsity insight, we propose a framework for locally masked SAE-based
+anomaly detection, supported by theoretical justifications. We validate it on various
+architectures and datasets, including both capability-testing datasets and safety-
+specific datasets. Finally, when we allow algorithms to use 1% out-of-distribution
+data for calibration, locally sparse methods achieve near-optimal performance,
+demonstrating their ability to capture meaningful safety information while using
+only 1-2% of SAE neurons for computation.
+1
+Introduction
+Supervised safety classifiers for Large Language Models (LLMs) [Sharma et al., 2025, Bai et al., 2022,
+Chen et al., 2025b, Zou et al., 2024] assume access to labeled unsafe examples. In practice, this turns
+out to be a significant limitation since unsafe distribution may change drastically during deployment.
+Examples of such distribution shift include: the emergence of new jailbreaks [Andriushchenko et al.,
+2024, Nasr et al., 2025], harmful behaviors absent from the labeled set [Turner et al., 2025], and
+inputs from domains the model never encountered before [Oh et al., 2025]. In this view, a supervised
+procedure fit to a fixed unsafe distribution might generalize poorly beyond it.
+To address this limitation, we take an unsupervised view and frame the problem as anomaly detection
+[Schölkopf et al., 1999, Perera et al., 2021]. Namely, given safe data {xi}n
+i=1∼P, we aim to construct
+a score function s : X →R that takes large values on inputs atypical under P. Crucially, this
+construction does not require unsafe data, and is therefore not biased toward any particular harm
+category. Despite its conceptual appeal, this approach remains underexplored for modern LLMs. The
+reason is that LLM embeddings are high-dimensional, and unsupervised anomaly detection methods
+are known to perform poorly in this setting [Aggarwal et al., 2001, Zimek et al., 2012].
+While this might appear to be the case at first sight, LLM activations exhibit far more structure than
+their nominal dimension suggests. The Linear Representation Hypothesis (LRH) [Park et al., 2023,
+∗Equal contribution. Correspondence to: xin.chen@inf.ethz.ch
+§ Code is available at https://github.com/lasgroup/unsupervised-llm-safety.
+Preprint.
+arXiv:2609.20129v1  [cs.LG]  17 Sep 2026
+
+
+SAE feature space (d = 16,384)
+PC2
+PC1
+Cluster A
+Cluster B
+Cluster C
+200 selected by mask
+. . .
+. . .
+≈3,000 across all masks
+0
+SAE dimension d = 16,384
+Figure 1: Per-cluster masks in SAE’s feature space. Left: 2D projection of Rd with three highlighted
+clusters; faint background point clouds indicate other clusters not displayed. Right: the indices of
+features selected by the mask mc for each cluster. Each mask retains 200 features, and the masks are
+partially overlapping; their union covers approximately 3,000 features, still much smaller than d.
+2025a] posits that each embedding is a sparse combination of concept vectors. This concept space
+can be approximately recovered using a sparse autoencoder (SAE) [Cunningham et al., 2023, Paulo
+et al., 2024, He et al., 2024]. Hübotter et al. [2025] further observe that within local “neighborhoods”,
+the active features are largely shared (cf. Figure 1). Consequently, anomaly detection can in principle
+operate on a much lower-dimensional representation. However, this structure is local: the relevant
+low-dimensional subspace varies across neighborhoods. Methods that instead impose a single,
+globally compressed representation—such as standard autoencoders—substantially underperform (cf.
+CVDD and Deep SVDD in Figure 2). We leverage this local structure in the following contributions.
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+FPR@95 (lower is better)
+0.65
+0.70
+0.75
+0.80
+0.85
+0.90
+0.95
+1.00
+AUROC (higher is better)
+Supervised
+FreqMask-KM
+GMM
+Mahalanobis
+CVDD
+Deep SVDD
+OC-SVM
+Figure 2: Local sparsity in LLM activations
+enables one-class safety detection. AUROC
+vs. FPR@95 on LLaMA3-8B for FREQMASK-
+KM against one-class baselines (Mahalanobis,
+CVDD) and a supervised reference.
+Modeling. In Section 3, we isolate four model-
+ing choices through which local sparsity can be
+exploited for anomaly detection: (i) embedding
+space, (ii) clustering, (iii) choice of sparse sub-
+space within each cluster, and (iv) scoring rule.
+We instantiate this modeling with two methods:
+FREQMASK-KM, which is training-free at the
+cluster level, and LEARNEDMASK-LORA, which
+fits per-cluster low-rank adapters.
+Numerics. In Section 4, we validate our findings
+across six instruction-tuned models (Qwen2-1.5B
+[Bai et al., 2023], Ministral-8B [Liu et al., 2026],
+LLaMA3-8B [Grattafiori et al., 2024], Qwen3-
+8B [Yang et al., 2025], GPT-oss-20B [Agarwal
+et al., 2025], and Gemma 4-26B [Team, 2026])
+and three categories of unsafe behavior. We show
+that several sparsity-aware algorithms perform on
+par or better than standard baselines. Ablations confirm that local sparsity is essential for anomaly
+detection on LLM representations—any successful method must exploit it, either explicitly by design
+(as ours does) or implicitly through inductive bias. This structure consistently emerges across all six
+model families we study.
+Theoretical justification. In Section 6, we prove a sample-complexity bound for learning the
+corresponding anomaly detector. Notably, the bound scales only logarithmically in the concept-space
+dimension d2 (hidden dimension of SAE) and the ambient dimension d1, and only linearly in the
+local sparsity. This explains why anomaly detection does not fail in this high-dimensional regime.
+2
+Background: Linear Representation Hypothesis and Local Sparsity
+The Linear Representation Hypothesis posits that high-level concepts are encoded as linear directions
+in LLM activation space [Mikolov et al., 2013, Park et al., 2023]. Language models represent
+more concepts than their residual stream has dimensions by packing them into near-orthogonal
+directions, a.k.a. superposition [Elhage et al., 2022]. Sparse autoencoders approximately recover
+the corresponding concept space as an overcomplete dictionary, such that each input activates only a
+small subset of hidden neurons [Cunningham et al., 2023, Bricken et al., 2023, Templeton et al., 2024,
+2
+
+
+Gao et al., 2024]. Hübotter et al. [2025] puts this idea further by showing that the active features
+substantially overlap across suitable “neighbors”. In this section, we make these observations formal
+and define the set of notations used throughout the rest of the paper.
+Residual stream and SAE.
+Let X denote the input space of token sequences. For a fixed layer ℓof
+a transformer, we define the corresponding residual-stream activation map by a(ℓ) : X →Rd1, where
+d1 stands for the dimension of residual-stream. A sparse autoencoder at layer ℓis defined by its
+encoder-decoder pair: E : Rd1 →Rd2, D : Rd2 →Rd1, d2 ≫d1, where E = ReLU(WEx + bE)
+with D = WDx + bD, for WE, W ⊤
+D ∈Rd2×d1, bE ∈Rd2, bD ∈Rd1 and ReLU(a) = max {0, a}
+is applied component-wise. The optimal configuration of parameters Θ = (WE, WD, bE, bD) is
+selected to minimize regularized L2-reconstruction loss over activations aℓ(x) of safe inputs x ∼P:
+LSAE(E, D) := Ex∼P
+ha(ℓ)(x) −D
+ E(a(ℓ)(x))
+2
+2
+i
++ λ Ex∼P
+hE(a(ℓ)(x))
+
+1
+i
+→min
+Θ , (1)
+where λ > 0 is a regularization coefficient. ReLU(·) activation in conjunction with L1-penalty on
+SAE features z(x) := E(a(ℓ)(x)) ∈Rd2 ensures that the resulting representations z(x) are indeed
+sparse. The corresponding active features of z(x) form an active support ϕ(x) := { j ∈[d2] :
+z(x)j̸ = 0 } of non-zero entries of cardinality |ϕ(x)| = ∥z(x)∥0.
+Global (average) sparsity.
+The key property of a well-trained SAE is that, despite extreme overpa-
+rameterization d2 ≫d1, each input activates only a small subset of concepts. Formally:
+Ex∼P ∥z(x)∥0 =: s ≪d2.
+(2)
+Across the SAEs we use, average sparsity s is two to three orders of magnitude smaller than d2.2
+Local sparsity.
+Central to this work is a stronger property—the joint sparsity structure within a
+“neighborhood”. For a fixed metric ρ on the concept space (see examples in Section 3.2), a safe input
+x ∈X0 := supp(P) and a radius r > 0, we denote the safe-input neighborhood of x at scale r by
+Nr(x) := { x′ ∈X0 : ρ(z(x), z(x′)) ≤r }.
+The local-sparsity property posits that for some “not small” r0 ≥0, the union of active supports over
+the corresponding neighborhood is significantly smaller than the dimension of the concept space:
+Ex∼P
+
+[
+x′∈Nr0(x)
+ϕ(x′)
+ =: sloc ≪d2.
+(3)
+In words, active features are largely shared across nearby points rather than being distinct. This
+implies that our data lies in a manifold containing “sparse patches”, which justifies the use of “local
+sparsity” terminology. As we will see, this assumption is motivated by the empirical validation on six
+model families in Section 4, and it is central to our theoretical analysis in Section 6.
+Implication for one-class anomaly detection.
+Equation (3) is the structural property our modeling
+heavily relies on. If we design an anomaly detection algorithm that operates on sparse local patches
+implicitly (or by inductive bias), the effective dimension it faces amounts to sloc rather than d2.
+We make it precise in the upcoming sections: Section 3 focuses on possible modeling choices
+(embedding space, clustering, local subspace, scoring) to ensure (3) holds; Section 4 confirms this
+picture empirically across six model families; and Section 6 shows that, as long as (3) holds, the
+sample complexity of the resulting estimator scales linearly in sloc and only logarithmically in d2.
+3
+Framework for Local Sparse Anomaly Detection
+We now describe a framework that poses anomaly detection on LLM activations as local problems for
+which their effective dimension is determined by sloc rather than by d2. The framework consists of
+four stages: the design of embedding space in which the detector operates, the clustering procedure
+C = {C1, . . . , CNc} to recover safe neighborhoods, the local sparse mask mc ∈{0, 1}d2 identified
+within each cluster Cc, and the scoring rule used to evaluate new test examples. Each stage admits
+several principled choices, detailed in Sections 3.1 to 3.4. We treat these steps as a design space
+rather than a single algorithm: different model geometries may favor different instantiations, and the
+experiments in Section 4 support this modular view.
+2For some of the models we consider the corresponding values are (d1, d2, s) ≈(4096, 16384, 100).
+3
+
+
+3.1
+Embedding Space
+The first stage selects the space in which all subsequent phases operate. Recall that the concepts are
+entangled in the dense activations a(ℓ) : X →Rd1 for layer ℓ. Therefore, searching for the local
+sparse structure of (3) directly in a(ℓ) is hopeless. We address this by lifting the activations to the
+sparse space induced by an SAE. By construction, the corresponding map z : X →Rd2 with d2 ≫d1
+produces sparse representations, i.e., ∥z(x)∥0 ≪d2. This structure is what makes the subsequent
+clustering able to identify neighborhoods compatible with (3). This does come at a cost: the method
+becomes dependent on the quality of the pretrained SAE, since errors in the recovered concepts
+propagate through later stages. Nevertheless, a well-chosen SAE can be enough to rescue methods
+that underperform in the dense activation space, simply by remapping the inputs (cf. Section 4.3).
+The SAE architecture involves several design choices, which we briefly discuss. We adopt a ReLU(·)
+activation in the encoder E(·) with an L1 penalty on z(x), which enforces sparsity on average. An
+alternative is to impose a fixed sparsity per input via a topk(·) activation [Gao et al., 2024]. While
+SAEs recover approximately disentangled representations, hierarchical variants (e.g., Zaigrajew et al.
+[2025]) may be more efficient and align better with (3). Kantamneni et al. [2025] analyzes the role of
+SAE in supervised probing, which we discuss more in Appendix C.3.
+3.2
+Clustering
+The clustering stage partitions the safe distribution into regions for which the local-sparsity property
+(3) is expected to hold. Formally, given a finite set of safe examples D = {x1, . . . , xn} ⊂X0
+and a fixed choice of metric ρ on the embedding space, the outcome of this stage is a partition
+C = {C1, . . . , CNc} of D obtained by running K-means with metric ρ on the chosen embeddings of
+D. Two design choices govern this partition: the metric ρ and the number of clusters Nc.
+Distance metric. The choice of metric set the trade-off between active support and activation
+“magnitude” when deciding which points are grouped together. Let b(x) := 1[z(x) > 0] ∈{0, 1}d2
+be the active-feature indicator of sparse representations z(x). We examine three points along this
+trade-off: (i) the Hamming distance ρL0(x, x′) = ∥b(x) −b(x′)∥0, which depends on z only through
+b and groups the points exlusively by their active support ϕ(x), explicitly targeting small values
+of sloc; (ii-iii) the magnitude-aware ρLp(x, x′) = ∥z(x) −z(x′)∥p for p ∈{1, 2}, which retain
+activation influence, i.e., it groups points D by both which features fire and how strongly, at the cost
+of greater sensitivity to noise in the activation magnitudes.
+Number of clusters.
+The number of clusters Nc trades off cluster homogeneity against per-cluster
+sample size. With too few clusters, the union of inner-cluster supports S
+x∈Cc ϕ(x) grows and (3)
+degrades. With too many, per-cluster sample sizes |Cc| ≈N/Nc become small, and parametric
+per-cluster estimators (e.g., per-cluster covariance for Mahalanobis scoring) become ill-conditioned.
+An appropriate choice of Nc takes into account both the safe sample size N and the global sparsity s.
+3.3
+Local sparse subspace
+At this stage, for each cluster Cc ∈C, we identify a sparse subspaces of Rd2 on which inputs are
+scored. The subspace is identified by its binary mask mc ∈{0, 1}d2, applied to SAE features z(x)
+via the Hadamard product mc ⊙z(x). We consider two constructions below.
+Frequency mask.
+For an index set I ⊆D, let f (I) ∈[0, 1]d2 be the per-feature activation frequency
+over I, f (I)
+j
+=
+1
+|I|
+P
+x∈I 1
+
+z(x)j̸ = 0
+
+, j ∈[d2], and define the corresponding top-k mask by
+m(I)
+:=
+1
+
+f (I) ∈topk(f (I))
+
+, where topk(·) returns the indices of the k largest entries. We
+distinguish between two choices for I: (i) we set I = D and apply the same global mask in each
+cluster (mc := m(D) for all c ∈[Nc]), leaving the clustering as the only source of local information;
+(ii) alternatively, we set I = Cc and apply per-cluster mask mc := m(Cc).
+Per-cluster learned subspace.
+An alternative is to let the SAE adjust locally via per-cluster low-
+rank adapters [Hu et al., 2022]: Ec = E + ∆Ec, Dc = D + ∆Dc, with rank(∆Ec), rank(∆Dc) ≤
+r ≪min(d1, d2)3. The mask mc and the adapters (∆Ec, ∆Dc) are then jointly optimized on Cc
+against an auxiliary objective. Fitting E and D directly on each cluster, without the rank constraint
+above, was found in preliminary experiments to increase the held-out reconstruction loss and the
+average density of z(x) on safe data, relative to the initial SAE. We therefore restricted per-cluster
+updates to the lows rank-r adapters (∆Ec, ∆Dc).
+3With slight abuse of notation, we write E for WE and D for WD.
+4
+
+
+Algorithm 1 FREQMASK-KM
+Require: Safe set D, SAE encoder E, layer ℓ, clus-
+ters number Nc, sparsity k
+Fit:
+1: zi ←E(a(ℓ)(xi)) for xi ∈D
+▷SAE features
+2: {C1, . . . , CNc} ←KMEANSL2({zi})
+3: µc ←mean({zi : i ∈Cc})
+▷cluster centroid
+4: bi ←1[zi > 0]
+▷binarize
+5: fj ←
+1
+N
+P
+i(bi)j
+▷pooled frequency
+6: m ←1[f ∈top-k(f)]
+▷global mask
+Scoring x:
+7: z ←E(a(ℓ)(x))
+8: c⋆←arg minc∥z −µc∥2
+▷assign cluster
+Decision (given threshold τ):
+9: s(x) ←∥m ⊙z −m ⊙µc⋆∥1
+10: return UNSAFE if s(x) > τ, else SAFE
+Algorithm 2 LEARNEDMASK-LORA
+Require: Safe set D, SAE (E, D), layer ℓ, clusters
+Nc, sparsity λ
+Training:
+1: zi ←E(a(ℓ)(xi)) for xi ∈D
+2: {C1, . . . , CNc} ←KMEANSL2({zi})
+3: for each cluster c do
+▷Stage 1: binary mask
+4:
+mc ←arg minm∈{0,1}d Lrec + λ∥m∥1
+5: for each cluster c do
+▷Stage 2: LoRA adapters
+6:
+(∆Ec, ∆Dc) ←arg min Lrec
+Scoring x:
+7: z ←E(a(ℓ)(x)), c⋆←arg minc∥z −µc∥2
+Decision (given threshold τ):
+8: s(x) ←∥a(ℓ)(x)−Dc⋆(mc⋆⊙Ec⋆(a(ℓ)(x)))∥2
+9: return UNSAFE if s(x) > τ, else SAFE
+3.4
+Scoring
+The final stage assigns each test point x an anomaly score given its cluster c⋆(x) ∈[Nc] and the local
+mask mc⋆. We use the nearest-centroid assignment c⋆(x) = arg minc∈[Nc] ρ
+ z(x), µc
+
+, µc
+=
+1
+|Cc|
+P
+x′∈Cc z(x′), where ρ is the clustering metric (Section 3.2). We consider two scoring rules.
+Centroid distance in the masked SAE feature space, sdist(x) =
+mc⋆⊙
+ z(x)−µc⋆
+p, p ∈{1, 2},
+or, when per-cluster covariance estimates are reliable, its Mahalanobis variant. This is the standard
+typical-set realization: atypical points lie far from the local centroid in the active-feature subspace.
+Reconstruction residual under the cluster’s local encoder/decoder pair (Ec⋆, Dc⋆), srec(x)
+=
+a(ℓ)(x)−Dc⋆ mc⋆⊙Ec⋆(a(ℓ)(x))
+
+2, matched to the learned-subspace construction in Section 3.3
+for reconstruction loss as the auxiliary objective.
+Per-cluster calibration. Both centroid and residual scores use global thresholding, i.e., the cut-
+off parameter for a decision rule is independent of the cluster assigned to the evaluation point.
+Empirically, we notice that cluster assignment is highly non-homogeneous for unsafe data – unsafe
+samples concentrate in a small subset of the safe clusters. Such discrepancy can be exploited for
+calibration at a cost of a small labeled set (< 1% of data). Indeed, we demonstrate that the scoring
+rule can be adjusted per cluster via a simple affine map. We further address these points in Section 5
+and Appendix B.
+3.5
+Two concrete instantiations
+We describe two instantiations of this framework, FREQMASK-KM and LEARNEDMASK-LORA,
+with no per-cluster learned parameters and with per-cluster low-rank adaptation, respectively. Pseu-
+docode is given in Algorithms 1 and 2.
+FREQMASK-KM. The pipeline operates on SAE features z(x) ∈Rd2. Clustering uses Lloyd’s
+algorithm with uniform random centroid initialization (FAISS [Johnson et al., 2019] Kmeans defaults),
+minimizing PNc
+c=1
+P
+x∈Cc∥z(x) −µc∥2
+2. The local subspace uses the global frequency mask mglobal,
+shared across all clusters. Scoring is the ℓ1 centroid distance: sdist(x) = ∥mglobal ⊙(z(x) −µc⋆)∥1.
+LEARNEDMASK-LORA. The pipeline operates on SAE features z(x) and uses the same clustering
+as FREQMASK-KM. The local subspace is induced by per-cluster LoRA adapters (∆Ec, ∆Dc), fit
+with the SAE backbone frozen and mc is learned by minimizing the per-cluster reconstruction loss
+Lrec = Ex∈Cc∥a(ℓ)(x) −Dc(mc ⊙Ec(a(ℓ)(x)))∥2
+2. Scoring is done via the reconstruction residuals
+srec(x) under the assigned cluster’s adapted encoder-decoder (Ec⋆, Dc⋆).
+These two instances interpolate the design space defined in Section 3.3: the first fits no per-cluster
+parameters, the second fits a low-rank adapter per cluster against the downstream scoring objec-
+tive. Section 4 shows that both reach competitive AUROC across six model families. Detailed
+ablation studies can be found in Appendix F and Appendix G, where we vary FREQMASK-KM and
+LEARNEDMASK-LORA one stage at a time: clustering metric, number of clusters Nc, mask size
+5
+
+
+Table 1: AUROC and TPR@5%FPR for two framework instantiations, five unsupervised baselines,
+and a supervised linear probe across six instruction-tuned model families. The “Local” column marks
+whether the method scores on a sparse local subspace (•) or not (−). Results are obtained across
+5 random seeds. Local-sparsification instantiations are the best unsupervised method on 4 models,
+and for the rest, a close second (within 0.025 AUROC). TPR@5%FPR rankings are less uniform. In
+each column the best unsupervised result is in bold and the second best is underlined; the supervised
+probe is excluded from this ranking. The five ≥8B models perform substantially better than Qwen
+1.5B, indicating that representation quality is key to successful anomaly detection.
+AUROC (↑)
+Method
+Local
+Ministral 8B
+LLaMA3 8B
+Qwen3 8B
+GPT-oss 20B
+Gemma 4 26B
+Qwen 1.5B
+BCE (linear probe, supervised)
+–
+0.993 ± 0.000
+0.972 ± 0.003
+0.993 ± 0.001
+0.990 ± 0.001
+0.983 ± 0.001
+0.982 ± 0.002
+FREQMASK-KM
+•
+0.914 ± 0.000
+0.937 ± 0.000
+0.915 ± 0.000
+0.900 ± 0.000
+0.856 ± 0.000
+0.762 ± 0.000
+LEARNEDMASK-LORA
+•
+0.896 ± 0.001
+0.912 ± 0.001
+0.917 ± 0.000
+0.919 ± 0.001
+0.904 ± 0.000
+0.794 ± 0.001
+Mahalanobis
+–
+0.892 ± 0.000
+0.913 ± 0.000
+0.914 ± 0.000
+0.843 ± 0.000
+0.901 ± 0.000
+0.756 ± 0.000
+GMM
+–
+0.881 ± 0.011
+0.906 ± 0.002
+0.942 ± 0.002
+0.925 ± 0.008
+0.861 ± 0.004
+0.780 ± 0.005
+One-Class SVM
+–
+0.829 ± 0.002
+0.841 ± 0.011
+0.885 ± 0.007
+0.850 ± 0.002
+0.886 ± 0.003
+0.756 ± 0.004
+Deep SVDD
+–
+0.389 ± 0.152
+0.475 ± 0.183
+0.389 ± 0.118
+0.535 ± 0.024
+0.665 ± 0.026
+0.507 ± 0.101
+CVDD
+–
+0.712 ± 0.029
+0.665 ± 0.037
+0.705 ± 0.029
+0.706 ± 0.059
+0.672 ± 0.042
+0.545 ± 0.021
+TPR@5%FPR (↑)
+Method
+Local
+Ministral 8B
+LLaMA3 8B
+Qwen3 8B
+GPT-oss 20B
+Gemma 4 26B
+Qwen 1.5B
+BCE (linear probe, supervised)
+–
+0.964 ± 0.001
+0.905 ± 0.014
+0.957 ± 0.004
+0.948 ± 0.003
+0.942 ± 0.003
+0.876 ± 0.014
+FREQMASK-KM
+•
+0.675 ± 0.000
+0.457 ± 0.000
+0.429 ± 0.000
+0.535 ± 0.000
+0.264 ± 0.000
+0.287 ± 0.000
+LEARNEDMASK-LORA
+•
+0.685 ± 0.001
+0.450 ± 0.009
+0.581 ± 0.001
+0.719 ± 0.002
+0.642 ± 0.003
+0.359 ± 0.006
+Mahalanobis
+–
+0.458 ± 0.000
+0.409 ± 0.000
+0.458 ± 0.000
+0.421 ± 0.000
+0.641 ± 0.000
+0.264 ± 0.000
+GMM
+–
+0.664 ± 0.009
+0.381 ± 0.010
+0.639 ± 0.008
+0.725 ± 0.018
+0.624 ± 0.014
+0.343 ± 0.039
+One-Class SVM
+–
+0.694 ± 0.004
+0.185 ± 0.020
+0.252 ± 0.026
+0.567 ± 0.006
+0.512 ± 0.031
+0.217 ± 0.004
+Deep SVDD
+–
+0.022 ± 0.012
+0.036 ± 0.015
+0.038 ± 0.019
+0.078 ± 0.033
+0.116 ± 0.042
+0.063 ± 0.018
+CVDD
+–
+0.358 ± 0.080
+0.348 ± 0.077
+0.416 ± 0.056
+0.428 ± 0.111
+0.352 ± 0.087
+0.132 ± 0.041
+k, mask on versus off, scoring rule, within-cluster overlap of the safe and unsafe active supports,
+extraction layer, SAE sparsity penalty, etc., along with many more detailed analysis.
+4
+Experiments
+4.1
+Setup
+Models.
+We evaluate on six instruction-tuned model families: qwen2-1.5b-instruct [Bai et al.,
+2023], ministral-8b-instruct [Liu et al., 2026], llama3-8b-instruct [Grattafiori et al., 2024],
+qwen3-8b, gpt-oss-20b, and gemma-4-26b. Activations are extracted from the residual stream
+at layer 20 for Qwen2-1.5B, layer 20 for Ministral, layer 25 for LLaMA3, layer 30 for Qwen3,
+layer 20 for GPT-oss, and layer 25 for Gemma-4-26B. Layers were chosen at mid-to-late depth,
+where safety-relevant features have emerged but the representation has not yet narrowed toward the
+output vocabulary, and were not tuned against downstream AUROC. For every input, we record the
+residual-stream activation of the model’s own generated response at the final response token.
+Data.
+The safe set pools general-capability and instruction-following data with the safe portions
+of the evaluation benchmarks, totaling approximately 206K examples per model; per-source com-
+position, splits, and licenses are deferred to Appendix D.2. We evaluate on three unsafe categories:
+BeaverTails [Ji et al., 2023] (requests for harmful content), ToxiGen [Hartvigsen et al., 2022] (toxic
+and hateful language), and HarmBench [Mazeika et al., 2024] adversarial attacks, pooled across eight
+attack algorithms. Reported AUROC and TPR@5%FPR are means across these three categories.
+Baselines, metrics, and method of focus.
+We compare against established one-class methods:
+global Mahalanobis distance [Nader et al., 2014], Gaussian Mixture Model (GMM), One-Class SVM
+[Schölkopf et al., 1999], Deep SVDD [Ruff et al., 2018], and CVDD [Ruff et al., 2019]. We also
+report a supervised linear probe as a reference ceiling; the probe is trained with access to unsafe
+labels and is not a competitor to the unsupervised framework. For each method, we report its AUROC
+and TPR@5%FPR (true positive rate at a 5% false positive rate). Additional implementation details
+are described in Appendix D.4.
+4.2
+Unsupervised Anomaly Detection on LLM Activations Is Feasible
+Table 1 reports 3-category AUROC and TPR@5%FPR across the six models. On four of the five
+≥8B models the two local-sparsification instantiations land in a tight band: FREQMASK-KM reaches
+AUROC 0.914 on Ministral, 0.937 on LLaMA3, 0.915 on Qwen3, and 0.900 on GPT-oss, and
+6
+
+
+Table 2: Decomposition of framework instantiations and baselines along three design axes: clustering,
+sparsification, and scoring. Performance is averaged across the five ≥8B models and 5 random seeds.
+The “Local” column marks whether scoring uses a sparse local subspace (•) or not (−). We use the
+mean AUROC from Table 1 across those five models. Methods in the upper block operate in the
+raw LLM activation space; methods in the lower block operate in an SAE feature space. Moving
+from activation space to SAE space in CVDD contributes a large share of the gain; once in SAE
+space, local-subspace constructions FREQMASK-KM and LEARNEDMASK-LORA land in the same
+AUROC band despite differing substantially.
+Method
+Local
+Clustering
+Sparsification
+Scoring
+AUROC
+Mahalanobis
+–
+None
+Full covariance
+Mahalanobis distance
+0.893
+GMM
+–
+Mixture models
+None
+Mixture likelihood
+0.903
+CVDD
+–
+KMeans
+None
+L2 to cluster centroid
+0.692
+CVDD (SAE space)
+–
+KMeans
+None
+L2 to cluster centroid
+0.806
+FREQMASK-KM
+•
+KMeans
+Global top-k
+L1 to cluster centroid
+0.904
+Local FREQMASK-KM
+•
+KMeans
+per-cluster top-k
+L1 to cluster centroid
+0.790
+LEARNEDMASK-LORA
+•
+KMeans
+per-cluster learned
+SAE residual
+0.909
+LEARNEDMASK-LORA 0.896, 0.912, 0.917, and 0.919 respectively. Gemma is the exception:
+its global-mask instantiation FREQMASK-KM is weaker (0.856), while the learned instantiation
+LEARNEDMASK-LORA stays in band (0.904) and is in fact the best unsupervised method on Gemma.
+FREQMASK-KM is the best unsupervised method on Ministral and LLaMA3; on Qwen3 and GPT-
+oss the GMM density baseline is marginally ahead (0.942 and 0.925), with a local instantiation
+second within 0.025 AUROC, and on Gemma LEARNEDMASK-LORA leads with Mahalanobis a
+close second (0.904 vs. 0.901). The representation-learning baselines trail substantially: CVDD at
+0.665–0.712 and Deep SVDD at 0.389–0.665, the latter with seed standard deviations up to 0.18,
+indicating that its optimization is not able to find a useful representation in this setting. A roughly
+0.04–0.08 AUROC gap to the supervised linear probe remains on the ≥8B models, which we read as
+the cost of dropping the assumption that the unsafe distribution is known in advance (Section 5).
+TPR@5%FPR is less uniform than AUROC: the best method varies by model—One-Class SVM on
+Ministral (0.694), FREQMASK-KM on LLaMA3 (0.457), GMM on Qwen3 (0.639) and GPT-oss
+(0.725), and LEARNEDMASK-LORA on Gemma (0.642)—while LEARNEDMASK-LORA stays
+within a few points of the best on every ≥8B model (0.685, 0.450, 0.581, 0.719, 0.642). No single
+method dominates across the ≥8B models, consistent with different LLMs having different internal
+representation geometries that may favor different algorithmic choices. On Qwen 1.5B, all unsu-
+pervised methods score below 0.80 AUROC with low TPR@5%FPR, indicating that representation
+quality bounds what unsupervised detection can recover. We defer the structural reading of these
+results to Section 4.3, where the decomposition table licenses it directly.
+4.3
+Decomposition: Which Design Choices Most Impact the Performance?
+Table 2 decomposes framework instantiations and baselines along representation space, clustering,
+sparsification, and scoring. The lower block isolates the role of the SAE embedding: CVDD (SAE
+space) is exactly CVDD with the SAE encoder substituted for the activation embedding and training.
+The three framework instantiations share KMeans clustering and nearest-centroid cluster assignment,
+and differ in how the sparse subspace is identified: globally by activation frequency (FREQMASK-
+KM), per-cluster by frequency (Local FREQMASK-KM), or per-cluster by a learned mask trained
+jointly with a LoRA adapter against SAE reconstruction (LEARNEDMASK-LORA).
+Representation space carries a large share of the gain.
+CVDD (SAE space) differs from CVDD
+only in the encoder. Substituting the SAE encoder for the activation embedding lifts mean AUROC
+from 0.692 to 0.806. Adding a sparse local subspace on top lifts it further: FREQMASK-KM and
+LEARNEDMASK-LORA reach 0.904 and 0.909 respectively, on par with or above the global density
+baselines (Mahalanobis 0.893, GMM 0.903) while operating in a much lower effective dimension.
+The mask is necessary for the largest models.
+We study the necessity of the mask by disabling it,
+scoring ℓ1 over all SAE features, and re-sweeping the cluster count Nc for the no-mask condition
+alone, so it is given its own best case (Table 3; full sweep and setup in Appendix F.2). The masked
+configuration matches or exceeds the best no-mask result on all five ≥8B models, and the gap grows
+with model size: +0.119 AUROC on GPT-oss 20B and +0.090 on Gemma 4 26B, against +0.010
+on Ministral 8B and a tie on LLaMA3 8B and Qwen3 8B. Larger models pack more concepts into a
+7
+
+
+Table 3: Comparison between the mask disabled against the deployed masked configuration. The
+masks improve the bigger models more significantly.
+Qwen 1.5B
+Ministral 8B
+LLaMA3 8B
+Qwen3 8B
+GPT-oss 20B
+Gemma 4 26B
+No mask
+0.776
+0.904
+0.937
+0.914
+0.781
+0.766
+Mask
+0.762
+0.914
+0.937
+0.915
+0.900
+0.856
+∆
+−0.014
++0.010
+0.000
++0.001
++0.119
++0.090
+101
+Effective dimension
+0
+5
+10
+15
+20
+25
+30
+Number of clusters
+LLaMA3-8B
+Per-cluster mask
+SAE space (72)
+Global mask (51)
+101
+Effective dimension
+Qwen3-8B
+Per-cluster mask
+SAE space (43)
+Global mask (41)
+101
+102
+Effective dimension
+GPT-OSS-20B
+Per-cluster mask
+SAE space (78)
+Global mask (18)
+Figure 3: Effective dimension (d90) across representation spaces for three of the model families; two
+more are shown in Appendix E (Figure 15), and Gemma-4-26B is omitted because its selected mask
+has only k = 25 features, which already bounds its masked d90 values by 25. Blue bars show the
+distribution of per-cluster d90 values, where each cluster’s d90 is computed on that cluster’s members
+within its own top-k mask Mc (the k SAE features that fire most often within the cluster, with k
+as for the global mask; Appendix E). Vertical lines mark d90 in the raw SAE feature space (dashed
+orange) and the global-mask subspace (solid green).
+given activation, so the local subspace is harder to recover from the dense SAE representation and the
+mask contributes more.
+Within the SAE space, the mechanism for finding the subspace does not dominate.
+FREQMASK-
+KM and LEARNEDMASK-LORA differ substantially in cost: global frequency selection is essentially
+free, whereas LEARNEDMASK-LORA requires fitting Nc masks and per-cluster low-rank adapters.
+Both are competitive against the global density baselines while operating in a lower effective dimen-
+sion. Their agreement is at the aggregate level rather than model by model: FREQMASK-KM leads by
+0.018 on Ministral and 0.025 on LLaMA3, the two are tied on Qwen3, and LEARNEDMASK-LORA
+leads by 0.019 on GPT-oss and 0.048 on Gemma (Table 1). Which construction wins is therefore
+model-dependent, but neither is far from the other on any ≥8B model. We read this as evidence
+for the structural claim: if local low effective dimension is the operative property, any reasonable
+procedure for surfacing that subspace should work. The comparability across instantiations supports
+the claim about structure rather than about any particular algorithm.
+4.4
+Local Effective Dimension Is Genuinely Low
+The framework’s feasibility and its robustness to design choice both rest on the premise that safe
+cluster members occupy low-dimensional subspaces of the SAE feature space. We test this by
+computing d90, the smallest number of PCA components explaining 90% of variance, in three spaces:
+SAE space, the global-mask subspace spanned by the k features selected by FREQMASK-KM, and,
+for each cluster separately, a subspace of the same size k spanned by the features most frequently
+active within that cluster (the mask used by Local FREQMASK-KM). Definitions are deferred to
+Appendix E; Figure 3 shows the per-cluster distribution for three of the model families, with two
+more in Appendix E.
+Across the three models, the per-cluster d90 is small in absolute terms (median 22 for LLaMA3-8B,
+20 for Qwen3-8B, and 17.5 for GPT-OSS-20B), a tiny fraction of the ambient SAE dimension
+(d2 = 16,384) and well below the raw SAE-space values of 72, 43, and 78 respectively. The per-
+cluster masks are not subsets of the global mask, so the three values describe different subspaces
+rather than successive restrictions of one another. Their relation is model-dependent: on LLaMA3-8B
+both masked subspaces are lower-dimensional than raw SAE space, with the per-cluster masks lowest
+(raw 72, global 51, per-cluster 22); on Qwen3-8B the raw and global-mask dimensions are already
+close (43 and 41), while the per-cluster masks give 20; and on GPT-OSS-20B the global mask alone
+brings the dimension from 78 to 18, and the per-cluster masks give a similar median (17.5). The two
+8
+
+
+Table 4: AUROC after per-cluster calibration fit from 1% of the unsafe data and 1% of the benign
+out-of-distribution data. Negatives are the held-out in-distribution safe points together with two novel
+benign domains absent from training (HellaSwag [Zellers et al., 2019] and HH-RLHF-helpful [Bai
+et al., 2022]); positives are the held-out unsafe points. In each column, the best result among the
+calibrated unsupervised methods is in bold and the second best is underlined. Means over 5 seeds.
+Methods that score on a local low-dimensional subspace obtain near-optimal performance.
+Method
+Qwen2-1.5B
+Ministral-8B
+LLaMA3-8B
+Qwen3-8B
+GPT-OSS-20B
+Gemma-4-26B
+FREQMASK-KM, uncalibrated
+0.265
+0.522
+0.712
+0.386
+0.750
+0.454
+FREQMASK-KM
+0.986
+0.973
+0.978
+0.985
+0.969
+0.962
+LEARNEDMASK-LORA
+0.985
+0.990
+0.987
+0.981
+0.982
+0.976
+GMM
+0.953
+0.969
+0.935
+0.967
+0.985
+0.901
+CVDD
+0.890
+0.920
+0.960
+0.964
+0.789
+0.317
+BCE (supervised)
+0.977
+0.981
+0.967
+0.975
+0.975
+0.953
+0.000
+0.015
+0.030
+share
+held-out safe (in-distribution)
+safe training data
+0.0
+0.1
+0.2
+share
+unsafe (BeaverTails, ToxiGen, HarmBench)
+0
+20
+40
+60
+80
+Cluster index (100 clusters)
+0.00
+0.15
+0.30
+share
+benign OOD (HellaSwag, HH-RLHF-helpful)
+Figure 4: Data distribution over clusters across held-out safe, unsafe, and benign OOD data on
+LLaMA3-8B. Each panel overlays the safe training data (light blue) with one other data source. The
+held-out safe data follows the training occupancy closely, while unsafe data and novel benign data
+each concentrate in a few clusters and in different clusters from one another.
+additional model families in Appendix E (Figure 15) follow the LLaMA3 pattern, with per-cluster
+medians of 36 (Qwen2-1.5B) and 40.5 (Ministral-8B). Across these five families the local effective
+dimension is consistently a small fraction of the ambient SAE dimension, which is what makes
+per-cluster scoring well posed.
+5
+Discussion and Limitations
+Limits of the supervised assumption.
+Supervised methods work only insofar as the labels cover
+the unsafe distribution at deployment, and the evidence across safety subfields suggests this coverage
+is rarely complete [Andriushchenko et al., 2024, Mazeika et al., 2024]. The one-class framing trades
+a 0.04–0.08 AUROC gap to the supervised probe on the ≥8B models (Table 1) for independence
+from this assumption, which is a reasonable trade in regimes where it is unreliable.
+Sensitivity to the safe distribution and calibration.
+Unsupervised detector assigns typicality score
+based on training representations of safe data. Consequently, benign regions of the input domain
+that are underrepresented during training may receive high anomaly scores regardless of their safety
+[Ruff et al., 2018]. Supervised detectors are also sensitive to such benign distribution shifts, while
+additionally relying on the unsafe training distribution remaining representative at deployment. The
+second requirement is arguably harder to satisfy, since unsafe inputs are open-ended and may evolve
+adversarially as new attack strategies emerge.
+Importantly, the cluster structure learned from safe data makes it possible to correct the remaining
+sensitivity to benign shift using only a small labeled subset. This relies on empirical observation
+that unsafe data cluster assignment is highly non-homogeneous. That is, unsafe and novel benign
+data concentrate in small subsets of clusters, while safe data is spread more evenly (Figure 4). We
+employ this observation to design a simple correction method. Instead of modifying the learned
+representations (i.e., retraining), we adjust the scoring within each cluster via an affine transformation
+calibrated on a small labeled subset. In particular, with 1% of the unsafe data and 1% of the benign
+9
+
+
+OOD data, AUROC rises from 0.265–0.750 to 0.962–0.990 across the six models, and benign false-
+positive rate displays substantial improvement from 0.12–0.92 to at most 0.041 (Tables 4 and 6). We
+note that such a low-sample regime instantiates a realistic practical scenario: While full unsafe and
+benign distributions are unavailable during the deployment, it is feasible to attain a small portion
+of each for calibration purposes. We defer the rest of the details and the additional discussion to
+Appendix B.
+6
+Theory: Generalization under Local Sparsity
+We study two questions separately: whether FREQMASK-KM estimates the safe geometry accurately,
+and whether this geometry retains the information needed to distinguish safe from unsafe inputs. The
+first question concerns estimation from safe data. The second also depends on the unsafe distribution
+and cannot be answered from local sparsity alone.
+Population and empirical detectors.
+Let P0 and P1 be the distributions of safe and unsafe inputs.
+Fix the representation z(x) := E(a(ℓ)(x)) ∈Rd2
++ and let Py be the distribution of z(X) for X ∼Py,
+y ∈{0, 1}. We analyze an independent sample Dn = (Z1, . . . , Zn) ∼P n
+0 , with K and k fixed.
+Thus, the result treats the SAE as given; it also applies conditionally on an SAE fitted using an
+independent safe sample. Assume EP0∥Z∥2
+2 < ∞, and fix population K-means centers
+(µ⋆
+1, . . . , µ⋆
+K) ∈argmin
+µ1,...,µK
+EP0 min
+c∈[K] ∥Z −µc∥2
+2.
+(4)
+Let c⋆(z) be the nearest-center index, breaking ties by the smallest index, and let πc = P0(c⋆(Z) = c).
+We assume πmin := minc πc > 0; then µ⋆
+c = E[Z | c⋆(Z) = c].
+The frequency mask is global, as in Algorithm 1. Set pj = P0(Zj > 0), let S⋆⊂[d2] contain the k
+largest pj, and put M ⋆= diag(1S⋆). For a target safe false-positive rate q ∈(0, 1), define
+s⋆(z) = ∥M ⋆(z −µ⋆
+c⋆(z))∥1,
+(5)
+τq = inf{t : P0(s⋆(Z) ≤t) ≥1 −q},
+f ⋆
+q (z) = 1{s⋆(z) > τq}.
+(6)
+This is the population one-class detector, not the optimal safe/unsafe classifier. Write bµc, bcn, and c
+M
+for the fitted centers, nearest-center assignment, and empirical global frequency mask. Their score is
+bsn(z) = ∥c
+M(z −bµbcn(z))∥1,
+bfn,q(z) = 1{bsn(z) > τq}.
+(7)
+We first compare the scores at the same population threshold. Independent safe-quantile calibration
+is treated separately in Appendix I.5, as a deployment procedure rather than a claim about the
+experimental protocol.
+Local geometry and clustering error.
+For each population cluster, let Jc ⊆S⋆be the coordinates
+that have nonzero conditional variance. Put smax = maxc |Jc| ≤k. This is a uniform clusterwise
+measure of local sparsity, distinct from the average neighborhood quantity sloc in (3).
+Assumption 1. For every c ∈[K], conditionally on c⋆(Z) = c,
+E∥M ⋆(Z −µ⋆
+c)∥2
+2 ≤v2,
+∥M ⋆(Z −µ⋆
+c)∥2 ≤B
+almost surely.
+(8)
+Here v2 bounds the masked within-cluster covariance trace. Let Ic = {i : c⋆(Zi) = c}, Nc = |Ic|,
+and let µc be the mean over Ic, with value zero when Nc = 0. After matching empirical and
+population cluster labels, define
+ρn = max
+c
+∥M ⋆(bµc −µc)∥1,
+(9)
+η0,n = P0(bcn(Z)̸ = c⋆(Z) | Dn).
+(10)
+The matching is any fixed measurable rule, chosen from the training sample. These are clustering
+errors, not assumptions that the errors vanish: ρn measures the effect of fitting the partition on the
+centroids, and η0,n measures changed assignments of fresh safe points. The theorem keeps both
+terms explicit.
+Assumption 2. For 1 ≤k < d2, the ordered frequencies satisfy γ := p(k) −p(k+1) > 0. Moreover,
+for some L0 < ∞,
+P0(|s⋆(Z) −τq| ≤t) ≤L0t,
+t ≥0.
+(11)
+10
+
+
+The frequency gap permits recovery of the mask. The second condition limits the mass of safe points
+whose decisions can change after a small perturbation of the score.
+Theorem 1. Suppose Assumptions 1 and 2 hold. Let δ ∈(0, 1) and let
+nπmin ≥8 log 4K
+δ ,
+n ≥8γ−2 log 4d2
+δ
+εn = ρn+
+r
+2smax
+nπmin
+ 
+v + B
+r
+2 log 4K
+δ
+!
+. (12)
+Then, with probability at least 1 −δ over Dn, it holds
+P0( bfn,q(Z)̸ = f ⋆
+q (Z) | Dn) ≤η0,n + L0εn.
+(13)
+Proof idea.
+Each population cluster contains at least nπc/2 observations with high probability.
+Its masked sample mean concentrates in ℓ2; converting to ℓ1 costs only √smax because the error
+is supported on Jc. Uniform frequency concentration identifies the global mask. Outside changed
+assignments, the scores then differ by at most εn, and (11) bounds the probability of a changed
+decision. For balanced clusters, the sampling term is of order eO(
+p
+Ksmax/n) when L0v, L0B are
+bounded. In particular, if K, smax ≲sloc, this becomes eO(sloc/√n). These are additional scaling
+conditions, not consequences of pointwise sparsity. Mask recovery has logarithmic dependence on
+d2; the theorem does not bound SAE training or the dimension dependence of ρn and η0,n.
+7
+Conclusion
+Anomaly detection is a viable approach to LLM safety once the local sparsity of activations is
+taken into account. Our framework decomposes the global problem into local sub-problems of low
+effective dimension. It admits a range of instantiations across embedding spaces, clustering choices,
+sparsification mechanisms, and scoring rules. Across six model families, multiple instantiations reach
+performance competitive with global one-class baselines. The low per-cluster effective dimension they
+rely on is empirically present in the representations. We read the comparability of these instantiations
+as evidence for the structural claim rather than for any particular algorithm. We believe that with
+stronger embeddings, unsupervised safety detection can be used in deployed LLM systems.
+Acknowledgment
+Xin Chen is supported by the Open Philanthropy AI Fellowship and the Vitalik Buterin Fellowship
+from the Future of Life Institute. The research received further support through ELSA (European
+Lighthouse on Secure and Safe AI) funded by the European Union under grant agreement No.
+101070617 and the Swiss National Science Foundation under NCCR Automation, grant agreement
+51NF40 180545. Alexander Shevchenko was supported by the Swiss National Science Foundation
+(SNSF) Grant 204439. Gil Kur conducted the part of the work during his visit to the IDEAL Institute,
+hosted by Lev Reyzin, which was supported by NSF ECCS-2217023.
+References
+Sandhini Agarwal, Lama Ahmad, Jason Ai, Sam Altman, Andy Applebaum, Edwin Arbus, Rahul K
+Arora, Yu Bai, Bowen Baker, Haiming Bao, et al. gpt-oss-120b & gpt-oss-20b model card. arXiv
+preprint arXiv:2508.10925, 2025.
+Charu C Aggarwal, Alexander Hinneburg, and Daniel A Keim. On the surprising behavior of distance
+metrics in high dimensional space. In International conference on database theory, pages 420–434.
+Springer, 2001.
+Maksym Andriushchenko, Francesco Croce, and Nicolas Flammarion. Jailbreaking leading safety-
+aligned llms with simple adaptive attacks. arXiv preprint arXiv:2404.02151, 2024.
+Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk Michalewski, David Dohan,
+Ellen Jiang, Carrie Cai, Michael Terry, Quoc Le, et al. Program synthesis with large language
+models. arXiv preprint arXiv:2108.07732, 2021.
+Jinze Bai, Shuai Bai, Yunfei Chu, Zeyu Cui, Kai Dang, Xiaodong Deng, Yang Fan, Wenbin Ge,
+Yu Han, Fei Huang, et al. Qwen technical report. arXiv preprint arXiv:2309.16609, 2023.
+11
+
+
+Yuntao Bai, Andy Jones, Kamal Ndousse, Amanda Askell, Anna Chen, Nova DasSarma, Dawn Drain,
+Stanislav Fort, Deep Ganguli, Tom Henighan, et al. Training a helpful and harmless assistant with
+reinforcement learning from human feedback. arXiv preprint arXiv:2204.05862, 2022.
+Yoshua Bengio, Nicholas Léonard, and Aaron Courville. Estimating or propagating gradients through
+stochastic neurons for conditional computation. arXiv preprint arXiv:1308.3432, 2013.
+Trenton Bricken, Adly Templeton, Joshua Batson, Brian Chen, Adam Jermyn, Tom Conerly, Nick
+Turner, Cem Anil, Carson Denison, Amanda Askell, Robert Lasenby, Yifan Wu, Shauna Kravec,
+Nicholas Schiefer, Tim Maxwell, Nicholas Joseph, Zac Hatfield-Dodds, Alex Tamkin, Karina
+Nguyen, Brayden McLean, Josiah E Burke, Tristan Hume, Shan Carter, Tom Henighan, and
+Christopher Olah. Towards monosemanticity: Decomposing language models with dictionary
+learning. Transformer Circuits Thread, 2023. https://transformer-circuits.pub/2023/monosemantic-
+features/index.html.
+Boyuan Chen, Sitong Fang, Jiaming Ji, Yanxu Zhu, Pengcheng Wen, Jinzhou Wu, Yingshui Tan,
+Boren Zheng, Mengying Yuan, Wenqi Chen, et al. Ai deception: Risks, dynamics, and controls.
+arXiv preprint arXiv:2511.22619, 2025a.
+Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde De Oliveira Pinto, Jared
+Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, et al. Evaluating large
+language models trained on code. arXiv preprint arXiv:2107.03374, 2021.
+Xin Chen, Yarden As, and Andreas Krause. Learning safety constraints for large language models.
+In International Conference on Machine Learning, pages 7664–7685. PMLR, 2025b.
+Xin Chen, Jie Zhang, and Florian Tramer. Learning to inject: Automated prompt injection via
+reinforcement learning. arXiv preprint arXiv:2602.05746, 2026.
+Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar Khot, Ashish Sabharwal, Carissa Schoenick, and
+Oyvind Tafjord. Think you have solved question answering? try arc, the ai2 reasoning challenge.
+arXiv preprint arXiv:1803.05457, 2018.
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser,
+Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, et al. Training verifiers to solve
+math word problems. arXiv preprint arXiv:2110.14168, 2021.
+Hoagy Cunningham, Aidan Ewart, Logan Riggs, Robert Huben, and Lee Sharkey. Sparse autoen-
+coders find highly interpretable features in language models. arXiv preprint arXiv:2309.08600,
+2023.
+Josef Dai, Xuehai Pan, Ruiyang Sun, Jiaming Ji, Xinbo Xu, Mickel Liu, Yizhou Wang, and
+Yaodong Yang. Safe rlhf: Safe reinforcement learning from human feedback. arXiv preprint
+arXiv:2310.12773, 2023.
+Xuefeng Du, Chaowei Xiao, and Yixuan Li. Haloscope: Harnessing unlabeled llm generations for
+hallucination detection. Advances in Neural Information Processing Systems, 37:102948–102972,
+2024.
+Nelson Elhage, Tristan Hume, Catherine Olsson, Nicholas Schiefer, Tom Henighan, Shauna Kravec,
+Zac Hatfield-Dodds, Robert Lasenby, Dawn Drain, Carol Chen, et al. Toy models of superposition.
+arXiv preprint arXiv:2209.10652, 2022.
+Dylan Feng, Pragya Srivastava, Anca Dragan, and Cassidy Laidlaw. Benchmarking anomaly detection
+for large language model alignment. In Submitted to The Fourteenth International Conference on
+Learning Representations, 2025. URL https://openreview.net/forum?id=Tr74UMzBdw.
+Leo Gao, Tom Dupré la Tour, Henk Tillman, Gabriel Goh, Rajan Troll, Alec Radford, Ilya
+Sutskever, Jan Leike, and Jeffrey Wu. Scaling and evaluating sparse autoencoders. arXiv preprint
+arXiv:2406.04093, 2024.
+12
+
+
+Sachin Goyal, Aditi Raghunathan, Moksh Jain, Harsha Vardhan Simhadri, and Prateek Jain. Drocc:
+Deep robust one-class classification. In International conference on machine learning, pages
+3711–3721. PMLR, 2020.
+Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad
+Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, et al. The llama 3 herd of
+models. arXiv preprint arXiv:2407.21783, 2024.
+Chuan Guo, Alexandre Sablayrolles, Hervé Jégou, and Douwe Kiela. Gradient-based adversarial
+attacks against text transformers. In Proceedings of the 2021 Conference on Empirical Methods in
+Natural Language Processing, pages 5747–5757, 2021.
+Thomas Hartvigsen, Saadia Gabriel, Hamid Palangi, Maarten Sap, Dipankar Ray, and Ece Kamar.
+Toxigen: A large-scale machine-generated dataset for adversarial and implicit hate speech detection.
+In Proceedings of the 60th annual meeting of the association for computational linguistics (volume
+1: Long papers), pages 3309–3326, 2022.
+Zhengfu He, Wentao Shu, Xuyang Ge, Lingjie Chen, Junxuan Wang, Yunhua Zhou, Frances Liu,
+Qipeng Guo, Xuanjing Huang, Zuxuan Wu, et al. Llama scope: Extracting millions of features
+from llama-3.1-8b with sparse autoencoders. arXiv preprint arXiv:2410.20526, 2024.
+Dan Hendrycks, Collin Burns, Steven Basart, Andy Zou, Mantas Mazeika, Dawn Song, and
+Jacob Steinhardt.
+Measuring massive multitask language understanding.
+arXiv preprint
+arXiv:2009.03300, 2020.
+Zesheng Hong, Yubiao Yue, Yubin Chen, Lele Cong, Huanjie Lin, Yuanmei Luo, Mini Han Wang,
+Weidong Wang, Jialong Xu, Xiaoqi Yang, et al. Out-of-distribution detection in medical image
+analysis: A survey. arXiv preprint arXiv:2404.18279, 2024.
+Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Liang Wang,
+Weizhu Chen, et al. Lora: Low-rank adaptation of large language models. Iclr, 1(2):3, 2022.
+Jonas Hübotter, Patrik Wolf, Alexander Shevchenko, Dennis Jüni, Andreas Krause, and Gil Kur.
+Specialization after generalization: Towards understanding test-time training in foundation models.
+arXiv preprint arXiv:2509.24510, 2025.
+Jiaming Ji, Mickel Liu, Josef Dai, Xuehai Pan, Chi Zhang, Ce Bian, Boyuan Chen, Ruiyang Sun,
+Yizhou Wang, and Yaodong Yang. Beavertails: Towards improved safety alignment of llm via a
+human-preference dataset. Advances in Neural Information Processing Systems, 36:24678–24704,
+2023.
+Jeff Johnson, Matthijs Douze, and Hervé Jégou. Billion-scale similarity search with GPUs. IEEE
+Transactions on Big Data, 7(3):535–547, 2019.
+Subhash Kantamneni, Joshua Engels, Senthooran Rajamanoharan, Max Tegmark, and Neel Nanda.
+Are sparse autoencoders useful? a case study in sparse probing. arXiv preprint arXiv:2502.16681,
+2025.
+Lorenz Kuhn, Yarin Gal, and Sebastian Farquhar. Semantic uncertainty: Linguistic invariances for
+uncertainty estimation in natural language generation. arXiv preprint arXiv:2302.09664, 2023.
+Alexander H Liu, Kartik Khandelwal, Sandeep Subramanian, Victor Jouault, Abhinav Rastogi, Adrien
+Sadé, Alan Jeffares, Albert Jiang, Alexandre Cahill, Alexandre Gavaudan, et al. Ministral 3. arXiv
+preprint arXiv:2601.08584, 2026.
+Jiawei Liu, Chunqiu Steven Xia, Yuyao Wang, and Lingming Zhang. Is your code generated
+by chatGPT really correct? rigorous evaluation of large language models for code generation.
+In Thirty-seventh Conference on Neural Information Processing Systems, 2023a. URL https:
+//openreview.net/forum?id=1qvx610Cu7.
+Xiaogeng Liu, Nan Xu, Muhao Chen, and Chaowei Xiao. Autodan: Generating stealthy jailbreak
+prompts on aligned large language models. arXiv preprint arXiv:2310.04451, 2023b.
+13
+
+
+Mantas Mazeika, Long Phan, Xuwang Yin, Andy Zou, Zifan Wang, Norman Mu, Elham Sakhaee,
+Nathaniel Li, Steven Basart, Bo Li, et al. Harmbench: A standardized evaluation framework for
+automated red teaming and robust refusal. arXiv preprint arXiv:2402.04249, 2024.
+Tomas Mikolov, Kai Chen, Greg Corrado, and Jeffrey Dean. Efficient estimation of word representa-
+tions in vector space. arXiv preprint arXiv:1301.3781, 2013.
+Patric Nader, Paul Honeine, and Pierre Beauseroy. Mahalanobis-based one-class classification. In
+2014 IEEE International Workshop on Machine Learning for Signal Processing (MLSP), pages
+1–6. IEEE, 2014.
+Milad Nasr, Nicholas Carlini, Chawin Sitawarin, Sander V Schulhoff, Jamie Hayes, Michael Ilie,
+Juliette Pluto, Shuang Song, Harsh Chaudhari, Ilia Shumailov, et al. The attacker moves second:
+Stronger adaptive attacks bypass defenses against llm jailbreaks and prompt injections. arXiv
+preprint arXiv:2510.09023, 2025.
+Ori Nizan and Ayellet Tal. k-nnn: nearest neighbors of neighbors for anomaly detection. In
+Proceedings of the IEEE/CVF Winter conference on applications of computer vision, pages 1005–
+1014, 2024.
+Changdae Oh, Zhen Fang, Shawn Im, Xuefeng Du, and Yixuan Li. Understanding multimodal llms
+under distribution shifts: An information-theoretic approach. In International Conference on
+Machine Learning, pages 46943–46970. PMLR, 2025.
+Kiho Park, Yo Joong Choe, and Victor Veitch. The linear representation hypothesis and the geometry
+of large language models. arXiv preprint arXiv:2311.03658, 2023.
+Kiho Park, Yo Joong Choe, Yibo Jiang, and Victor Veitch.
+The geometry of categorical and
+hierarchical concepts in large language models. In The Thirteenth International Conference on
+Learning Representations, 2025a.
+Seongheon Park, Xuefeng Du, Min-Hsuan Yeh, Haobo Wang, and Yixuan Li. Steer llm latents for
+hallucination detection. arXiv preprint arXiv:2503.01917, 2025b.
+Gonçalo Paulo, Alex Mallen, Caden Juang, and Nora Belrose. Automatically interpreting millions of
+features in large language models. arXiv preprint arXiv:2410.13928, 2024.
+Pramuditha Perera, Poojan Oza, and Vishal M Patel. One-class classification: A survey. arXiv
+preprint arXiv:2101.03064, 2021.
+ReasoningTransferability.
+math_sft_40K.
+https://huggingface.co/datasets/
+ReasoningTransferability/math_sft_40K, 2025. HuggingFace dataset.
+Jie Ren, Jiaming Luo, Yao Zhao, Kundan Krishna, Mohammad Saleh, Balaji Lakshminarayanan, and
+Peter J Liu. Out-of-distribution detection and selective generation for conditional language models.
+arXiv preprint arXiv:2209.15558, 2022.
+Alexander Robey, Eric Wong, Hamed Hassani, and George J Pappas. Smoothllm: Defending large
+language models against jailbreaking attacks. arXiv preprint arXiv:2310.03684, 2023.
+Lukas Ruff, Robert Vandermeulen, Nico Goernitz, Lucas Deecke, Shoaib Ahmed Siddiqui, Alexander
+Binder, Emmanuel Müller, and Marius Kloft. Deep one-class classification. In International
+conference on machine learning, pages 4393–4402. PMLR, 2018.
+Lukas Ruff, Yury Zemlyanskiy, Robert Vandermeulen, Thomas Schnake, and Marius Kloft. Self-
+attentive, multi-context one-class classification for unsupervised anomaly detection on text. In
+Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages
+4061–4071, 2019.
+Bernhard Schölkopf, Robert C Williamson, Alex Smola, John Shawe-Taylor, and John Platt. Support
+vector method for novelty detection. Advances in neural information processing systems, 12, 1999.
+14
+
+
+Mrinank Sharma, Meg Tong, Tomasz Korbak, David Duvenaud, Amanda Askell, Samuel R Bowman,
+Newton Cheng, Esin Durmus, Zac Hatfield-Dodds, Scott R Johnston, et al. Towards understanding
+sycophancy in language models. arXiv preprint arXiv:2310.13548, 2023.
+Mrinank Sharma, Meg Tong, Jesse Mu, Jerry Wei, Jorrit Kruthoff, Scott Goodfriend, Euan Ong,
+Alwin Peng, Raj Agarwal, Cem Anil, et al. Constitutional classifiers: Defending against universal
+jailbreaks across thousands of hours of red teaming. arXiv preprint arXiv:2501.18837, 2025.
+Taylor Shin, Yasaman Razeghi, Robert L Logan IV, Eric Wallace, and Sameer Singh. Autoprompt:
+Eliciting knowledge from language models with automatically generated prompts. In Proceedings
+of the 2020 conference on empirical methods in natural language processing (EMNLP), pages
+4222–4235, 2020.
+Rohan Taori, Ishaan Gulrajani, Tianyi Zhang, Yann Dubois, Xuechen Li, Carlos Guestrin, Percy
+Liang, and Tatsunori B. Hashimoto. Stanford alpaca: An instruction-following llama model.
+https://github.com/tatsu-lab/stanford_alpaca, 2023.
+Gemma Team. Gemma 4 technical report, 2026. URL https://arxiv.org/abs/2607.02770.
+Adly Templeton, Tom Conerly, Jonathan Marcus, Jack Lindsey, Trenton Bricken, Brian Chen, Adam
+Pearce, Craig Citro, Emmanuel Ameisen, Andy Jones, Hoagy Cunningham, Nicholas L Turner,
+Callum McDougall, Monte MacDiarmid, C. Daniel Freeman, Theodore R. Sumers, Edward Rees,
+Joshua Batson, Adam Jermyn, Shan Carter, Chris Olah, and Tom Henighan. Scaling monoseman-
+ticity: Extracting interpretable features from claude 3 sonnet. Transformer Circuits Thread, 2024.
+URL https://transformer-circuits.pub/2024/scaling-monosemanticity/index.html.
+Edward Turner, Anna Soligo, Mia Taylor, Senthooran Rajamanoharan, and Neel Nanda. Model
+organisms for emergent misalignment. arXiv preprint arXiv:2506.11613, 2025.
+Akifumi Wachi, Thien Q Tran, Rei Sato, Takumi Tanabe, and Youhei Akimoto. Stepwise alignment
+for constrained language model policy optimization. Advances in Neural Information Processing
+Systems, 37:104471–104520, 2024.
+Eric Wallace, Shi Feng, Nikhil Kandpal, Matt Gardner, and Sameer Singh. Universal adversarial
+triggers for attacking and analyzing nlp. In Proceedings of the 2019 conference on empirical
+methods in natural language processing and the 9th international joint conference on natural
+language processing (EMNLP-IJCNLP), pages 2153–2162, 2019.
+Yuxin Wen, Neel Jain, John Kirchenbauer, Micah Goldblum, Jonas Geiping, and Tom Goldstein.
+Hard prompts made easy: Gradient-based discrete optimization for prompt tuning and discovery.
+Advances in Neural Information Processing Systems, 36:51008–51025, 2023.
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang
+Gao, Chengen Huang, Chenxu Lv, et al. Qwen3 technical report. arXiv preprint arXiv:2505.09388,
+2025.
+Fan Yin, Jayanth Srinivasa, and Kai-Wei Chang. Characterizing truthfulness in large language model
+generations with local intrinsic dimension. arXiv preprint arXiv:2402.18048, 2024.
+Vladimir Zaigrajew, Hubert Baniecki, and Przemyslaw Biecek. Interpreting clip with hierarchical
+sparse autoencoders. arXiv preprint arXiv:2502.20578, 2025.
+Rowan Zellers, Ari Holtzman, Yonatan Bisk, Ali Farhadi, and Yejin Choi. Hellaswag: Can a machine
+really finish your sentence? In Proceedings of the 57th annual meeting of the association for
+computational linguistics, pages 4791–4800, 2019.
+Shenyi Zhang, Yuchen Zhai, Keyan Guo, Hongxin Hu, Shengnan Guo, Zheng Fang, Lingchen Zhao,
+Chao Shen, Cong Wang, and Qian Wang. {JBShield}: Defending large language models from
+jailbreak attacks through activated concept analysis and manipulation. In 34th USENIX Security
+Symposium (USENIX Security 25), pages 8215–8234, 2025.
+15
+
+
+Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang,
+Zi Lin, Zhuohan Li, Dacheng Li, Eric Xing, et al. Judging llm-as-a-judge with mt-bench and
+chatbot arena. Advances in neural information processing systems, 36:46595–46623, 2023.
+Arthur Zimek, Erich Schubert, and Hans-Peter Kriegel. A survey on unsupervised outlier detection
+in high-dimensional numerical data. Statistical Analysis and Data Mining: The ASA Data Science
+Journal, 5(5):363–387, 2012.
+Andy Zou, Zifan Wang, Nicholas Carlini, Milad Nasr, J Zico Kolter, and Matt Fredrikson. Universal
+and transferable adversarial attacks on aligned language models. arXiv preprint arXiv:2307.15043,
+2023.
+Andy Zou, Long Phan, Justin Wang, Derek Duenas, Maxwell Lin, Maksym Andriushchenko, Rowan
+Wang, Zico Kolter, Matt Fredrikson, and Dan Hendrycks. Improving alignment and robustness
+with circuit breakers. Advances in Neural Information Processing Systems, 37:83345–83373, 2024.
+16
+
+
+A
+Broader Impacts
+The motivation for a one-class framing is that supervised safety methods depend on having labels for
+the unsafe distribution at deployment, a condition that is rarely fully met in practice (Section 5). A
+detector that scores typicality with respect to safe behavior, rather than similarity to a fixed catalog of
+harms, can in principle flag previously unseen attack strategies and out-of-domain inputs without
+requiring those specific examples to be labeled in advance. To the extent the framework in this paper
+extends, it offers a route to safety methods that degrade more gracefully as adversarial techniques
+evolve, complementing rather than replacing existing supervised pipelines.
+The main risk we see runs in the other direction. The sensitivity to the safe distribution discussed
+in Section 5 can produce false positives on legitimate benign inputs whose distribution differs from
+the safe training set, and an operator may respond by loosening the threshold, which simultaneously
+reduces detection of genuinely unsafe inputs. Operators relying on this kind of detector in isolation,
+without the calibration of Section 5 or a comparable safeguard against benign distribution shift,
+risk worse safety outcomes than a well-calibrated supervised classifier on a stable distribution. We
+explicitly do not advocate for unsupervised methods as standalone replacements for supervised safety
+systems.
+B
+Per-Cluster Calibration from a Small Labeled Budget
+This section details the recalibration procedure used in Section 5, gives the observation that motivates
+it, and reports the full results across all six models.
+Motivation.
+The framework of Section 3 is fit without supervision, whereas the supervised probe
+of Section 4.2 requires enough labels to train a classifier. Many deployments fall between these
+two regimes: they can label a small sample, but not one large enough to characterize the unsafe
+distribution. We use such a sample to rescale the scores of an already-trained detector instead of
+training a classifier on it. The procedure reads only precomputed scores and cluster assignments, so
+the detector and its training are left untouched and no GPU is required.
+The rescaling is fit per cluster because the clusters differ from one another in three respects, all
+measured on the deployed detector and shown in Figures 5 and 6 and Figure 4. First, the score
+is on a different scale in each cluster. On LLaMA3-8B the single global threshold that costs 5%
+false positives overall is higher than every safe score in 71 of the 98 clusters that contain at least
+ten safe points, and lower than the median safe score in 7 of them, so that one threshold flags no
+safe point in the first group and more than half of the safe points in the second. Second, the clusters
+differ in how well the within-cluster distance separates safe from unsafe points, from near-perfect
+separation to none. Third, unsafe points and benign out-of-distribution points are concentrated in
+different clusters. To make this precise, we count for each cluster how many unsafe evaluation points
+it contains, and then take clusters in decreasing order of that count until they account for half of all
+unsafe points. Between 2 and 9 clusters are enough, out of the 50 to 200 the model has, and a large
+fraction of the remaining clusters contain no unsafe point at all. Repeating the same count for the
+benign out-of-distribution points takes even fewer clusters, between 1 and 3. On every one of the six
+models, these two groups of clusters have no cluster in common. This describes where each kind
+of point is concentrated and not where it is allowed to occur: individual clusters, including some
+in the two groups, do contain both kinds of point. Figure 4 shows this per cluster on LLaMA3-8B,
+and Figures 7 to 11 repeat the same view on the other five: held-out safe data follows the training
+occupancy, while the two atypical groups each collapse onto a few clusters. Lowering the score in
+the clusters that hold most of the benign out-of-distribution points therefore need not lower it in the
+clusters that hold most of the unsafe points.
+The rescaling has to vary across clusters to have any effect on the metrics we report. Both AUROC
+and recall at a fixed FPR depend on the scores only through the ranking they induce. A single
+global map s 7→a0s + b0 with a0 > 0 is strictly increasing, so it leaves that ranking, and therefore
+both metrics, unchanged. Coefficients that differ across clusters are what allow inputs assigned to
+different clusters to be reordered relative to one another. A global fit is still computed, but it enters
+the procedure as the shrinkage target (a0, b0) defined below, not as a calibration in its own right.
+Setup.
+A one-class detector routes each input x to its nearest latent cluster c(x) and produces a
+score s(x), the (masked) distance to that cluster’s centroid. At deployment a single global threshold
+on s(x) yields the safe/unsafe decision.
+17
+
+
+100
+101
+102
+103
+Eval points (count)
+cluster 28
+S 429 / B 0 / U 17,373
+100
+101
+102
+cluster 69
+S 569 / B 4,159 / U 0
+100
+101
+102
+103
+cluster 48
+S 502 / B 0 / U 23,566
+100
+101
+102
+103
+cluster 65
+S 533 / B 15,582 / U 0
+20
+40
+60
+80
+Score (masked 
+1)
+100
+101
+102
+Eval points (count)
+cluster 10
+S 601 / B 8,108 / U 7
+20
+40
+60
+80
+Score (masked 
+1)
+100
+101
+102
+cluster 54
+S 249 / B 7,423 / U 792
+20
+40
+60
+80
+Score (masked 
+1)
+100
+101
+102
+103
+cluster 55
+S 1,501 / B 0 / U 40,108
+20
+40
+60
+80
+Score (masked 
+1)
+100
+101
+102
+103
+cluster 13
+S 510 / B 2,081 / U 60,372
+LLaMA3-8B: per-cluster score distributions (shared x-axis across panels)
+in-dist safe
+benign-OOD
+unsafe
+global 5%-FPR threshold (= 65.37, same on every panel)
+Figure 5: Per-cluster score distributions on LLaMA3-8B for the three groups: in-distribution safe,
+benign out-of-distribution, and unsafe. Counts are on a log axis, since the smaller group is invisible at
+linear scale (cluster 13 holds 60,372 unsafe points against 510 safe). All panels use the same x-range,
+so scores are directly comparable across panels. The dashed line is the same global threshold in every
+panel, the one costing 5% false positives over all in-distribution safe points. Its position within each
+cluster’s score distribution differs: in cluster 55 it lies in the middle of the unsafe distribution, while
+in clusters 65 and 69 most benign out-of-distribution points fall below it. Clusters are selected by
+a fixed rule (the three largest by benign-OOD count, the three largest by unsafe count, and the two
+largest containing no unsafe point, deduplicated) and ordered by median score. The other five models
+behave similarly; Figure 6 reports the per-cluster score spread for all six.
+Labeled sample.
+The calibration sample is drawn once per run and contains three groups: a fraction
+p of the unsafe inputs, the same fraction p of the benign out-of-distribution inputs, and half of the
+in-distribution safe inputs. The safe pool is not budget-limited because in-distribution safe data is
+abundant by assumption, whereas labeled unsafe examples and labeled examples of a novel benign
+domain are equally costly to obtain, so they are drawn at a common rate. We refer to p as the coupled
+budget; it is the horizontal axis of Figures 12 to 14. The inputs not drawn form the evaluation set, so
+the two are disjoint and no calibration point is scored at evaluation time.
+Calibration map.
+We replace the raw score with a per-cluster affine map of it,
+g(x) = ac(x) s(x) + bc(x),
+Pr(unsafe | x) = σ(g(x)) ,
+σ(z) =
+1
+1 + e−z ,
+(14)
+so that every cluster c has its own coefficient pair (ac, bc) ∈R2. Benign out-of-distribution points
+enter the fit with the safe label. Scoring uses g(x) with a single global threshold, and all reported
+metrics are threshold-free except the false-positive rate defined below.
+Importance weights.
+The three groups are sampled at different rates: a fraction p of the unsafe
+points, the same fraction p of the benign out-of-distribution points, and one half of the in-distribution
+safe points. The calibration sample therefore has a different composition than the data the detector is
+applied to. At p = 1% it holds one labeled unsafe point for every 100 in the unsafe pool, but one
+labeled safe point for every 2 in the safe pool, so unsafe points are under-represented in it by a factor
+of 50 relative to safe points. An unweighted fit would place the coefficients, and in particular the
+offsets bc, where they suit that composition rather than the full data. We therefore weight each point
+by the reciprocal of its group’s sampling fraction,
+wi =
+
+
+
+1/p
+if i is unsafe,
+1/p
+if i is benign out-of-distribution,
+2
+if i is in-distribution safe,
+(15)
+so that each labeled point counts once for every point of its group that it stands for. The weight
+2 on in-distribution safe points is that same rule applied to a sampling fraction of one half: each
+18
+
+
+102
+Score of safe points (masked 
+1)
+Qwen2-1.5B
+101
+6×100
+2×101
+3×101
+Ministral-8B
+101
+102
+LLaMA3-8B
+Clusters, ordered by median safe score
+102
+Score of safe points (masked 
+1)
+Qwen3-8B
+Clusters, ordered by median safe score
+103
+GPT-OSS-20B
+Clusters, ordered by median safe score
+100
+101
+Gemma-4-26B
+(a) Score scale differs between clusters, and the global threshold lands at a different quantile in each
+per-cluster spread of the safe score (box: IQR, whiskers: 1.5 IQR)
+that model's global 5%-FPR threshold
+Figure 6: Per-cluster spread of the score over in-distribution safe points, for all six models, clusters
+ordered by median, with each model’s own global 5%-FPR threshold as a dashed line. The per-cluster
+medians span roughly an order of magnitude within every model, and the thresholds themselves differ
+by two orders of magnitude across models (18.9 on Gemma-4-26B to 2094 on GPT-OSS-20B), so no
+score scale is shared either within or across models.
+0.000
+0.015
+0.030
+share
+held-out safe (in-distribution)
+safe training data
+0.00
+0.15
+0.30
+share
+unsafe (BeaverTails, ToxiGen, HarmBench)
+0
+25
+50
+75
+100
+125
+150
+175
+Cluster index (200 clusters)
+0.00
+0.15
+0.30
+share
+benign OOD (HellaSwag, HH-RLHF-helpful)
+Figure 7: Per-cluster occupancy on Qwen2-1.5B (200 clusters). Axes, colors and panel order are as
+in Figure 4. Total variation distance from the training occupancy is 0.11 for held-out safe, 0.72 for
+unsafe and 0.86 for benign out-of-distribution.
+labeled safe point stands for itself and for one safe point that was not sampled. With these weights
+the weighted group sizes in the calibration sample equal the true group sizes, and the weighted sum
+in the objectives below is an unbiased estimate of the same sum taken over the full data.
+Global anchor.
+The labeled sample is small and is divided over 50 to 200 clusters, so many clusters
+receive few labeled points and some receive none. Fitting every cluster independently on its own
+points is therefore not possible: a cluster whose labeled points are all safe or all unsafe is linearly
+separable and has no finite logistic fit, and a cluster with no labeled point has nothing to fit at all. We
+introduce (a0, b0) as the estimate to fall back on in these cases. It is obtained by weighted logistic
+regression over all labeled points pooled together, ignoring cluster membership:
+(a0, b0) = argmin
+a,b
+X
+i
+wi ℓ(yi, asi + b) + ε
+ a2 + b2
+,
+(16)
+19
+
+
+0.00
+0.04
+0.08
+share
+held-out safe (in-distribution)
+safe training data
+0.00
+0.15
+0.30
+share
+unsafe (BeaverTails, ToxiGen, HarmBench)
+0
+10
+20
+30
+40
+Cluster index (50 clusters)
+0.00
+0.15
+0.30
+share
+benign OOD (HellaSwag, HH-RLHF-helpful)
+Figure 8: Per-cluster occupancy on Ministral-8B (50 clusters). Axes, colors and panel order are as
+in Figure 4. Total variation distance from the training occupancy is 0.10 for held-out safe, 0.64 for
+unsafe and 0.76 for benign out-of-distribution.
+0.000
+0.015
+0.030
+share
+held-out safe (in-distribution)
+safe training data
+0.00
+0.15
+0.30
+share
+unsafe (BeaverTails, ToxiGen, HarmBench)
+0
+20
+40
+60
+80
+Cluster index (100 clusters)
+0.0
+0.4
+0.8
+share
+benign OOD (HellaSwag, HH-RLHF-helpful)
+Figure 9: Per-cluster occupancy on Qwen3-8B (100 clusters). Axes, colors and panel order are as
+in Figure 4. Total variation distance from the training occupancy is 0.11 for held-out safe, 0.73 for
+unsafe and 0.90 for benign out-of-distribution.
+where yi ∈{0, 1} labels input i as safe (including benign-OOD) or unsafe and ℓis the logistic loss,
+ℓ(y, z) = −
+h
+y log σ(z) + (1 −y) log
+ 1 −σ(z)
+i
+.
+(17)
+The term ε (a2 + b2) with ε = 10−3 is a small ridge that keeps the minimizer finite when the labeled
+sample is close to linearly separable.
+Two properties make this pair a suitable fallback. It is estimated from every labeled point at once, so
+it remains well determined at budgets at which individual clusters hold almost no labeled data. It is
+also the best affine map available to a procedure that may not use cluster membership, so taking it as
+the target of the penalty in the next paragraph states the assumption that a cluster behaves like the
+pooled data unless its own labeled points show otherwise. Shrinking toward (0, 0) instead, which is
+what a plain ridge penalty would do, would drive ac and bc toward zero and discard the score entirely
+in exactly those clusters that hold too little labeled data to estimate anything. Note that (a0, b0) is
+never used to score inputs on its own: as shown above, a single global affine map leaves AUROC and
+recall unchanged.
+20
+
+
+0.00
+0.06
+0.12
+share
+held-out safe (in-distribution)
+safe training data
+0.0
+0.2
+0.4
+share
+unsafe (BeaverTails, ToxiGen, HarmBench)
+0
+10
+20
+30
+40
+Cluster index (50 clusters)
+0.00
+0.25
+0.50
+share
+benign OOD (HellaSwag, HH-RLHF-helpful)
+Figure 10: Per-cluster occupancy on GPT-OSS-20B (50 clusters). Axes, colors and panel order are as
+in Figure 4. Total variation distance from the training occupancy is 0.17 for held-out safe, 0.67 for
+unsafe and 0.78 for benign out-of-distribution.
+0.00
+0.04
+0.08
+share
+held-out safe (in-distribution)
+safe training data
+0.0
+0.2
+0.4
+share
+unsafe (BeaverTails, ToxiGen, HarmBench)
+0
+10
+20
+30
+40
+Cluster index (50 clusters)
+0.00
+0.15
+0.30
+share
+benign OOD (HellaSwag, HH-RLHF-helpful)
+Figure 11: Per-cluster occupancy on Gemma-4-26B (50 clusters). Axes, colors and panel order are as
+in Figure 4. Total variation distance from the training occupancy is 0.17 for held-out safe, 0.62 for
+unsafe and 0.87 for benign out-of-distribution.
+Per-cluster estimation.
+Each cluster then minimizes the same weighted loss, restricted to the points
+assigned to that cluster, with an ℓ2 penalty pulling its coefficients toward the anchor,
+(ac, bc) = argmin
+a,b
+X
+i : c(xi)=c
+wi ℓ(yi, asi + b) + λ ∥(a, b) −(a0, b0)∥2
+2 ,
+(18)
+initialized at (a0, b0). The likelihood term is a sum over the labeled points assigned to cluster c while
+λ is fixed, so the penalty dominates the objective for clusters holding few labeled points and the
+likelihood dominates for clusters holding many; a cluster with no labeled points retains the anchor
+exactly. The estimator therefore interpolates between the global map and an unconstrained per-cluster
+fit as a function of how many labeled points each cluster receives. We select λ ∈{1, 10, 100} by
+cross-validation within the labeled sample, scoring folds by AUROC. Note that a negative ac is
+permitted, which is what allows the procedure to repair clusters in which the raw score ranks unsafe
+points as closer to the centroid than safe ones; such clusters exist on every model (Figure 6).
+Evaluation protocol.
+The test pool is fixed and always contains all three groups, so the numbers
+before and after calibration are computed on identical data. Negatives are the held-out in-distribution
+safe points together with the held-out benign out-of-distribution points (HellaSwag, 10,042 examples,
+and HH-RLHF-helpful, 43,835 examples); positives are the held-out unsafe pool. A detector that flags
+a novel benign domain is therefore penalized by this metric. Two quantities are reported. AUROC
+21
+
+
+Table 5: Recall at the threshold costing 5% false positives on the in-distribution safe points, at the
+coupled budget p = 1%. Higher is better. The first row is the deployed detector before calibration.
+Method
+Qwen2-1.5B
+Ministral-8B
+LLaMA3-8B
+Qwen3-8B
+GPT-OSS-20B
+Gemma-4-26B
+FREQMASK-KM, uncalibrated
+0.000
+0.051
+0.137
+0.000
+0.295
+0.004
+FREQMASK-KM
+0.970
+0.840
+0.913
+0.978
+0.777
+0.681
+LEARNEDMASK-LORA
+0.957
+0.977
+0.981
+0.956
+0.902
+0.837
+GMM
+0.531
+0.882
+0.743
+0.819
+0.894
+0.402
+CVDD
+0.620
+0.527
+0.638
+0.783
+0.117
+0.002
+BCE (supervised)
+0.910
+0.947
+0.905
+0.926
+0.911
+0.800
+Table 6: False-positive rate on the held-out benign out-of-distribution domains, measured at the
+threshold costing 5% false positives on the in-distribution safe points, at the coupled budget p = 1%.
+Lower is better. The first row is the deployed detector before calibration. Means over 5 seeds.
+Method
+Qwen2-1.5B
+Ministral-8B
+LLaMA3-8B
+Qwen3-8B
+GPT-OSS-20B
+Gemma-4-26B
+FREQMASK-KM, uncalibrated
+0.920
+0.730
+0.155
+0.832
+0.123
+0.622
+FREQMASK-KM
+0.002
+0.012
+0.015
+0.003
+0.041
+0.026
+LEARNEDMASK-LORA
+0.000
+0.002
+0.005
+0.007
+0.007
+0.004
+GMM
+0.068
+0.001
+0.011
+0.010
+0.002
+0.009
+CVDD
+0.001
+0.014
+0.038
+0.014
+0.000
+0.831
+BCE (supervised)
+0.070
+0.018
+0.045
+0.032
+0.017
+0.035
+uses this pooled negative set, so it is a strictly harder quantity than the AUROC of Table 1, whose
+negatives are in-distribution safe only; the two are not comparable. The benign false-positive rate is
+the fraction of held-out benign-OOD points scored above the threshold that costs 5% false positives
+on held-out in-distribution safe points alone, which is the same operating point at which recall is
+reported, so recall and the benign false-positive rate are computed at the same threshold. All numbers
+are means over five seeds.
+Results across models.
+Figures 12 to 14 report every method on all six models as a function of the
+coupled budget. At the largest budget we measure (p = 0.02), per-cluster calibration raises AUROC
+from 0.267–0.750 to 0.962–0.987 for FREQMASK-KM, and from 0.308–0.476 to 0.978–0.992 for
+LEARNEDMASK-LORA. Unlike the unsafe-only budget studied in earlier versions of this experiment,
+the gain here is monotone in the budget at the low end: even at the smallest budget we measure
+(p = 3 × 10−5, of the order of ten labeled examples of each kind) the calibrated score is above the
+uncalibrated one on every model and both detectors, reaching 0.730–0.892 for FREQMASK-KM
+and 0.645–0.824 for LEARNEDMASK-LORA. The reason is that the uncalibrated detector is very
+poor on this test pool to begin with, so even a coarse per-cluster offset estimated from a handful of
+points is an improvement, whereas against in-distribution negatives alone the uncalibrated detector is
+already strong and a noisy calibration can reduce AUROC at the smallest budgets.
+Table 5 reports recall at the 5% operating point, the third quantity reported for this experiment,
+alongside the AUROC of Section 5.
+C
+Related Work
+C.1
+LLM Safety
+The term “safety” is used across several research communities to refer to related but distinct concerns.
+The concerns range from harmful content generation, addressed by RLHF-based alignment [Dai
+et al., 2023, Wachi et al., 2024] and content-filtering systems [Sharma et al., 2025]; to adversarial
+robustness against jailbreaks and prompt injections [Mazeika et al., 2024, Chen et al., 2026]; to
+alignment properties such as deception [Chen et al., 2025a] and sycophancy [Sharma et al., 2023];
+and to application-domain boundaries, where an input outside a deployed system’s intended domain
+is treated as unsafe even when it is not harmful in absolute terms [Hong et al., 2024].
+Each of these definitions has developed its own methodology, and in each case, the dominant
+paradigm is supervised or otherwise commits to a specific hypothesis about what unsafe inputs look
+like, whether through labeled training data [Park et al., 2025b], identified concept directions [Zhang
+et al., 2025], or assumed brittleness under perturbation [Robey et al., 2023]. Our contribution is to
+22
+
+
+0.003%
+(9)
+0.01%
+(31)
+0.03%
+(93)
+0.1%
+(312)
+0.3%
+(935)
+1%
+(3k)
+2%
+(6k)
+Labeled budget seen (% / count)
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+AUROC ( )
+FreqMask-KM (ours)
+LearnedMask-LoRA (ours)
+GMM
+CVDD
+BCE (supervised)
+0.003%
+(9)
+0.01%
+(31)
+0.03%
+(93)
+0.1%
+(312)
+0.3%
+(935)
+1%
+(3k)
+2%
+(6k)
+Labeled budget seen (% / count)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Recall @ 5% FPR ( )
+0.003%
+(9)
+0.01%
+(31)
+0.03%
+(93)
+0.1%
+(312)
+0.3%
+(935)
+1%
+(3k)
+2%
+(6k)
+Labeled budget seen (% / count)
+0
+0.001
+0.01
+0.1
+1
+Benign-OOD FPR @ 5% FPR
+threshold ( )
+0.003%
+(9)
+0.01%
+(31)
+0.03%
+(94)
+0.1%
+(314)
+0.3%
+(943)
+1%
+(3k)
+2%
+(6k)
+Labeled budget seen (% / count)
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+AUROC ( )
+FreqMask-KM (ours)
+LearnedMask-LoRA (ours)
+GMM
+CVDD
+BCE (supervised)
+0.003%
+(9)
+0.01%
+(31)
+0.03%
+(94)
+0.1%
+(314)
+0.3%
+(943)
+1%
+(3k)
+2%
+(6k)
+Labeled budget seen (% / count)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Recall @ 5% FPR ( )
+0.003%
+(9)
+0.01%
+(31)
+0.03%
+(94)
+0.1%
+(314)
+0.3%
+(943)
+1%
+(3k)
+2%
+(6k)
+Labeled budget seen (% / count)
+0
+0.001
+0.01
+0.1
+1
+Benign-OOD FPR @ 5% FPR
+threshold ( )
+Figure 12: Calibration against the coupled budget for Qwen2-1.5B (top) and Ministral-8B (bottom).
+AUROC (left, negatives are in-distribution safe together with the benign domains), recall at 5%
+FPR (middle), and benign out-of-distribution FPR at that same threshold (right, lower is better,
+symmetric-log axis so exact zeros remain visible). Our methods are solid, baselines dashed. Markers
+are means over 5 seeds and bars are ±std; at the smallest budgets the sample is of the order of ten
+labeled examples, so several baselines have a spread comparable to their mean.
+0.003%
+(9)
+0.01%
+(31)
+0.03%
+(94)
+0.1%
+(312)
+0.3%
+(936)
+1%
+(3k)
+2%
+(6k)
+Labeled budget seen (% / count)
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+AUROC ( )
+FreqMask-KM (ours)
+LearnedMask-LoRA (ours)
+GMM
+CVDD
+BCE (supervised)
+0.003%
+(9)
+0.01%
+(31)
+0.03%
+(94)
+0.1%
+(312)
+0.3%
+(936)
+1%
+(3k)
+2%
+(6k)
+Labeled budget seen (% / count)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Recall @ 5% FPR ( )
+0.003%
+(9)
+0.01%
+(31)
+0.03%
+(94)
+0.1%
+(312)
+0.3%
+(936)
+1%
+(3k)
+2%
+(6k)
+Labeled budget seen (% / count)
+0
+0.001
+0.01
+0.1
+1
+Benign-OOD FPR @ 5% FPR
+threshold ( )
+0.003%
+(9)
+0.01%
+(31)
+0.03%
+(94)
+0.1%
+(312)
+0.3%
+(936)
+1%
+(3k)
+2%
+(6k)
+Labeled budget seen (% / count)
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+AUROC ( )
+FreqMask-KM (ours)
+LearnedMask-LoRA (ours)
+GMM
+CVDD
+BCE (supervised)
+0.003%
+(9)
+0.01%
+(31)
+0.03%
+(94)
+0.1%
+(312)
+0.3%
+(936)
+1%
+(3k)
+2%
+(6k)
+Labeled budget seen (% / count)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Recall @ 5% FPR ( )
+0.003%
+(9)
+0.01%
+(31)
+0.03%
+(94)
+0.1%
+(312)
+0.3%
+(936)
+1%
+(3k)
+2%
+(6k)
+Labeled budget seen (% / count)
+0
+0.001
+0.01
+0.1
+1
+Benign-OOD FPR @ 5% FPR
+threshold ( )
+Figure 13: Calibration against the coupled budget for LLaMA3-8B (top) and Qwen3-8B (bottom).
+Axes, markers, and line styles are as in Figure 12.
+show that the same structure used by representation-based safety methods [Chen et al., 2025b, Zou
+et al., 2024] is exploitable under a framing that does not commit to any single definition of safety.
+C.2
+One-Class Anomaly Detection and Discussions in LLM
+One-class anomaly detection addresses a different problem from classification: Given samples from a
+distribution psafe, the task is to score a new input by how typical it is under psafe, without reference to
+any unsafe distribution. Classical approaches fall into different categories, such as density estimation
+(Gaussian mixtures [Nader et al., 2014], kernel density estimation [Goyal et al., 2020]) and distance-
+based scoring (k-nearest-neighbors [Nizan and Tal, 2024], variance reduction [Ruff et al., 2018,
+23
+
+
+0.003%
+(9)
+0.01%
+(31)
+0.03%
+(93)
+0.1%
+(311)
+0.3%
+(934)
+1%
+(3k)
+2%
+(6k)
+Labeled budget seen (% / count)
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+AUROC ( )
+FreqMask-KM (ours)
+LearnedMask-LoRA (ours)
+GMM
+CVDD
+BCE (supervised)
+0.003%
+(9)
+0.01%
+(31)
+0.03%
+(93)
+0.1%
+(311)
+0.3%
+(934)
+1%
+(3k)
+2%
+(6k)
+Labeled budget seen (% / count)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Recall @ 5% FPR ( )
+0.003%
+(9)
+0.01%
+(31)
+0.03%
+(93)
+0.1%
+(311)
+0.3%
+(934)
+1%
+(3k)
+2%
+(6k)
+Labeled budget seen (% / count)
+0
+0.001
+0.01
+0.1
+1
+Benign-OOD FPR @ 5% FPR
+threshold ( )
+0.003%
+(9)
+0.01%
+(31)
+0.03%
+(93)
+0.1%
+(312)
+0.3%
+(935)
+1%
+(3k)
+2%
+(6k)
+Labeled budget seen (% / count)
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+AUROC ( )
+FreqMask-KM (ours)
+LearnedMask-LoRA (ours)
+GMM
+CVDD
+BCE (supervised)
+0.003%
+(9)
+0.01%
+(31)
+0.03%
+(93)
+0.1%
+(312)
+0.3%
+(935)
+1%
+(3k)
+2%
+(6k)
+Labeled budget seen (% / count)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Recall @ 5% FPR ( )
+0.003%
+(9)
+0.01%
+(31)
+0.03%
+(93)
+0.1%
+(312)
+0.3%
+(935)
+1%
+(3k)
+2%
+(6k)
+Labeled budget seen (% / count)
+0
+0.001
+0.01
+0.1
+1
+Benign-OOD FPR @ 5% FPR
+threshold ( )
+Figure 14: Calibration against the coupled budget for GPT-OSS-20B (top) and Gemma-4-26B
+(bottom). Axes, markers, and line styles are as in Figure 12. The CVDD curve on Gemma-4-26B
+falls below the AUROC range of the other methods once the budget exceeds 0.03%: its raw score is
+essentially uninformative on that model, so the calibration has no signal to sharpen.
+2019]). Applied to LLM safety, this framing has a natural appeal: an unsafe input is one that is
+distributionally atypical with respect to safe behaviors, regardless of the harm category.
+An existing line of work in LLMs proposes scoring functions without labeled negative data, but
+targets hallucination and reliability rather than safety, and it is not a priori clear that scores tuned for
+the former transfer to the latter. Examples include Gaussian models on embedding distances for OOD
+detection [Ren et al., 2022], semantic entropy over sampled outputs for uncertainty [Kuhn et al., 2023],
+intrinsic-dimension estimators on activation neighborhoods for truthfulness [Yin et al., 2024], and
+identifying hallucination subspaces from unlabeled generations [Du et al., 2024]. Feng et al. [2025]
+takes a first step toward bridging these literatures with safety by introducing an anomaly detection
+benchmark for LLM misalignment. However, it does not propose new algorithms or frameworks.
+By far, no existing work provides theoretical insight into what makes anomaly detection tractable in
+high-dimensional LLM representations, which is the question our work seeks to answer.
+C.3
+SAE Features for Downstream Tasks
+Kantamneni et al. [2025] study whether SAE features are a useful representation for supervised
+binary probing. Their probe uses labels on two classes and selects a single global set of features from
+class-conditioned differences. They find that SAE probes rarely outperform probes trained on the
+dense activations, except in specific regimes such as data scarcity, class imbalance, label noise, and
+covariate shift. Our setting is complementary. We use no unsafe labels at any point, so features cannot
+be selected from differences between the two classes; the mask in FREQMASK-KM is chosen by
+activation frequency on safe data alone. Our claim is also different. We do not claim that SAE features
+are a good representation. We claim that the sparse support is local, in the sense that it varies across
+neighborhoods of the concept space, and that this locality is what makes anomaly detection feasible in
+a 16,384-dimensional feature space, both in the algorithms of Section 3 and in the sample-complexity
+bound of Section 6, which scales only logarithmically in d2. On the representation question, our
+unsupervised setting differs from their supervised one: moving to the SAE space provides a large
+gain, raising CVDD from 0.692 to 0.806 mean AUROC on the ≥8B models (Table 2). Masking
+provides substantial additional gains on the largest models, adding 0.119 AUROC on GPT-oss-20B
+and 0.090 on Gemma-4-26B, while changing AUROC by at most 0.014 on the other four models.
+D
+Experimental Setup: Additional Details
+This section provides extended details on the SAE training procedure (Appendix D.1), datasets (Ap-
+pendix D.2), per-algorithm hyperparameters (Appendix D.4), and compute budget (Appendix D.5).
+24
+
+
+D.1
+SAE Training
+For each model, we train a Sparse Autoencoder on residual-stream activations extracted at the analysis
+layer specified in Section 4.1 (layer 20 for Qwen 1.5B and Ministral, layer 25 for LLaMA3, layer 30
+for Qwen3, layer 20 for GPT-oss, and layer 25 for Gemma-4-26B). Training data is the same pooled
+safe distribution used by the downstream anomaly-detection methods, comprising approximately
+206K last-token activations per model. SAEs are trained independently per model; no parameters or
+features are shared across models. For GPT-oss we train several SAEs at different sparsity weights
+(Table 7), as the SAE-space methods select different operating points along the sparsity spectrum.
+The SAE follows a standard architecture mapping a residual-stream activation a ∈Rdmodel to a sparse
+feature vector z = E(a) = ReLU(WEa + bE) ∈RdSAE and back via ˆa = D(z) = WDz + bD, with
+a single hidden layer of size dSAE = 16384. Training minimizes a reconstruction loss with an ℓ1
+sparsity penalty on the hidden activations:
+Lrec(a) = ∥a −D(E(a))∥2
+2 + λℓ1∥E(a)∥1.
+(19)
+The value of λℓ1 is not comparable across models, because the penalty is applied to activations of
+different magnitude. We measure that magnitude by the root mean square (RMS) of a residual-stream
+activation, RMS(a) =
+ 1
+dmodel
+Pdmodel
+j=1 a2
+j
+1/2, which differs across the six models by up to a factor
+of about 34. Since the reconstruction term in Lrec is quadratic in the scale of a while the penalty
+term is only linear in it, the penalty carries relatively less weight the larger that scale is, so a model
+with larger RMS needs a larger λℓ1 to reach the same feature density. Training hyperparameters are
+summarized in Table 7.
+Table 7: SAE training hyperparameters. Input dimension is the residual-stream width of the corre-
+sponding base model; the SAE feature dimension is shared across all models. The sparsity weight λℓ1
+is shared across the original three models; GPT-oss and Gemma require larger values because their
+residual activations have larger RMS (≈34× for GPT-oss). For GPT-oss we train at two operating
+points (λℓ1 = 300 and 700), the λℓ1 = 700 encoder being the one used by FREQMASK-KM; Gemma
+uses a single intermediate value (λℓ1 = 3).
+Qwen 1.5B
+Ministral 8B
+LLaMA3 8B
+Qwen3 8B
+GPT-oss 20B
+Gemma 4 26B
+Input dimension dmodel
+1536
+4096
+4096
+4096
+2880
+2816
+SAE feature dimension dSAE
+16384
+16384
+16384
+16384
+16384
+16384
+Expansion factor
+≈10.7×
+4×
+4×
+4×
+≈5.7×
+≈5.8×
+Sparsity weight λℓ1
+0.01
+0.01
+0.01
+0.01
+300 / 700
+3
+Epochs
+10
+5
+5
+20
+20
+10
+Batch size
+256
+256
+256
+256
+256
+256
+Optimizer
+Adam
+Adam
+Adam
+Adam
+Adam
+Adam
+Learning rate
+1e-3
+1e-3
+1e-3
+1e-3
+1e-3
+1e-3
+D.2
+Datasets
+Safe distribution.
+The safe training set pools two groups of data: (i) general capability and
+instruction-following data (GSM8K, MathSFT40K, HumanEval, HumanEval+, MBPP, Alpaca, MT-
+Bench, MMLU, ARC), and (ii) the safe portions of the evaluation benchmarks (benign examples
+from BeaverTails and ToxiGen, and the model’s correct refusals on HarmBench attacks). The total is
+approximately 206,000 last-token activations per model. Counts are approximately the same across
+models; minor variation arises from generation failures on individual prompts.
+Unsafe evaluation.
+We evaluate on three categories: BeaverTails (harmful-content requests),
+ToxiGen (toxic and hateful language), and pooled HarmBench adversarial attacks generated by eight
+algorithms (AutoDAN [Liu et al., 2023b], AutoPrompt [Shin et al., 2020], DirectRequest [Mazeika
+et al., 2024], GBDA [Guo et al., 2021], GCG [Zou et al., 2023], HumanJailbreaks [Mazeika et al.,
+2024], PEZ [Wen et al., 2023], UAT [Wallace et al., 2019]). HarmBench suffixes are optimized
+per-target-model, so the adversarial inputs differ across models; the eight attacks are pooled into
+a single category for reporting. The total unsafe evaluation set comprises approximately 314,000
+samples per model.
+Splits.
+The safe set is split 0.8/0.2: the 0.8 portion is used to fit each method (cluster centroids,
+mask selection, covariance estimation, etc.), and the remaining 0.2 is held out from fitting. Both
+AUROC and TPR@5%FPR are computed from the same ROC curve on the evaluation set, where
+25
+
+
+Table 8: Licenses for datasets used in this work. All datasets are publicly available and cited at first
+mention in Section 4.1. For the three benchmarks in the lower block, the safe portion contributes to
+the safe training pool and the unsafe portion is used only for evaluation.
+Dataset
+License
+Use
+GSM8K [Cobbe et al., 2021]
+MIT
+Safe training
+MathSFT40K [ReasoningTransferability, 2025]
+Not stated
+Safe training
+HumanEval [Chen et al., 2021]
+MIT
+Safe training
+HumanEval+ (EvalPlus) [Liu et al., 2023a]
+Apache 2.0
+Safe training
+MBPP [Austin et al., 2021]
+CC-BY 4.0
+Safe training
+Alpaca [Taori et al., 2023]
+CC-BY-NC 4.0
+Safe training
+MT-Bench [Zheng et al., 2023]
+Apache 2.0
+Safe training
+MMLU [Hendrycks et al., 2020]
+MIT
+Safe training
+ARC [Clark et al., 2018]
+CC-BY-SA 4.0
+Safe training
+BeaverTails [Ji et al., 2023]
+CC-BY-NC 4.0
+Safe training & unsafe eval
+ToxiGen [Hartvigsen et al., 2022]
+MIT
+Safe training & unsafe eval
+HarmBench [Mazeika et al., 2024]
+MIT
+Safe training & unsafe eval
+the safe evaluation samples supply the negatives and each unsafe category supplies the positives;
+TPR@5%FPR is the true-positive rate at the operating point whose false-positive rate equals 5%. No
+separate threshold-calibration step is performed.
+D.3
+Activation-space baselines
+All activation-space baselines operate directly on the residual-stream activations extracted at the
+analysis layer (Section 4.1), without any SAE encoding. We use our own implementations to keep
+the training and scoring pipelines uniform across methods. The hyperparameters that were swept and
+the values selected for the main results are listed in Tables 9, 10, 11, 12, 13, and 14.
+Mahalanobis.
+A single Gaussian is fit to the safe training set: the global mean µ is estimated
+on safe samples, and the covariance Σ is accumulated on the full training pool, regularized by
+adding λI before inversion. The anomaly score is the Mahalanobis distance to the global mean,
+p
+(x −µ)⊤Σ−1(x −µ), mapped to [0, 1] either by linear interpolation between the 5th and 95th
+percentiles of training distances (percentile) or by a sigmoid on standardized distances (sigmoid).
+The two free choices are the regularization strength λ and the score type.
+Gaussian Mixture Model (GMM).
+A diagonal-covariance Gaussian mixture is fit on standardized
+safe features by EM, with components initialized via k-means++ or uniformly at random. The
+anomaly score is the negative log-likelihood −log p(x | θ), normalized to [0, 1] by the same percentile
+or sigmoid mapping used for Mahalanobis. The free choices are the number of mixture components
+ncomponents, the initialization, and the score normalization.
+One-Class SVM (OC-SVM).
+We use a PyTorch implementation that solves the standard one-class
+SVM dual on standardized safe features, with ν controlling the upper bound on the training-error
+fraction (and equivalently the lower bound on the support-vector fraction), and γ controlling the
+RBF bandwidth. The anomaly score is the negative decision function (distance from the separating
+hyperplane in feature space). The free choices are ν, γ, and the kernel (RBF or linear).
+Deep SVDD.
+Following Ruff et al. [2018], a small MLP encoder ϕ : Rdmodel →Rdrep is autoencoder-
+pretrained and then fine-tuned to map safe inputs near a fixed center c in representation space, by
+minimizing the mean squared distance ∥ϕ(x) −c∥2
+2. The anomaly score is this squared distance. The
+free choices are the representation dimension drep, the deep one-class hyperparameter ν (used by the
+soft-boundary objective), and the optimizer learning rate.
+Context Vector Data Description (CVDD).
+CVDD generalizes Deep SVDD to multiple centers: an
+MLP encoder is trained jointly with ncontexts context vectors {ck}ncontexts
+k=1
+, with the per-sample loss given
+by a temperature-annealed soft-minimum over distances to all centers, −T log P
+k exp(−∥ϕ(x) −
+ck∥2
+2/T). An orthogonality regularizer ∥CC⊤−I∥2
+F encourages the centers to span distinct directions.
+The anomaly score is the distance to the nearest context vector. The free choices are the number of
+contexts ncontexts and the orthogonality weight; the temperature schedule and pretraining flag are fixed
+across runs.
+26
+
+
+D.4
+Hyperparameters
+For each method we list the hyperparameters that were swept and the values selected for the main
+results. Selection is performed by AUROC.
+D.4.1
+Activation-space baselines
+Hyperparameters are tuned per model rather than shared, since the analysis layer, residual-stream
+geometry, and sample sizes vary across models. Tables 9, 10, 11, 12, 13, and 14 report swept ranges
+and selected values for each model.
+Table 9: Hyperparameter sweeps and selected values for activation-space baselines on Qwen 1.5B.
+Method
+Hyperparameter
+Sweep range
+Selected
+Mahalanobis
+Regularization
+{10−5, 10−4, 10−3, 10−2, 10−1}
+10−5
+Score type
+{percentile, sigmoid}
+sigmoid
+GMM
+ncomponents
+{3, 5, 10, 50, 100}
+50
+Initialization
+{k-means++, random}
+k-means++
+Score normalization
+{percentile, sigmoid}
+percentile
+OC-SVM
+ν
+{0.01, 0.05, 0.1, 0.2}
+0.01
+γ
+{10−4, 10−3, 10−2, 10−1, 1}
+10−2
+Kernel
+{RBF, linear}
+RBF
+Deep SVDD
+Representation dim.
+{16, 32, 64, 128}
+128
+ν
+{0.05, 0.1, 0.2}
+0.2
+Learning rate
+{10−4, 10−3, 10−2}
+10−3
+CVDD
+ncontexts
+{10, 50, 200, 500}
+500
+Orthogonality weight
+{10−4, 10−3, 10−2}
+10−3
+Table 10: Hyperparameter sweeps and selected values for activation-space baselines on Ministral 8B.
+Method
+Hyperparameter
+Sweep range
+Selected
+Mahalanobis
+Regularization
+{10−5, 10−4, 10−3, 10−2, 10−1}
+10−5
+Score type
+{percentile, sigmoid}
+percentile
+GMM
+ncomponents
+{3, 5, 10, 50, 100}
+10
+Initialization
+{k-means++, random}
+k-means++
+Score normalization
+{percentile, sigmoid}
+sigmoid
+OC-SVM
+ν
+{0.01, 0.05, 0.1, 0.2}
+0.1
+γ
+{10−4, 10−3, 10−2, 10−1, 1}
+10−3
+Kernel
+{RBF, linear}
+RBF
+Deep SVDD
+Representation dim.
+{16, 32, 64, 128}
+128
+ν
+{0.05, 0.1, 0.2}
+0.2
+Learning rate
+{10−4, 10−3, 10−2}
+10−3
+CVDD
+ncontexts
+{10, 50, 200, 500}
+50
+Orthogonality weight
+{10−4, 10−3, 10−2}
+10−3
+D.4.2
+Framework instantiations (SAE feature space)
+All three framework instantiations share KMeans clustering and nearest-centroid cluster assignment;
+they differ in how the per-cluster sparse subspace is identified. The centroid is used for scoring only
+by the two FREQMASK-KM variants (L1 distance to the assigned centroid); LEARNEDMASK-LORA
+uses it only to assign a test point to a cluster and scores by the SAE reconstruction residual under that
+cluster’s learned mask.
+FREQMASK-KM only has two hyperparameters: Cluster count N and mask size k. Selected values
+are listed in Table 15. The local version of it (Local FREQMASK-KM) uses the same hyperaprameters,
+but the top-k mask is applied locally by selecting the most frequently activated neurons.
+LEARNEDMASK-LORA is trained in two stages, both operating under the SAE space.
+27
+
+
+Table 11: Hyperparameter sweeps and selected values for activation-space baselines on LLaMA3 8B.
+Method
+Hyperparameter
+Sweep range
+Selected
+Mahalanobis
+Regularization
+{10−5, 10−4, 10−3, 10−2, 10−1}
+10−5
+Score type
+{percentile, sigmoid}
+percentile
+GMM
+ncomponents
+{3, 5, 10, 50, 100}
+10
+Initialization
+{k-means++, random}
+k-means++
+Score normalization
+{percentile, sigmoid}
+percentile
+OC-SVM
+ν
+{0.01, 0.05, 0.1, 0.2}
+0.1
+γ
+{10−4, 10−3, 10−2, 10−1, 1}
+10−2
+Kernel
+{RBF, linear}
+RBF
+Deep SVDD
+Representation dim.
+{16, 32, 64, 128}
+128
+ν
+{0.05, 0.1, 0.2}
+0.2
+Learning rate
+{10−4, 10−3, 10−2}
+10−3
+CVDD
+ncontexts
+{10, 50, 200, 500}
+500
+Orthogonality weight
+{10−4, 10−3, 10−2}
+10−3
+Table 12: Hyperparameter sweeps and selected values for activation-space baselines on Qwen3 8B.
+Method
+Hyperparameter
+Sweep range
+Selected
+Mahalanobis
+Regularization
+{10−5, 10−4, 10−3, 10−2, 10−1}
+10−5
+Score type
+{percentile, sigmoid}
+percentile
+GMM
+ncomponents
+{3, 5, 10, 50, 100}
+100
+Initialization
+{k-means++, random}
+k-means++
+Score normalization
+{percentile, sigmoid}
+sigmoid
+OC-SVM
+ν
+{0.01, 0.05, 0.1, 0.2}
+0.05
+γ
+{10−4, 10−3, 10−2, 10−1, 1}
+10−2
+Kernel
+{RBF, linear}
+RBF
+Deep SVDD
+Representation dim.
+{16, 32, 64, 128}
+32
+ν
+{0.05, 0.1, 0.2}
+0.1
+Learning rate
+{10−4, 10−3, 10−2}
+10−2
+CVDD
+ncontexts
+{10, 50, 200, 500}
+50
+Orthogonality weight
+{10−4, 10−3, 10−2}
+10−4
+Stage 1: per-cluster mask training.
+A binary mask is learned per cluster using a straight-through
+estimator (mask_type = binary_ste). Concretely, each cluster’s mask is parameterized by a vector
+of learnable logits ℓ∈Rd2 (one per SAE feature, initialized to 0.5); the forward pass applies the
+hard mask m = 1[ℓ> 0] to the SAE code via m ⊙z, while the backward pass replaces the non-
+differentiable indicator with the derivative of σ(ℓ), so the logits can be trained end-to-end with SGD
+despite m being discrete [Bengio et al., 2013]. In practice this is implemented with the standard
+detach trick:
+soft = torch.sigmoid(logits)
+hard = (logits > 0).float()
+m = soft + (hard - soft).detach ()
+# forward: hard; backward: through
+soft
+Sparsity is induced by adding λsparsity ∥σ(ℓ)∥1 to the reconstruction loss, with the coefficient calibrated
+per cluster from the sweep {10−4, 3×10−4, 10−3, 3×10−3, 10−2, 3×10−2, 10−1}. We use N = 100
+clusters with a minimum cluster size of 50. The clusters are created with an L2 distance to centroids.
+Stage 2: per-cluster LoRA adapter.
+A LoRA adapter is trained against an SAE-reconstruction
+objective on the cluster’s masked subspace. LoRA rank scales with cluster size: r = 2 (small), 4
+(medium), 8 (large). Training uses 30 epochs at learning rate 10−3 with sparsity weight 10−3 on
+the LoRA output. Stage 2 is gated by a model-specific minimum cluster size: 500 for LLaMA3,
+20 for Ministral, 50 for Qwen3, 50 for Gemma, and disabled for Qwen 1.5B and GPT-oss (Stage 1
+28
+
+
+Table 13: Hyperparameter sweeps and selected values for activation-space baselines on GPT-oss 20B.
+Method
+Hyperparameter
+Sweep range
+Selected
+Mahalanobis
+Regularization
+{10−5, 10−4, 10−3, 10−2, 10−1}
+10−5
+Score type
+{percentile, sigmoid}
+sigmoid
+GMM
+ncomponents
+{3, 5, 10, 50, 100}
+10
+Initialization
+{k-means++, random}
+random
+Score normalization
+{percentile, sigmoid}
+sigmoid
+OC-SVM
+ν
+{0.01, 0.05, 0.1, 0.2}
+0.1
+γ
+{10−4, 10−3, 10−2, 10−1, 1}
+10−4
+Kernel
+{RBF, linear}
+RBF
+Deep SVDD
+Representation dim.
+{16, 32, 64, 128}
+16
+ν
+{0.05, 0.1, 0.2}
+0.05
+Learning rate
+{10−4, 10−3, 10−2}
+10−4
+CVDD
+ncontexts
+{10, 50, 200, 500}
+500
+Orthogonality weight
+{10−4, 10−3, 10−2}
+10−4
+Table 14: Hyperparameter sweeps and selected values for activation-space baselines on Gemma 4
+26B.
+Method
+Hyperparameter
+Sweep range
+Selected
+Mahalanobis
+Regularization
+{10−5, 10−4, 10−3, 10−2, 10−1}
+10−5
+Score type
+{percentile, sigmoid}
+sigmoid
+GMM
+ncomponents
+{3, 5, 10, 50, 100}
+100
+Initialization
+{k-means++, random}
+random
+Score normalization
+{percentile, sigmoid}
+sigmoid
+OC-SVM
+ν
+{0.01, 0.05, 0.1, 0.2}
+0.1
+γ
+{10−4, 10−3, 10−2, 10−1, 1}
+10−2
+Kernel
+{RBF, linear}
+RBF
+Deep SVDD
+Representation dim.
+{16, 32, 64, 128}
+128
+ν
+{0.05, 0.1, 0.2}
+0.1
+Learning rate
+{10−4, 10−3, 10−2}
+10−4
+CVDD
+ncontexts
+{10, 50, 200, 500}
+500
+Orthogonality weight
+{10−4, 10−3, 10−2}
+10−4
+mask only, no LoRA adaptation), as we observe that LoRA hurts performance on those two models
+(Appendix G.1).
+D.4.3
+Supervised reference
+The supervised reference reported in Section 4.2 is a linear probe (with bias) trained on SAE features
+against binary safe/unsafe labels. Several BCE variants were evaluated for completeness; their
+configurations are summarized in Table 16.
+D.5
+Compute
+All experiments are run on a SLURM-managed cluster with single NVIDIA V100 or Titan-RTX
+GPU per job. Approximate wall-clock times per training run are listed in Table 17. We pre-cached
+the model activations from each dataset, and these methods load the cached activations for training.
+E
+Effective Dimension: Definition and Per-Setting Specialization
+Let X ∈Rn×d denote the data matrix in the feature space of interest, with n samples and d features.
+Let ¯x = 1
+n
+Pn
+i=1 xi be the empirical mean, computed independently within each setting’s feature
+space. The empirical covariance is
+Σ = 1
+nX⊤X −¯x ¯x⊤∈Rd×d.
+(20)
+29
+
+
+Table 15: Selected hyperparameters for FREQMASK-KM, swept over N ∈{50, 100, 200} and
+k ∈{25, 50, 100, 200, 400}. GPT-oss and Gemma select small masks (k = 50 and k = 25) from the
+sweep extended to smaller masks (Appendix F.3).
+Model
+N (clusters)
+k (mask size)
+Qwen 1.5B
+200
+100
+Ministral 8B
+50
+200
+LLaMA3 8B
+100
+400
+Qwen3 8B
+100
+400
+GPT-oss 20B
+50
+50
+Gemma 4 26B
+50
+25
+Table 16: Supervised BCE variants and their 3-category performance across the six models. AUROC
+and TPR@5%FPR are each the mean of BeaverTails, ToxiGen, and pooled-HarmBench. All variants
+use the BCE loss. The SAE + linear (with bias) row is the linear probe reported in Table 1 and gives
+its mean over 5 random seeds (standard deviations are in Table 1). The other variants are single-seed
+runs (best of learning rate ∈{10−3, 10−4}), reported here for completeness.
+AUROC (↑)
+TPR@5%FPR (↑)
+Input
+Classifier
+Ministral
+LLaMA3
+Qwen3
+GPT-oss
+Gemma
+Qwen 1.5B
+Ministral
+LLaMA3
+Qwen3
+GPT-oss
+Gemma
+Qwen 1.5B
+SAE features
+2-layer MLP
+0.993
+0.959
+0.992
+0.987
+0.978
+0.971
+0.966
+0.902
+0.958
+0.938
+0.937
+0.887
+Raw activations
+2-layer MLP
+0.993
+0.979
+0.992
+0.988
+0.969
+0.975
+0.966
+0.913
+0.962
+0.939
+0.915
+0.802
+Raw activations
+Linear
+0.988
+0.972
+0.985
+0.985
+0.961
+0.959
+0.928
+0.748
+0.905
+0.910
+0.751
+0.688
+SAE features
+Linear (with bias)
+0.993
+0.972
+0.993
+0.990
+0.983
+0.982
+0.964
+0.905
+0.957
+0.948
+0.942
+0.876
+SAE features
+Linear (no bias)
+0.985
+0.965
+0.979
+0.973
+0.947
+0.954
+0.898
+0.693
+0.847
+0.858
+0.635
+0.664
+Let λ1 ≥λ2 ≥· · · ≥λd ≥0 denote its eigenvalues in decreasing order; negative eigenvalues arising
+from finite-precision arithmetic are clamped to zero. Define the cumulative explained-variance ratio
+ρ(k) =
+Pk
+j=1 λj
+Pd
+j=1 λj
+.
+(21)
+The local effective dimension at the 90% variance threshold is
+d90 = min{k ∈{1, . . . , d} : ρ(k) ≥0.90} .
+(22)
+Equivalently, d90 is the smallest number of principal components required to retain at least 90% of
+the total variance in X.
+101
+102
+Effective dimension
+0
+10
+20
+30
+40
+50
+Number of clusters
+Qwen2-1.5B
+Per-cluster mask
+SAE space (126)
+Global mask (58)
+101
+102
+Effective dimension
+Ministral-8B
+Per-cluster mask
+SAE space (125)
+Global mask (96)
+Figure 15: Effective dimension (d90) for two model families not shown in the main text (Figure 3):
+Qwen2-1.5B and Ministral-8B. We omit Gemma-4-26B because its selected mask has only k = 25
+features, which already bounds its masked d90 values by 25. As in the main text, blue bars show the
+per-cluster d90 distribution, computed on each cluster’s members within its own top-k mask Mc;
+vertical lines mark d90 in the raw SAE feature space (dashed orange) and the global-mask subspace
+(solid green). Per-cluster d90 again sits well below the global-mask and raw-SAE values, confirming
+the low local effective dimension across the five model families shown.
+The settings differ only in the choice of X (and hence d):
+• Raw SAE: X ∈Rn×dSAE, rows are zi = ReLU(Wenchi + benc).
+• Global mask: X = Z:, M ∈Rn×k, where M ⊂{1, . . . , dSAE}, |M| = k, is the global
+mask’s active feature index set.
+30
+
+
+Table 17: Approximate wall-clock per run on a single V100 or Titan-RTX.
+Method
+Wall-clock per run
+Training SAE
+< 5 min
+Mahalanobis, GMM, OC-SVM
+5–20 min
+Deep SVDD, CVDD
+≈30 min
+FREQMASK-KM, Local FREQMASK-KM
+≈10 min
+LEARNEDMASK-LORA
+≈60 min
+• Per-cluster local mask: for cluster c with members Ic = {i : ℓi = c}, define the local
+active set
+Mc = top-k
+ X
+i∈Ic
+1[zi > 0]
+!
+,
+(23)
+i.e. the k SAE features that fire most often within cluster c. Then X(c) = ZIc, Mc ∈Rnc×k,
+and we report the distribution of d(c)
+90 over clusters with nc ≥max(20, 2k) to avoid rank-
+limited estimates.
+In all settings d90 ≤min(n −1, d), with the per-cluster bound d(c)
+90 ≤min(nc −1, k). Centering is
+performed independently within each setting’s feature space; in particular, for the per-cluster analysis,
+¯x(c) is the mean over Ic within the local masked subspace Mc.
+F
+Ablations: Stage-by-Stage Variations on FREQMASK-KM
+This section reports six ablations on FREQMASK-KM (Section 3.5, Appendix D.4) targeting the
+design choices left open by the framework definition, ordered to follow the stage sequence of
+Section 3: the clustering metric (Appendix F.1), the number of clusters Nc (Appendix F.2), the mask
+size k (Appendix F.3), the scoring metric (Appendix F.4), the within-cluster overlap of safe and
+unsafe active supports (Appendix F.5), which gives a mechanistic reading of the clustering-metric
+and scoring-metric results, and finally the choice of extraction layer (Appendix F.6).
+Goal of these ablations.
+The framework of Section 3 decomposes the pipeline into four stages
+(embedding, clustering, local subspace, scoring), each of which admits several principled choices.
+The ablations below are intended as a worked example of how those choices can be varied one stage
+at a time within a single instantiation, and what the resulting qualitative orderings look like. They are
+not a hyperparameter optimization study: the goal is to compare design choices under a fixed setting,
+not to identify a per-cell optimum. Two consequences follow.
+First, all runs in this section use a single seed. The only source of randomness in FREQMASK-KM
+is the KMeans cluster assignment under uniform random centroid initialization (Algorithm 1); the
+global frequency mask, centroid estimation, and ℓ1 scoring are deterministic given the clustering. The
+seed-to-seed standard deviation of FREQMASK-KM in Table 1 is empirically zero at the precision
+reported, and we do not expect multi-seed sweeps to change the qualitative orderings reported below.
+Second, the sweep grids are narrower than the per-model selection in Appendix D.4: the clustering
+and scoring ablations use Nc ∈{50, 100} and k ∈{100, 200, 400}, the scaling ablations sweep one
+of the two over a wider range. The grid omits Nc = 200, which is the value selected for Qwen 1.5B
+in the main results, so the Qwen entries below peak at a slightly lower AUROC than the main-table
+figure. We accept this gap because the goal is the cross-method ordering at a fixed setting, not the
+optimum for any one method.
+Performance is reported as mean AUROC across the three evaluation slices (BeaverTails, ToxiGen,
+pooled HarmBench adversarial attacks).
+F.1
+Clustering Metric
+Setup.
+The clustering stage in Section 3.2 permits magnitude-aware and binarized metrics. We
+compare three KMeans variants in SAE feature space: ρL2(x, x′) = ∥z(x) −z(x′)∥2 (the default in
+Section 3.5), ρL1(x, x′) = ∥z(x) −z(x′)∥1, and ρL0(x, x′) = ∥b(x) −b(x′)∥1 (Hamming distance
+on the binarized active-feature indicator b(x) from Section 3.2). All other components are held fixed:
+global frequency mask, ℓ1 centroid scoring, and a sweep over (Nc, k) ∈{50, 100}×{100, 200, 400}
+31
+
+
+with the best cell reported per model. The ρL2 row is each model’s default FREQMASK-KM
+configuration (Appendix D.4); for GPT-oss this configuration uses a smaller mask (k = 50) than the
+binarized-metric grid above.
+Results.
+Table 18 reports the best 3-slice mean AUROC per clustering metric and per model. Two
+observations.
+First, ρL2 is the best metric on four of the five ≥8B models. The margin over the next-best metric
+ranges from 0.10 AUROC on Ministral down to 0.013 on Qwen3 and 0.003 on GPT-oss. The
+exception is Gemma, where ρL1 edges ahead (0.776 vs. 0.762 for ρL2, a 0.014 gap). On Qwen 1.5B,
+ρL2 places third, behind ρL0 (gap 0.014) and ρL1 (gap 0.003).
+Second, the binarized-clustering penalty is model-dependent. ρL0 depends on z(x) only through
+b(x) and so discards the magnitude information in z(x); on Ministral, LLaMA3, and Gemma it is
+the worst metric, consistent with adversarial inputs being separable from safe inputs primarily by
+activation magnitude on shared active features rather than by the active support itself (Appendix F.5
+presents direct evidence). On Qwen3 and GPT-oss, by contrast, ρL0 is the second-best metric (within
+0.013 and 0.003 of ρL2): the magnitude information that ρL2 clustering exploits is less pivotal for
+these two models’ cluster assignments, even though magnitude still carries the discriminative signal
+at scoring time.
+Table 18: Clustering metric for FREQMASK-KM, holding the global frequency mask and ℓ1 scoring
+fixed. AUROC is the 3-slice mean; the ρL2 row is each model’s default configuration and the other
+rows report the best of a (Nc, k) sweep over {50, 100} × {100, 200, 400}. Single seed; bold marks
+the best metric per column.
+Metric
+Qwen 1.5B
+Ministral 8B
+LLaMA3 8B
+Qwen3 8B
+GPT-oss 20B
+Gemma 4 26B
+ρL2 (default)
+0.745
+0.914
+0.937
+0.915
+0.900
+0.762
+ρL1
+0.748
+0.817
+0.914
+0.882
+0.839
+0.776
+ρL0
+0.759
+0.785
+0.860
+0.902
+0.897
+0.731
+F.2
+Number of Clusters
+Setup.
+We sweep Nc ∈{10, 25, 50, 100, 200, 500} at each model’s default mask size k (Qwen
+1.5B 100, Ministral 200, LLaMA3 400, Qwen3 400, GPT-oss 50, Gemma 25; Table 15), holding ρL2
+clustering, global mask, and ℓ1 scoring fixed. Fixing k per model (rather than a single shared value)
+keeps each model in the mask regime it was selected for: a shared mask far above the small-mask
+models’ optima collapses their adversarial slice at every Nc, so a shared setting would understate
+those rows.
+Results.
+Table 19 reports the resulting 3-slice mean AUROC. With each model held at its own mask
+size, all six rows peak inside the sweep and fall off toward both ends, with Nc = 500 uniformly the
+worst or near-worst entry. The peak Nc tracks the per-model selection in Appendix D.4: Qwen 1.5B
+at 25, Ministral and Gemma at 50, LLaMA3 and Qwen3 at 100, and GPT-oss at the small end (10–25,
+0.927). The two small-mask models (GPT-oss, Gemma) are no longer depressed—at their own k they
+reach 0.927 and 0.856, in line with their main-table FREQMASK-KM values, rather than the much
+lower figures a shared large mask would produce. The Ministral row still shows large fluctuation
+outside its Nc = 50 peak, driven by the adversarial slice collapsing at Nc ∈{25, 100, 200, 500};
+we do not have a mechanistic explanation and read it as a sensitivity of Ministral’s representation
+geometry to Nc rather than as noise.
+Does the mask do real work?
+A best-case no-mask comparison.
+Table 19 varies Nc
+with the global frequency mask on.
+To test whether the mask is load-bearing rather than
+cosmetic, we give the no-mask condition its own best case:
+we disable the mask entirely
+(use_masking=false, so ℓ1 scoring runs over all SAE features with no top-k restriction) and
+re-sweep Nc ∈{10, 25, 50, 100, 200, 500}, holding ρL2 clustering and ℓ1 scoring fixed, so the com-
+parison does not depend on a cluster count chosen for the masked configuration. Table 20 gives the
+full sweep; the best no-mask entry per model, against the deployed masked configuration, is the table
+discussed in Section 4.3.
+32
+
+
+Table 19: Number of clusters for FREQMASK-KM, sweeping Nc at each model’s default mask size k
+(Qwen 1.5B 100, Ministral 200, LLaMA3 400, Qwen3 400, GPT-oss 50, Gemma 25; Table 15), with
+ρL2 clustering, global mask, and ℓ1 scoring. AUROC is the 3-slice mean. Single seed; bold marks
+the best Nc per row. The complementary no-mask analysis (mask disabled, Nc swept) is in Table 20.
+Nc
+10
+25
+50
+100
+200
+500
+Qwen 1.5B
+0.745
+0.770
+0.729
+0.745
+0.762
+0.720
+Ministral 8B
+0.879
+0.767
+0.914
+0.768
+0.774
+0.768
+LLaMA3 8B
+0.884
+0.916
+0.933
+0.936
+0.898
+0.876
+Qwen3 8B
+0.880
+0.903
+0.848
+0.914
+0.885
+0.880
+GPT-oss 20B
+0.927
+0.926
+0.900
+0.875
+0.835
+0.832
+Gemma 4 26B
+0.841
+0.841
+0.856
+0.801
+0.802
+0.783
+Table 20: FREQMASK-KM with the global mask disabled (use_masking=false, ℓ1 over all SAE
+features), sweeping Nc with ρL2 clustering and ℓ1 scoring. AUROC is the 3-slice mean; single
+seed; bold marks the best Nc per row. “Masked best” is each model’s main-table FREQMASK-KM
+AUROC (Table 1), where the mask is on. These are the two columns compared in Table 3.
+Nc
+10
+25
+50
+100
+200
+500
+Masked best
+Qwen 1.5B
+0.769
+0.766
+0.747
+0.759
+0.776
+0.736
+0.762
+Ministral 8B
+0.875
+0.843
+0.904
+0.864
+0.865
+0.859
+0.914
+LLaMA3 8B
+0.895
+0.919
+0.935
+0.937
+0.902
+0.880
+0.937
+Qwen3 8B
+0.883
+0.904
+0.865
+0.914
+0.896
+0.898
+0.915
+GPT-oss 20B
+0.781
+0.780
+0.752
+0.748
+0.735
+0.745
+0.900
+Gemma 4 26B
+0.736
+0.718
+0.766
+0.707
+0.737
+0.733
+0.856
+F.3
+Mask Size
+Setup.
+We sweep k ∈{25, 50, 100, 200, 400, 800, 1600} at fixed Nc = 100, holding ρL2 cluster-
+ing, global mask, and ℓ1 scoring fixed.
+Results.
+In Table 21, Three of the five ≥8B models (Ministral, LLaMA3, Qwen3) gain as k grows
+and then saturate. Ministral rises monotonically: 0.654 →0.817 →0.858 across k = 25, 400, 1600.
+LLaMA3 has a non-monotone region at small k (0.805 at k = 25, dropping to 0.701–0.702 at
+k ∈{50, 100}), then recovers and saturates at k ≥200 with AUROC ≈0.93–0.94. Qwen3 collapses
+at small k (0.38 at k ∈{25, 50}) but jumps to 0.793 at k = 100 and saturates at 0.915 for k ≥200.
+GPT-oss and Gemma run in the opposite direction: both peak at the smallest masks (0.875 at k = 50
+for GPT-oss, 0.820 at k = 50 for Gemma) and decay as the mask grows—GPT-oss to a plateau of
+0.748 for k ≥200 and Gemma to 0.55–0.70, the two models for which a larger mask hurts. These
+small-mask peaks are taken at the table’s fixed Nc = 100; each model’s main-table value (0.900 for
+GPT-oss, 0.856 for Gemma; Table 1) is reached only when the small mask is paired with Nc = 50,
+the joint corner this Nc = 100 slice does not reach. Qwen 1.5B is essentially flat: AUROC fluctuates
+within 0.717–0.759 across the full range and shows no monotone trend. For the models that benefit
+from a larger mask, the saturation point (k ≈400 on LLaMA3 and Qwen3, k ≈800 on Ministral)
+sets a soft upper bound on how much the global mask helps before adding features stops contributing
+discriminative signal.
+Table 21: Mask size for FREQMASK-KM at Nc = 100, ρL2 clustering, global mask, ℓ1 scoring.
+AUROC is the 3-slice mean. Single seed; bold marks the best k per row. Most ≥8B models favor a
+larger mask and then plateau; GPT-oss is the exception, peaking at a small mask.
+k
+25
+50
+100
+200
+400
+800
+1600
+Qwen 1.5B
+0.717
+0.741
+0.745
+0.734
+0.736
+0.759
+0.759
+Ministral 8B
+0.654
+0.667
+0.729
+0.768
+0.817
+0.845
+0.858
+LLaMA3 8B
+0.805
+0.701
+0.702
+0.929
+0.937
+0.937
+0.937
+Qwen3 8B
+0.383
+0.378
+0.793
+0.915
+0.915
+0.915
+0.915
+GPT-oss 20B
+0.863
+0.875
+0.832
+0.748
+0.748
+0.748
+0.748
+Gemma 4 26B
+0.801
+0.820
+0.729
+0.549
+0.684
+0.697
+0.701
+33
+
+
+F.4
+Scoring Metric: ℓ1 vs. ℓ2 vs. Mahalanobis
+Setup.
+FREQMASK-KM as defined in Section 3.5 uses ℓ1 centroid distance on the masked SAE
+features. We compare ℓ1, ℓ2, and a per-cluster Mahalanobis distance on the same masked features,
+holding ρL2 KMeans clustering and the global frequency mask fixed. The Mahalanobis variant fits
+a per-cluster covariance on safe samples and adds a regularizer λI before inversion, swept over
+λ ∈{10−3, 10−2, 10−1}. For each scoring rule we sweep (Nc, k) ∈{50, 100} × {100, 200, 400}
+and report the best cell per model.
+Results.
+Table 22 reports best 3-slice mean AUROC per scoring rule on each model. ℓ1 and ℓ2
+are within 0.012 AUROC of each other on every model except GPT-oss and Gemma, where the
+gap widens to 0.032 and 0.035 respectively; ℓ1 wins on Ministral, LLaMA3, and Gemma, while
+ℓ2 wins on Qwen3, GPT-oss, and Qwen 1.5B. The two magnitude-aware rules thus remain close,
+with the choice between them model-dependent. Mahalanobis trails both magnitude-aware rules on
+every ≥8B model except Gemma, where it is in fact the best scoring rule (0.785, against ℓ1’s 0.762).
+Across models it benefits from a large swept regularizer—rising monotonically to the largest value
+λ = 10−1 on the other models, and peaking one step earlier at λ = 10−2 on Gemma (0.785 vs. 0.783
+at 10−1)—while at λ = 10−3 AUROC drops to 0.56–0.81 depending on model. This is consistent
+with the per-cluster covariance being poorly conditioned on the masked SAE features at the cluster
+sample sizes available on most models, and substantiates the choice of a magnitude-aware ℓ1 scoring
+in Algorithm 1 on those models; Gemma is the lone exception, with a better-conditioned per-cluster
+covariance whose origin we do not fully diagnose.
+Table 22: Scoring metric for FREQMASK-KM, holding ρL2 KMeans clustering and the global
+frequency mask fixed. AUROC is the 3-slice mean; each cell is the best of a (Nc, k) sweep over
+{50, 100} × {100, 200, 400}. The Mahalanobis row additionally sweeps λ ∈{10−3, 10−2, 10−1}
+and selects the best λ (the largest, 10−1, except Gemma, which selects 10−2). Bold marks the best
+scoring rule per column.
+Scoring
+Qwen 1.5B
+Ministral 8B
+LLaMA3 8B
+Qwen3 8B
+GPT-oss 20B
+Gemma 4 26B
+ℓ1
+0.745
+0.914
+0.937
+0.915
+0.851
+0.762
+ℓ2
+0.749
+0.902
+0.931
+0.917
+0.883
+0.727
+Mahalanobis
+0.743
+0.885
+0.848
+0.770
+0.860
+0.785
+F.5
+Within-Cluster Active-Support Overlap of Safe and Unsafe Points
+Setup.
+The framework assumes that within a cluster Cc, safe samples occupy a small active-feature
+support, and the scoring rule operates on the projection onto that support. The remaining question is
+whether unsafe samples assigned to Cc activate a different support from safe samples, or the same
+support at different magnitudes. We measure this directly. Let Csafe
+c
+and Cunsafe
+c
+denote the safe and
+unsafe samples assigned to cluster c at evaluation time. For each cluster, we define the population
+active set
+Ssafe
+c
+=
+
+j ∈[d2] :
+1
+|Csafe
+c
+|
+X
+x∈Csafe
+c
+1[z(x)j > 0] > 0.5
+	
+,
+Sunsafe
+c
+analogously.
+(24)
+The inner expression is the within-cluster firing frequency of SAE feature j on the safe population:
+the fraction of safe samples in Cc for which feature j is active. The set Ssafe
+c
+collects the features
+that fire on a strict majority (> 50%) of safe samples in the cluster; we treat these as the typical
+active features for the safe population in that cluster. Sunsafe
+c
+is the analogous set for unsafe samples
+assigned to the same cluster. The framework’s local-sparsity assumption is that |Ssafe
+c
+| is small, by
+construction of the clustering; the question this section asks is whether Sunsafe
+c
+differs from Ssafe
+c
+.
+Results.
+Table 23 reports the restricted Jaccard distribution. The median is ≥0.94 on all six
+models, and reaches 0.98 on Qwen3: within a cluster, safe and unsafe points populate nearly identical
+masked active supports. The anomaly score therefore is not driven by which features are active
+in unsafe inputs, but by how strongly they are active. This is the structural reason that magnitude-
+aware scoring (ℓ1, ℓ2) beats the binarized alternative in Appendix F.4: discarding the magnitude
+information loses the discriminative signal. At the clustering stage the magnitude penalty is more
+model-dependent—ρL0 is competitive on Qwen3 and GPT-oss—as discussed in Appendix F.1.
+34
+
+
+Table 23: Within-cluster active-support overlap of safe and unsafe points under the FREQMASK-KM
+global mask. Counts are masked features that fire in > 50% of the corresponding population within
+each cluster, summed across clusters; “Jaccard median” is the per-cluster restricted Jaccard, taken
+over clusters with at least one safe and one unsafe sample assigned.
+Model
+k
+Both
+Safe only
+Unsafe only
+Neither
+Jaccard median
+Qwen 1.5B
+100
+98
+0
+0
+1
+1.00
+Ministral 8B
+200
+139
+20
+2
+40
+0.94
+LLaMA3 8B
+400
+67
+3
+2
+329
+0.95
+Qwen3 8B
+400
+53
+1
+1
+345
+0.98
+GPT-oss 20B
+50
+36
+1
+2
+10
+0.95
+Gemma 4 26B
+25
+15
+1
+1
+8
+0.95
+Summary.
+Reading the four ablations in stage order: ρL2 is the best clustering metric on four of
+the five ≥8B models (Gemma is the exception, narrowly preferring ρL1), though its margin over the
+binarized ρL0 shrinks to 0.003–0.013 on Qwen3 and GPT-oss; the best Nc and k vary widely across
+models, within the ranges Nc ∈{10, 25, 50, 100} and k ∈{25, . . . , 1600}, with no single setting
+dominating and GPT-oss and Gemma preferring the small-Nc, small-k corner that the others avoid; ℓ1
+and ℓ2 scoring perform within 0.012 AUROC of each other on every model except GPT-oss (0.032)
+and Gemma (0.035), with the better of the two model-dependent, while per-cluster Mahalanobis trails
+both on every ≥8B model except Gemma, and is best at the largest swept regularizer on every model
+but Gemma (which selects 10−2), broadly consistent with ill-conditioned per-cluster covariance
+estimates on most models. The within-cluster Jaccard analysis in Appendix F.5 gives a direct
+mechanistic reason for why magnitude-aware scoring (ℓ1, ℓ2) outperforms its binary counterpart: safe
+and unsafe points within a cluster activate the same masked features, and the discriminative signal is
+on magnitudes.
+These orderings are specific to FREQMASK-KM, and several of them follow from choices made
+elsewhere in the pipeline rather than from the stage in question alone: the ℓ1 scoring rule is paired with
+a global frequency mask on SAE features whose entries are nonnegative, the per-cluster covariance
+estimates that disadvantage Mahalanobis are computed on a k-dimensional masked subspace with
+|Cc|/k in the low-tens range, and the Nc peak depends on the safe sample size N and the global
+sparsity s (Section 3.2). Other instantiations of the framework, with different embedding spaces,
+mask constructions, or learned per-cluster subspaces, may legitimately prefer different choices at
+the same stage. Table 2 already shows that LEARNEDMASK-LORA reaches the same performance
+band under a different scoring rule (reconstruction residual rather than ℓ1 centroid distance), and
+this section is intended as an ablation study of how to read the framework’s design space, not as a
+prescription that transfers to those instantiations unchanged.
+F.6
+Extraction Layer
+The main results read activations from a single mid-to-late layer per model, chosen by the heuristic
+described in Section 4.1. To test that choice, we sweep the extraction layer on three model families,
+training a fresh SAE at each layer and running FREQMASK-KM with every other hyperparameter held
+at the model’s published setting. AUROC in this subsection is computed against pooled HarmBench.
+On LLaMA3-8B and GPT-oss-20B the layer used in the main results gives the highest AUROC of
+those swept (0.956 and 0.966), with the remaining layers spanning 0.785–0.924 and 0.842–0.932
+respectively. On Gemma-4-26B the shallow layers are the strongest (0.940 at layer 8 and 0.963 at
+layer 12) and the layer used in the main results reaches 0.828.
+Takeaway.
+The mid-to-late heuristic is a reasonable default on all three models: it selects the
+best available layer on two of them, and a workable one on the third. Which layer is best is model-
+dependent, and it does not correspond to a fixed depth or a fixed fraction of depth, so it appears to
+follow each model’s architecture rather than a rule that transfers across families. A per-model sweep
+can therefore recover a small amount of additional AUROC, at the cost of extra computations.
+F.7
+SAE Sparsity Penalty
+The framework operates in the feature space of a pretrained SAE, so its performance could in
+principle depend on how that SAE was trained. We test this by sweeping the SAE’s main training
+hyperparameter, the sparsity penalty λℓ1 of Appendix D.1, over three orders of magnitude on four
+35
+
+
+Table 24: FREQMASK-KM AUROC against pooled HarmBench as a function of the extraction layer.
+A fresh SAE is trained at each layer; all other hyperparameters are held at each model’s published
+setting. Bold marks the layer used in the main results. The layer used in the main results is the
+strongest of those swept on LLaMA3-8B and GPT-oss-20B; on Gemma-4-26B the shallow layers
+score higher.
+LLaMA3-8B
+Layer
+8
+12
+16
+20
+24
+25
+28
+30
+AUROC
+0.924
+0.913
+0.800
+0.802
+0.799
+0.956
+0.785
+0.921
+GPT-oss-20B
+Layer
+4
+8
+12
+16
+18
+20
+22
+23
+AUROC
+0.924
+0.932
+0.927
+0.896
+0.924
+0.966
+0.842
+0.861
+Gemma-4-26B
+Layer
+8
+12
+16
+20
+25
+29
+AUROC
+0.940
+0.963
+0.934
+0.807
+0.828
+0.930
+model families, and rerunning FREQMASK-KM unchanged on each resulting encoder: only the SAE
+checkpoint changes, while Nc, k, the extraction layer and every other setting stay at the model’s
+published value. Table 25 reports, for each encoder, the density it reaches (the measured average
+number of active features per input, L0, out of dSAE = 16384) together with the AUROC it yields.
+AUROC here is the three-category mean of Table 1, and the deployed rows reproduce that table.
+Detection is stable over a wide range of penalties rather than depending on one setting. On LLaMA3-
+8B, AUROC stays between 0.858 and 0.936 while λℓ1 moves by a factor of 1000 and L0 by a
+factor of seven, and Qwen2-1.5B stays between 0.643 and 0.762 at every setting, consistent with
+its representation quality rather than its SAE bounding what unsupervised detection can recover
+on that model (Section 4.2). The clear losses occur where the encoder fails to sparsify: the two
+Gemma-4-26B encoders trained for twenty epochs reach L0 = 81 and 103 and fall to 0.627 and
+0.665, well below the other three settings on that model.
+The penalty λℓ1 does not determine sparsity on its own, since training length also affects the density
+reached: the same λℓ1 = 3 on Gemma-4-26B gives L0 = 54 after ten epochs and L0 = 81 after
+twenty. The measured L0, not λℓ1, is therefore the quantity on which SAE sparsity is comparable,
+which is also why λℓ1 is not shared across models: the two largest models need a much larger
+penalty to reach a comparable density because their residual-stream activations have a larger RMS
+(Appendix D.1).
+G
+Ablations for LEARNEDMASK-LORA
+This section reports three ablations on LEARNEDMASK-LORA (Section 3.5, Appendix D.4) targeting
+choices that are not pinned down by the framework definition: whether the per-cluster LoRA stage
+is necessary (Appendix G.1), whether Mahalanobis scoring on the LoRA-adapted reconstruction
+outperforms the ℓ2 whitened residual used in the main results (Appendix G.2), and whether the binary
+straight-through mask in Stage 1 can be replaced by a continuous mask without loss (Appendix G.3).
+Unless otherwise noted, all runs use the configuration of Appendix D.4: cosine binarized clustering
+with Nc = 50 clusters for Ministral 8B and LLaMA3 8B and Nc = 100 for the other four models,
+whitened residual normalization with shrinkage α = 0.3, Stage 1 logit initialization at 0.5, LoRA
+rank schedule r ∈{2, 4, 8} keyed to cluster size, 30 LoRA epochs at learning rate 10−3, and LoRA
+sparsity weight 10−3. The minimum cluster size for LoRA Stage 2 is 20 for Qwen 1.5B and Ministral
+8B, 500 for LLaMA3 8B, and 50 for Qwen3 8B and Gemma 4 26B. Performance is reported as mean
+AUROC across the three evaluation slices (BeaverTails, ToxiGen, pooled HarmBench adversarial
+attacks).
+Relation to Table 1.
+The Stage 1+Stage 2 row of Table 26 matches the main table for every model
+except Qwen3 8B, where it reads 0.914 against 0.917. The ablation applies the rank schedule above,
+whereas the Qwen3 main-table run used a flat r = 8. The gap is 0.003 AUROC and does not change
+the conclusion that Stage 2 helps on Qwen3: +0.046 with the schedule, +0.049 without.
+36
+
+
+Table 25: FREQMASK-KM AUROC as a function of the SAE sparsity penalty λℓ1. Only the SAE
+checkpoint changes; all other hyperparameters are held at each model’s published setting. L0 is the
+measured average number of active SAE features per input, out of 16384. Epochs are listed because
+λℓ1 and training length jointly determine the density reached. AUROC is the three-category mean of
+Table 1. Bold marks the encoder used in the main results.
+Model
+λℓ1
+Epochs
+L0
+AUROC
+LLaMA3-8B
+0.01
+5
+66
+0.936
+1
+10
+58
+0.861
+3
+10
+22
+0.858
+10
+10
+9
+0.910
+Qwen2-1.5B
+0.01
+10
+227
+0.762
+0.1
+10
+213
+0.758
+1
+10
+153
+0.719
+3
+10
+91
+0.643
+10
+10
+53
+0.696
+GPT-oss-20B
+0.01
+20
+393
+0.846
+300
+20
+103
+0.832
+700
+20
+48
+0.900
+Gemma-4-26B
+1
+10
+55
+0.823
+1
+20
+103
+0.665
+3
+10
+54
+0.856
+3
+20
+81
+0.627
+10
+10
+31
+0.835
+G.1
+LoRA Stage Contribution
+Setup.
+We compare the Stage 1 binary-mask checkpoint against the full two-stage pipeline that
+adds a per-cluster LoRA adapter on top. Both rows reuse the same Stage 1 checkpoints and clustering;
+the only difference is whether Stage 2 is applied. Five seeds per row.
+Results.
+Table 26 reports mean and standard deviation of 3-slice AUROC across 5 seeds. The
+LoRA stage helps on four of the five ≥8B models—+0.062 AUROC on Ministral 8B, +0.096 on
+LLaMA3 8B, +0.046 on Qwen3 8B, and +0.051 on Gemma 4 26B—but degrades two models:
+Qwen 1.5B (−0.033) and GPT-oss 20B (−0.101). GPT-oss thus joins Qwen 1.5B as a model on
+which the Stage 2 adapter hurts, so we report it Stage 1-only in the main results and disable Stage 2
+on both.
+Table 26: Effect of the per-cluster LoRA stage on LEARNEDMASK-LORA. AUROC is the 3-slice
+mean (BeaverTails, ToxiGen, pooled HarmBench), reported as mean ± standard deviation across 5
+random seeds.
+Method
+Qwen 1.5B
+Ministral 8B
+LLaMA3 8B
+Qwen3 8B
+GPT-oss 20B
+Gemma 4 26B
+LEARNEDMASK (Stage 1 only)
+0.794 ± 0.001
+0.834 ± 0.001
+0.816 ± 0.001
+0.868 ± 0.000
+0.919 ± 0.001
+0.853 ± 0.000
+LEARNEDMASK + LORA (Stage 1 + Stage 2)
+0.761 ± 0.001
+0.896 ± 0.001
+0.912 ± 0.001
+0.914 ± 0.001
+0.818 ± 0.002
+0.904 ± 0.000
+∆from LoRA
+−0.033
++0.062
++0.096
++0.046
+−0.101
++0.051
+G.2
+Scoring Function: Mahalanobis vs. Whitened ℓ2
+Setup.
+The main LEARNEDMASK-LORA results in Table 2 use the ℓ2 norm of the whitened
+(masked) SAE-reconstruction residual under the assigned cluster’s adapted encoder/decoder pair. We
+test whether replacing this with a per-cluster Mahalanobis distance on the same residual improves
+performance. The Mahalanobis variant fits a per-cluster covariance on the safe residuals and adds
+a regularizer λI before inversion; we sweep λ ∈{10−4, 10−2, 10−1, 1.0}, single seed per cell, on
+Stage 1 checkpoints with hyperparameters matched to the multi-seed configuration of Appendix G.1.
+Results.
+Table 27 reports 3-slice mean AUROC for the full λ sweep, the best Mahalanobis cell
+per model, and the whitened ℓ2 reference from Table 26. Best λ is large for the ≥8B models
+(λ = 1.0) and intermediate for Qwen 1.5B (λ = 10−1), with the exception of Gemma, whose best λ
+is the smallest (10−4); at small λ (10−4) the per-cluster covariance is otherwise ill-conditioned and
+37
+
+
+AUROC collapses. At its best λ, Mahalanobis reaches 0.793/0.890/0.904/0.879/0.577/0.785 on
+the six models, against the whitened ℓ2 reference of 0.794/0.896/0.912/0.914/0.818/0.904. The
+two scoring rules are within 0.008 AUROC on the original three models, but the gap widens on
+the newer models (0.035 on Qwen3, 0.119 on Gemma, and 0.241 on GPT-oss); on no model does
+Mahalanobis exceed the whitened ℓ2 reference. We retain whitened ℓ2 as the default, since it requires
+no per-cluster covariance fit and no regularization sweep.
+Table 27: Scoring function comparison on LEARNEDMASK-LORA. Mahalanobis scoring on the
+per-cluster reconstruction residual is swept over the regularizer λ (1 seed per cell); the “best Mahal.”
+column reports the best λ per model. The “whitened ℓ2” column is the multi-seed reference from
+Table 26. AUROC is the 3-slice mean; bold marks the best λ within each model.
+Mahalanobis, λ
+best Mahal.
+whitened ℓ2
+Model
+10−4
+10−2
+10−1
+1.0
+(selected λ)
+(reference)
+Qwen 1.5B
+0.602
+0.738
+0.793
+0.786
+0.793 (λ=10−1)
+0.794
+Ministral 8B
+0.426
+0.653
+0.885
+0.890
+0.890 (λ=1.0)
+0.896
+LLaMA3 8B
+0.576
+0.785
+0.897
+0.904
+0.904 (λ=1.0)
+0.912
+Qwen3 8B
+0.691
+0.703
+0.710
+0.879
+0.879 (λ=1.0)
+0.914
+GPT-oss 20B
+0.544
+0.546
+0.552
+0.577
+0.577 (λ=1.0)
+0.818
+Gemma 4 26B
+0.785
+0.782
+0.776
+0.749
+0.785 (λ=10−4)
+0.904
+G.3
+Mask Parameterization: Continuous vs. Binary STE
+Setup.
+Stage 1 of LEARNEDMASK-LORA learns a binary mask mc ∈{0, 1}d2 via a straight-
+through estimator (Appendix D.4). We replace this with a continuous mask mc ∈[0, 1]d2 trained
+against the same Stage 1 reconstruction objective, then apply the standard Stage 2 LoRA on top.
+Hyperparameters match Appendix G.1 otherwise; single seed.
+Results.
+Table 28 reports 3-slice mean AUROC and the continuous-variant FPR@95. On all five
+≥8B models the two parameterizations are within 0.007 AUROC of each other (+0.004 on Ministral,
+−0.007 on LLaMA3, −0.003 on Qwen3, +0.005 on GPT-oss, −0.001 on Gemma); the continuous-
+mask row is a single seed, so we cannot resolve whether these gaps reflect a real difference or seed
+variation, and we treat the two parameterizations as indistinguishable at this granularity. On Qwen
+1.5B the continuous variant underperforms the Stage 1 binary baseline by 0.046 AUROC. Note that
+for GPT-oss both rows sit near 0.82 rather than near its main-table AUROC: this ablation holds the
+Stage 2 LoRA adapter on while varying the mask type, and LoRA degrades GPT-oss (Table 26), so
+both mask types fall below the Stage 1-only configuration GPT-oss actually deploys (0.919, Table 1);
+the within-row binary-vs-continuous gap (+0.005) is unaffected. Binary STE is retained as the
+default since it does not meaningfully underperform the continuous variant on any model and yields a
+sparser mask.
+Table 28: Mask parameterization in Stage 1 of LEARNEDMASK-LORA, with Stage 2 LoRA applied
+on both rows. “Binary STE + LoRA” reproduces the multi-seed reference from Table 26 (mean ± std
+over 5 seeds). “Continuous + LoRA” is a single seed.
+Method
+Qwen 1.5B
+Ministral 8B
+LLaMA3 8B
+Qwen3 8B
+GPT-oss 20B
+Gemma 4 26B
+3-slice mean AUROC
+Binary STE + LoRA (multi-seed)
+0.794 ± 0.001
+0.896 ± 0.001
+0.912 ± 0.001
+0.914 ± 0.001
+0.818 ± 0.002
+0.904 ± 0.000
+Continuous + LoRA (1 seed)
+0.764
+0.900
+0.905
+0.911
+0.823
+0.903
+∆
+−0.046
++0.004
+−0.007
+−0.003
++0.005
+−0.001
+Continuous + LoRA FPR@95 (↓)
+0.594
+0.253
+0.250
+0.433
+0.456
+0.229
+Summary.
+The LoRA stage improves the performance of LEARNEDMASK-LORA on Ministral,
+LLaMA3, Qwen3, and Gemma, and is correctly disabled on the two models it hurts (Qwen 1.5B and
+GPT-oss). The whitened-ℓ2 scoring rule used in the main results is not improved upon by per-cluster
+Mahalanobis at any swept regularizer on any model. The binary STE Stage 1 mask is retained over a
+continuous-mask variant since the binary method yields a sparser mask and does not perform worse
+than a continuous one.
+38
+
+
+H
+Adaptive Attacks Against the Deployed Detector
+A static detector exposes a single fixed decision rule, a score and one operating threshold, and a
+white-box attacker who optimizes against that rule can almost always find an input that stays on the
+safe side of the threshold yet remains harmful. Detection-based defenses for LLMs have repeatedly
+been broken this way [Andriushchenko et al., 2024, Nasr et al., 2025], and we expected the same here.
+We tested it directly: with FREQMASK-KM used as an adversarial defense detector at its deployment
+threshold, adaptive attack [Andriushchenko et al., 2024] succeeds on 98% of 50 AdvBench behaviors
+on LLaMA3-8B and 94% on Qwen2-1.5B, and the detector flags none of them. That attacker
+optimizes only the model’s refusal signal and never the anomaly score, so a detector-aware attacker
+would be at least as strong. We therefore do not claim robustness to detector-aware adaptive attacks;
+what we claim is unsupervised detection of new, non-adaptive unsafe inputs, which is a different
+threat model.
+Table 29: A white-box adversarial-suffix jailbreak against the guarded model, with FREQMASK-KM
+detecting harmful generation at its deployment threshold.
+Model
+Attack success rate
+Detector block rate
+LLaMA3-8B
+98% (49/50)
+0% (0/50)
+Qwen2-1.5B
+94% (47/50)
+0% (0/50)
+The outcome is a property of static defenses rather than of this detector in particular: the defense
+is fixed first and the attacker moves second. It also does not contradict the detection results of
+Section 4.2. AUROC measures how well the score ranks unsafe inputs above safe ones on a fixed
+evaluation distribution, whereas the attack here moves the input distribution until individual points
+fall below one chosen threshold, so a detector can rank well and still be evaded at a fixed operating
+point. Designing a defense robust to a sufficiently strong white-box adaptive attacker remains an
+open problem and is beyond the scope of this paper.
+I
+Proofs for the Theory Section
+We use the notation of Section 6. Throughout, the representation z, the population distribution P0,
+the selected population centers, and K, k are fixed before drawing Dn ∼P n
+0 . An SAE fitted on an
+independent pilot sample is allowed by conditioning on that sample. Merely freezing an SAE after
+fitting it on Dn does not give this independence. The results below do not analyze that additional
+reuse of data or adaptive hyperparameter selection.
+All probabilities conditional on Dn concern a fresh test point. After a permutation of the empirical
+center labels, we transport the assignment labels by the same permutation; we do not recompute
+a different tie-breaking rule. Empty oracle clusters are assigned mean zero by convention and are
+excluded on the count event used below.
+I.1
+Population centers and oracle sample means
+We first justify the conditional-mean identity used in the main text. Let Vc = {z : c⋆(z) = c}. For
+any u ∈Rd2,
+E[∥Z −u∥2
+2 | Z ∈Vc] = E[∥Z −E[Z | Z ∈Vc]∥2
+2 | Z ∈Vc] + ∥u −E[Z | Z ∈Vc]∥2
+2.
+If a center with πc > 0 differed from this conditional mean, replacing it would strictly reduce the
+objective with the old assignments held fixed. Reassigning to the nearest new centers cannot increase
+that objective. This contradicts population optimality and proves µ⋆
+c = E[Z | c⋆(Z) = c].
+Lemma 1. If nπmin ≥8 log(4K/δ), then with probability at least 1 −δ/4,
+Nc ≥nπc/2 ≥nπmin/2
+(c ∈[K]).
+(25)
+Proof. For each c, Nc ∼Bin(n, πc). The multiplicative Chernoff bound gives Pr(Nc < nπc/2) ≤
+exp(−nπc/8). Summing over K clusters proves the claim. For completeness, this Chernoff bound
+follows by applying Markov’s inequality to e−tNc, using Ee−tNc ≤exp(nπc(e−t −1)), and taking
+t = log 2: the exponent is −nπc(1 −log 2)/2 ≤−nπc/8.
+39
+
+
+Lemma 2. Under Assumption 1 and the count condition of Lemma 1, with probability at least
+1 −δ/2,
+max
+c
+∥M ⋆(µc −µ⋆
+c)∥2 ≤
+r
+2
+nπmin
+ 
+v + B
+r
+2 log 4K
+δ
+!
+,
+(26)
+max
+c
+∥M ⋆(µc −µ⋆
+c)∥1 ≤
+r
+2smax
+nπmin
+ 
+v + B
+r
+2 log 4K
+δ
+!
+.
+(27)
+Proof. Fix c and condition on the indicators (1{c⋆(Zi) = c})n
+i=1, with Nc = r ≥1. The observations
+in Ic are then independent with distribution P0( · | c⋆(Z) = c). Index them as Zc,1, . . . , Zc,r and set
+Yj = M ⋆(Zc,j −µ⋆
+c). They satisfy
+EYj = 0,
+E∥Yj∥2
+2 ≤v2,
+∥Yj∥2 ≤B
+almost surely.
+For F = ∥r−1 P
+j Yj∥2, independence and centering give
+EF ≤(EF 2)1/2 =
+
+1
+r2
+X
+j
+E∥Yj∥2
+2
+
+
+1/2
+≤v
+√r.
+Replacing one Yj changes F by at most 2B/r. The bounded-differences (Mcdiarmid’s) inequality
+therefore implies
+Pr
+
+F > v
+√r + t
+ membership indicators
+
+≤exp
+
+−rt2
+2B2
+
+.
+Take t = B
+p
+2 log(4K/δ)/r. The bound holds for every membership pattern with r ≥1, so it may
+be averaged over these patterns without conditioning on any empirical clustering event. A union
+bound over c and Lemma 1 cost at most δ/4 + δ/4. On their intersection, r ≥nπmin/2, which
+proves (26).
+If j ∈S⋆\ Jc, then Zj = (µ⋆
+c)j almost surely in cluster c. Hence M ⋆(µc −µ⋆
+c) is supported on Jc,
+simultaneously for every nonempty oracle cluster, with probability one. Cauchy–Schwarz gives
+∥M ⋆(µc −µ⋆
+c)∥1 ≤
+p
+|Jc| ∥M ⋆(µc −µ⋆
+c)∥2,
+and proves (27).
+I.2
+The global frequency mask and the main theorem
+Lemma 3. Let bpj = n−1 P
+i 1{(Zi)j > 0} and suppose γ = p(k) −p(k+1) > 0. If n ≥
+8γ−2 log(4d2/δ), then c
+M = M ⋆with probability at least 1 −δ/2.
+Proof. Hoeffding’s inequality and a union bound give
+Pr
+
+max
+j∈[d2] |bpj −pj| > γ/4
+
+≤2d2e−nγ2/8 ≤δ/2.
+On the complementary event, for every j ∈S⋆and ℓ/∈S⋆, bpj −bpℓ≥pj −pℓ−γ/2 ≥γ/2 > 0.
+Thus the selected supports agree. Independence between different coordinates is unnecessary;
+independence across observations suffices.
+Proof of Theorem 1. Intersect the events in Lemmas 2 and 3. Their joint probability is at least 1 −δ.
+No independence between these events or the fitted K-means solution is required. For every c, the
+definition of ρn gives
+∥M ⋆(bµc −µ⋆
+c)∥1 ≤∥M ⋆(bµc −µc)∥1 + ∥M ⋆(µc −µ⋆
+c)∥1 ≤εn.
+(28)
+Consequently, for every z whose empirical and population assignments agree, the reverse triangle
+inequality implies
+|bsn(z) −s⋆(z)| ≤∥M ⋆(bµc⋆(z) −µ⋆
+c⋆(z))∥1 ≤εn.
+(29)
+This statement is pointwise on the whole representation space, not only on the safe support. The use
+of local sparsity concerned the centroid estimation error, not the support of the test point.
+40
+
+
+Write An = {z : bcn(z)̸ = c⋆(z)}. Outside An, disagreement between the two strict-threshold
+detectors implies |s⋆(z) −τq| ≤εn. Conditional on the training sample, εn is fixed and therefore
+P0( bfn,q̸ = f ⋆
+q | Dn) ≤P0(An | Dn) + P0(|s⋆(Z) −τq| ≤εn) ≤η0,n + L0εn.
+This proves the theorem. The last step remains valid for random ρn because anti-concentration holds
+for every t ≥0.
+Meaning of the rate.
+The theorem is an oracle inequality with explicit clustering remainders.
+It applies to any measurable fitted centers and assignments. To conclude consistency, one must
+separately show or assume that ρn and η0,n vanish. In a sequence of problems, γ, πmin, v, B, and L0
+must also be tracked. In particular, a small frequency gap can make mask identification expensive
+even when log d2 is small. For balanced clusters and bounded L0v, L0B, obtaining sampling error at
+most e requires n of order Ksmax/e2, up to logarithms, in addition to mask recovery and clustering
+control. Multiplying all scores by a constant changes L0 inversely, so score normalization alone
+cannot improve this rate.
+I.3
+Two elementary controls on the clustering remainders
+These controls clarify the terms left explicit by the main theorem; they do not claim that local sparsity
+alone guarantees K-means recovery. Let
+ηtr,n = 1
+n
+X
+i
+1{bcn(Zi)̸ = c⋆(Zi)}.
+Lemma 4. Suppose each fitted center is the mean of the points assigned to it, maxi ∥M ⋆Zi∥1 ≤H,
+and the count event (25) holds. If ηtr,n ≤πmin/4, then
+ρn ≤8Hηtr,n
+πmin
+.
+(30)
+Moreover, if an = maxc ∥bµc −µ⋆
+c∥2, then for y ∈{0, 1},
+Py(bcn(Z)̸ = c⋆(Z) | Dn) ≤Py(D2(Z) −D1(Z) ≤2an),
+(31)
+where D1, D2 are the smallest and second-smallest population-center distances. For K = 1, the
+assignment error is zero.
+Proof. Put bIc = {i : bcn(Zi) = c}. For each c, |Ic △bIc| ≤nηtr,n, and hence |bIc| ≥nπmin/4. For
+two index sets A, B of sizes a, b > 0 and vectors ui of norm at most H, subtraction of their means
+gives
+
+1
+b
+X
+i∈B
+ui −1
+a
+X
+i∈A
+ui
+
+1
+≤H|A △B|
+b
++ H|a −b|
+b
+≤2H|A △B|
+b
+.
+Apply this with ui = M ⋆Zi to obtain (30). For (31), each center distance changes by at most an. A
+gap greater than 2an therefore preserves the unique nearest center. Taking probabilities proves the
+claim.
+The quantity an is a full-space center error. The masked error in Theorem 1 does not control it. Thus
+a dimension dependence in full-space clustering cannot be removed merely by masking the score.
+I.4
+Masking: estimation complexity and population separation
+Corollary 1. Let M be a deterministic binary coordinate mask, fixed before drawing Dn, and keep
+the same full-space centers and assignments. Define
+Jc(M) = {j : Mjj = 1, Var(Zj | c⋆(Z) = c) > 0},
+s(M) = max
+c
+|Jc(M)|,
+v(M)2 = max
+c
+E[∥M(Z −µ⋆
+c)∥2
+2 | c⋆(Z) = c],
+B(M) = max
+c
+ess sup
+Z|c⋆(Z)=c
+∥M(Z −µ⋆
+c)∥2,
+41
+
+
+where B(M) < ∞, and put ρn(M) = maxc ∥M(bµc −µc)∥1. Under the count condition, with
+probability at least 1 −δ/2,
+max
+c
+∥M(bµc −µ⋆
+c)∥1 ≤εn(M) := ρn(M) +
+s
+2s(M)
+nπmin
+ 
+v(M) + B(M)
+r
+2 log 4K
+δ
+!
+.
+(32)
+Let s⋆
+M, bsn,M be the corresponding scores and let τM,q be the population safe quantile.
+If
+P0(|s⋆
+M(Z) −τM,q| ≤t) ≤LMt, their detector disagreement is at most η0,n + LMεn(M) on
+this event.
+Proof. Apply the proof of Lemma 2 to M and use ∥u∥1 ≤
+p
+s(M)∥u∥2 on each Jc(M). The
+triangle inequality adds ρn(M). The decision bound follows from (29) and the stated margin
+condition for this particular score. No frequency gap or mask recovery is needed because the mask is
+fixed in advance.
+If M1 retains a subset of the coordinates retained by M2, then s(M1) ≤s(M2), v(M1) ≤v(M2),
+B(M1) ≤B(M2), and ρn(M1) ≤ρn(M2). Thus the envelope in (32) is monotone under removing
+coordinates, for fixed centers and matching. This is not a classification-dominance statement: the
+population score, threshold, and margin constant change with the mask, and useful information
+may be discarded. The unmasked case is M = Id2. The result holds for each fixed mask, not
+simultaneously for all data-selected masks without an additional argument.
+What effective dimension does and does not imply.
+For Σc,M = M Cov(Z | c⋆(Z) = c)M,
+v(M)2 = max
+c
+tr(Σc,M).
+For a nonzero positive-semidefinite matrix Σ, the PCA definition of d90 implies tr(Σ)/∥Σ∥op ≤
+d90(Σ)/0.9. Indeed, the sum of the largest d90 eigenvalues is at least 90% of the trace and at most
+d90∥Σ∥op. But d90 does not bound the absolute trace without an eigenvalue scale, and a rank-one
+covariance can involve every coordinate. Furthermore, Figure 3 reports empirical quantities, not a
+population concentration bound. We therefore use it as evidence about relative variance concentration,
+not as a verification of every hypothesis in Theorem 1.
+The next example separates population-score quality from finite-sample estimation. It is a mathemati-
+cal illustration, not a fitted model of the reported activations.
+Proposition 2 (Weak sparse noise can obscure an unmasked score). There exist safe and unsafe
+distributions on RD+1
++
+with 1 + O(
+√
+D) nonzero coordinates per input with high probability such
+that the following holds for K = k = 1. The global population frequency mask retains a single
+coordinate and its centroid-distance score has AUROC one. The unmasked distance to the known
+population safe centroid has AUROC tending to 1/2 as D →∞.
+Proof. Take D ≥9, p = D−1/2 and b = D−1/8. Let U0 ∼Unif[1, 2], U1 ∼Unif[3, 4], and let
+By,j ∼Bern(p) be independent of these variables and of one another. Define, for y ∈{0, 1},
+Zy = (Uy, bBy,1, . . . , bBy,D).
+The expected support size is 1+Dp = 1+
+√
+D; a binomial Chernoff bound gives ∥Zy∥0 ≤1+2
+√
+D
+with probability at least 1 −e−
+√
+D/3. Each nuisance activation has amplitude b →0. The first safe
+coordinate has activation frequency one, whereas every other coordinate has frequency p. The global
+top-one mask therefore selects the first coordinate, with gap 1 −p.
+The population safe center is µ = (3/2, bp, . . . , bp). The masked scores are A0 = |U0 −3/2| ∈
+[0, 1/2] and A1 = |U1 −3/2| ∈[3/2, 5/2], so the masked ranking is perfect. For Ty = P
+j By,j ∼
+Bin(D, p), the unmasked scores are
+Sy = Ay + b{Dp + (1 −2p)Ty}.
+Let rD =
+p
+2Dp(1 −p). The standardized difference (T1 −T0)/rD converges to N(0, 1). This can
+be seen directly from its characteristic function:
+E exp
+
+itT1 −T0
+rD
+
+= [1 + 2p(1 −p){cos(t/rD) −1}]D −→e−t2/2,
+42
+
+
+using Dp(1 −p) →∞and the expansion of cosine at zero. Since b(1 −2p)rD ≍D1/8 →∞and
+A1 −A0 is bounded,
+S1 −S0
+b(1 −2p)rD
+=⇒N(0, 1).
+The score difference has no atom at zero because U1 is continuous and independent of the other
+variables. Hence AUROC(S) = Pr(S1 > S0) →1/2. The class label has not changed the nuisance
+distribution; its increasing fluctuation alone obscures the bounded signal in the unmasked score.
+I.5
+Independent safe-threshold calibration
+Appendix D.2 reports a held-out ROC evaluation and states that no separate threshold-calibration
+step was performed. The following results concern a possible deployment procedure. They do not
+attribute an additional split to the experiments.
+Proposition 3. Condition on Dn and let Z′
+1, . . . , Z′
+m ∼P m
+0 be independent safe calibration points.
+Let bFm be the empirical distribution function of bsn(Z′
+i), and define bτq = inf{t : bFm(t) ≥1 −q}.
+For um =
+p
+log(2/δq)/(2m), with conditional probability at least 1 −δq,
+P0(bsn(Z) > bτq | Dn, Z′
+1, . . . , Z′
+m) ≤q + um.
+(33)
+The assertion allows atoms and uses the strict inequality in the detector.
+Proof. Let bF(t) = P0(bsn(Z) ≤t | Dn). The Dvoretzky–Kiefer–Wolfowitz inequality gives
+supt | bFm(t) −bF(t)| ≤um with the stated probability. Since bFm(bτq) ≥1 −q, bF(bτq) ≥1 −q −um.
+Taking complements proves the result.
+False-positive control alone does not bound the displacement of the threshold or the unsafe false-
+negative rate. The next result states the additional quantile regularity needed for such a comparison.
+Proposition 4. Let F ⋆(t) = P0(s⋆(Z) ≤t) and suppose, for some λ0, r0 > 0 and all 0 ≤u ≤r0,
+F ⋆(τq + u) ≥1 −q + λ0u,
+F ⋆(τq −u) ≤1 −q −λ0u.
+(34)
+On the training event of Theorem 1, put am = 2(η0,n + um)/λ0 and assume am ≤r0. With
+conditional calibration probability at least 1 −δq,
+|bτq −τq| ≤εn + am,
+(35)
+P0(1{bsn(Z) > bτq}̸ = f ⋆
+q (Z) | Dn, Z′
+1, . . . , Z′
+m) ≤η0,n + L0(2εn + am).
+(36)
+Proof. The deterministic score comparison (29) shows, for every t,
+F ⋆(t −εn) −η0,n ≤bF(t) ≤F ⋆(t + εn) + η0,n.
+On the DKW event, set w = η0,n + um > 0. Applying (34) at u = am yields
+bFm(τq + εn + am) ≥1 −q + w,
+bFm(τq −εn −am) ≤1 −q −w.
+The empirical quantile lies between these two arguments, proving (35). Outside changed assignments,
+|(bsn(z) −bτq) −(s⋆(z) −τq)| ≤εn + |bτq −τq| ≤2εn + am.
+The same threshold-band argument as in Theorem 1 proves (36).
+I.6
+Training and held-out cluster occupancy
+Lemma 5. For r independent observations in [K] with common law p and empirical law bpr, with
+probability at least 1 −δ,
+∥bpr −p∥1 ≤br(δ) :=
+p
+K/r +
+p
+2 log(1/δ)/r.
+(37)
+Proof. Cauchy–Schwarz and the multinomial variances give
+E∥bpr −p∥1 ≤
+q
+K E∥bpr −p∥2
+2 =
+v
+u
+u
+tK
+r
+ 
+1 −
+X
+c
+p2c
+!
+≤
+p
+K/r.
+43
+
+
+Changing one observation changes the ℓ1 deviation by at most 2/r. The bounded-differences
+inequality therefore bounds its upper tail above the mean by exp(−rt2/2), proving the claim.
+Proposition 5. Let bπtr be the fitted-cluster histogram of Dn and let bπho be the corresponding
+histogram of m independent held-out safe observations. With probability at least 1 −δ over both
+samples,
+∥bπho −bπtr∥1 ≤2ηtr,n + 2η0,n + bn(δ/2) + bm(δ/2).
+(38)
+Here the assignment-error quantities are their actual sample-dependent values. The result requires
+neither mask recovery nor small centroid error.
+Proof. Let πc = P0(c⋆(Z) = c), let bπ⋆
+tr,c = n−1 P
+i 1{c⋆(Zi) = c}, and let eπ0,c = P0(bcn(Z) = c |
+Dn). Changing one assignment moves empirical mass between at most two cells, so
+∥bπtr −bπ⋆
+tr∥1 ≤2ηtr,n.
+Coupling c⋆(Z) and bcn(Z) with the same fresh Z gives ∥eπ0 −π∥1 ≤2η0,n. Since the population
+partition is fixed, Lemma 5 applies to the oracle training histogram. Conditional on Dn, it also
+applies to the held-out histogram with law eπ0. These two concentration events cost δ/2 each; their
+intersection satisfies
+∥bπ⋆
+tr −π∥1 ≤bn(δ/2),
+∥bπho −eπ0∥1 ≤bm(δ/2).
+The triangle inequality proves the result.
+In particular, we have not incorrectly treated the
+fitted training histogram as multinomial conditional on a partition learned from those same
+observations.
+Similar occupancy does not imply similar partitions: distinct partitions may have identical cell
+probabilities. Figure 4 is therefore an empirical check of one aspect of generalization, not a converse
+to Proposition 5 or a measurement of η0,n.
+I.7
+Optimal readout and the information retained by the detector
+Condition on the fitted detector throughout this subsection. Let Rα(f) = αP0(f(Z) = 1) + (1 −
+α)P1(f(Z) = 0) for α ∈(0, 1). Define RBayes as the infimum over measurable classifiers of Z, R⋆
+cs
+as the infimum over measurable functions of (bcn(Z), bsn(Z)), and R⋆
+cl as the infimum over functions
+of bcn(Z) alone. These are population oracle risks, not risks of fitted calibration models.
+Proposition 6. With eπy,c = Py(bcn(Z) = c | Dn),
+R⋆
+cl =
+X
+c
+min{αeπ0,c, (1 −α)eπ1,c}
+(39)
+= 1 −∥αeπ0 −(1 −α)eπ1∥1
+2
+.
+(40)
+For equal priors this becomes
+R⋆
+cl = 1
+2(1 −TV(eπ0, eπ1)),
+TV(p, q) = 1
+2∥p −q∥1.
+(41)
+Let R⋆
+aff be the infimum over classifiers 1{abcn(Z)bsn(Z)+bbcn(Z) > 0} with arbitrary real coefficients.
+Then
+RBayes ≤R⋆
+cs ≤R⋆
+aff ≤R⋆
+cl.
+(42)
+In particular, 0 ≤R⋆
+cs −RBayes ≤R⋆
+cl.
+Proof. Declaring cluster c unsafe incurs error αeπ0,c, whereas declaring it safe incurs error (1−α)eπ1,c.
+Choosing the better label separately in each cluster gives (39). The identity min(a, b) = (a + b −
+|a −b|)/2 and the normalization of the two occupancy vectors give (40) and (41).
+Every cluster-and-score classifier is a measurable classifier of Z. Every cluster-affine classifier is a
+cluster-and-score classifier. Finally, setting ac = 0 and bc ∈{−1, 1} realizes any constant label in
+each cluster. These inclusions prove the risk ordering.
+44
+
+
+For a fitted affine-threshold classifier bg, the excess risk is exactly
+Rα(bg) −RBayes = [Rα(bg) −R⋆
+aff] + [R⋆
+aff −R⋆
+cs] + [R⋆
+cs −RBayes].
+(43)
+The three terms are nonnegative: fitting the readout, restricting it to cluster-affine maps, and losing
+information in the cluster-and-score representation. The occupancy formula bounds the last term, not
+the first two. The supervised probe is another fitted classifier, not the Bayes rule. Similar measured
+AUROCs therefore provide empirical evidence but not a bound on these classification-risk gaps.
+Proposition 7. Condition on Dn. For y ∈{0, 1}, let Zy,1, . . . , Zy,my ∼P my
+y
+be independent
+evaluation samples not used to fit or select the detector. Let bπ ev
+y
+be their fitted-cluster histograms
+and put
+bRcl =
+X
+c
+min{αbπ ev
+0,c, (1 −α)bπ ev
+1,c}.
+With conditional probability at least 1 −δ,
+| bRcl −R⋆
+cl| ≤1
+2{αbm0(δ/2) + (1 −α)bm1(δ/2)}.
+(44)
+Proof. Use (40) for both normalized histogram pairs. The reverse triangle inequality bounds the
+difference by
+1
+2{α∥bπ ev
+0
+−eπ0∥1 + (1 −α)∥bπ ev
+1
+−eπ1∥1}.
+Apply Lemma 5 to each independent evaluation sample with failure probability δ/2.
+Figure 4 overlays each evaluation histogram with the training histogram. The overlap formula instead
+compares safe and unsafe population occupancies under the same fitted partition; the preceding
+proposition estimates them with independent safe and unsafe evaluations. The training overlay must
+not be substituted without accounting for its data dependence. For the benign-OOD evaluation, the
+same formulas apply after replacing P0 in the risk by the evaluation’s mixture of in-distribution safe
+and benign-OOD data. A conclusion for one negative distribution does not automatically transfer to
+the other.
+I.8
+Generalization on a safe–unsafe mixture
+Corollary 2. On the event of Theorem 1, define η1,n = P1(bcn(Z)̸ = c⋆(Z) | Dn). Suppose
+P1(|s⋆(Z) −τq| ≤t) ≤L1t for all t ≥0. Then
+|Rα( bfn,q) −Rα(f ⋆
+q )| ≤αη0,n + (1 −α)η1,n + {αL0 + (1 −α)L1}εn.
+(45)
+For the independently calibrated detector of Proposition 4, the same bound holds with εn replaced by
+2εn + am on its calibration event.
+Proof. The score comparison (29) holds for any test point. The threshold-band argument therefore
+bounds disagreement under Py by ηy,n + Lyεn, for y = 0, 1. For binary classifiers f, g, the absolute
+difference in either class-conditional error is at most Py(f̸ = g). Weight by the class priors and add.
+The calibrated statement follows from the last display in the proof of Proposition 4.
+Consequently, total excess risk is bounded by the estimation term in (45) plus Rα(f ⋆
+q ) −RBayes.
+The latter includes the choice of a global threshold and the false-positive budget q; it is not solely
+representation loss. In fact, (11) excludes an atom at τq, so P0(s⋆(Z) > τq) = q and Rα(f ⋆
+q ) ≥αq.
+For fixed q > 0, vanishing estimation error therefore need not imply vanishing safety-classification
+error.
+45
